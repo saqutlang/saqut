@@ -1,0 +1,49 @@
+// Hata mesajlarının hint'lerinde ÖNERİLEN kalıpların gerçekten derlendiğini
+// ve doğru sonuç verdiğini doğrular.
+//
+// Hata sınıfı: hint kullanıcıyı çalışmayan bir yola sokar. Gerçek örnekler:
+//   - `string as bool` hatası "value != 0" öneriyordu; `s != 0` derlenir ama
+//     anlamlı sonuç vermez (sessizce boş çıktı).
+//   - nullable ALAN erişimi "if (variable != null)" öneriyordu; o kalıp alan
+//     erişiminde derlenmez (#232).
+//   - `300 as byte` sarma yolunu hiç göstermiyordu.
+//
+// Bu fixture kırılırsa bir hint yine yanlış yönlendiriyor demektir.
+int main() {
+    // string → bool hint'i: içerik karşılaştırması
+    string s = "true";
+    bool a = s == "true";
+    print(a);
+    string bos = "";
+    bool b = bos != "";
+    print(b);
+
+    // int → bool hint'i: sıfırdan farklılık
+    int i = 5;
+    bool c = i != 0;
+    print(c);
+
+    // byte aralık hint'i: maskeleyerek sarma
+    int buyuk = 300;
+    byte d = (buyuk & 255) as byte;
+    print(d);
+    int cokBuyuk = 1000;
+    byte e = (cokBuyuk & 255) as byte;
+    print(e);
+
+    // byte hint'i: nullable ile null alma
+    byte? f = buyuk as byte?;
+    print(f);
+
+    // byte → float hint'i: önce int'e geç
+    byte g = 10;
+    float h = (g as int) as float;
+    print(h);
+
+    // longint karışımı hint'i: açık cast
+    longint l = 10;
+    float m = 2.5;
+    float n = (l as float) + m;
+    print(n);
+    return 0;
+}

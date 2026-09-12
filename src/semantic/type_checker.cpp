@@ -1567,9 +1567,18 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         bool tgtIsNumeric = targetBase.isPrimitive() && !tgtIsBool;
 
         if (tgtIsBool && !srcIsBool && !srcType.isError()) {
-            diag_.report(
-                "E003", cast->loc, "bool as target type not allowed with 'as'",
-                "bool conversion not supported. For bool use explicit comparison: `value != 0`");
+            // Hint KAYNAK TİPE göre ayrışır. Genel "value != 0" önerisi string
+            // için çalışmaz: `s != 0` derlenir ama anlamlı bir sonuç vermez,
+            // yani kullanıcı çalışmayan bir yola sokulurdu. String'in doğru
+            // karşılaştırması içerik eşitliğidir.
+            const std::string boolHint =
+                srcIsStr
+                    ? "for string use content comparison: `value == \"true\"` "
+                      "or `value != \"\"`"
+                    : "bool conversion not supported. For bool use explicit "
+                      "comparison: `value != 0`";
+            diag_.report("E003", cast->loc, "bool as target type not allowed with 'as'",
+                         boolHint);
             result = Type::error();
             break;
         }
@@ -1609,6 +1618,46 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                          "cast to int first: `value as int as byte`");
             result = Type::error();
             break;
+        }
+
+        // Derleme zamanında bilinen aralık dışı literal: çalışma zamanına
+        // bırakma. `byte a = 300;` zaten burada yakalanıyordu (literal byte
+        // bağlamı dalı), ama `300 as byte` çalışma zamanına kalıyordu —
+        // aynı bilgi, aynı noktada, farklı zamanda patlıyordu.
+        //
+        // Nullable cast (`300 as byte?`) HARİÇ: orada aralık dışı bir hata
+        // değil, tanımlı sonuçtur (null). ADR-021 fallible cast sözleşmesi.
+        if (tgtIsByte && !cast->targetNullable && cast->operand &&
+            cast->operand->kind == ASTKind::Literal) {
+            auto* lit = static_cast<LiteralNode*>(cast->operand);
+            if (lit->literalType == LiteralType::INTEGER) {
+                long long literalValue = 0;
+                bool      parsed       = false;
+                if (lit->hasDirectValue) {
+                    literalValue = lit->directIntValue;
+                    parsed       = true;
+                } else if (lit->parserToken.token) {
+                    try {
+                        literalValue = parseIntegerLiteral(lit->parserToken.token->token,
+                                                           lit->literalBase);
+                        parsed = true;
+                    } catch (...) {
+                        parsed = false;  // taşma: başka tanı zaten üretir
+                    }
+                }
+                if (parsed && (literalValue < 0 || literalValue > 255)) {
+                    diag_.report(
+                        "E003", cast->loc,
+                        "integer literal " + std::to_string(literalValue) +
+                            " is out of byte range (0-255)",
+                        "to wrap, mask first: `(" + std::to_string(literalValue) +
+                            " & 255) as byte`  (gives " +
+                            std::to_string(literalValue & 0xFF) +
+                            ") — or use `as byte?` to get null instead of an error");
+                    result = Type::error();
+                    break;
+                }
+            }
         }
 
         // Hedef tip (nullable flag ile)

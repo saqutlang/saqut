@@ -779,8 +779,11 @@ extern "C" int64_t rt_jit_float_to_int_checked(double fv) {
 }
 extern "C" int64_t rt_jit_int_to_byte_checked(int64_t iv) {
     if (iv < 0 || iv > 255)
+        // Mesaj VM ile BİREBİR aynı (interpreter.cpp CAST_INT_TO_BYTE_CHECKED):
+        // diferansiyel suite stderr'i de karşılaştırır.
         rt_jit_cast_error(("integer value " + std::to_string(iv) +
-                           " out of byte range (0-255)").c_str());
+                           " out of byte range (0-255) — to wrap, mask first: "
+                           "`(value & 255) as byte`").c_str());
     return iv;
 }
 

@@ -1138,7 +1138,14 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
             if (iv < 0 || iv > 255) {
                 if (instr.left == 1) frame.slots[instr.dest] = Value::null();
                 else pendingThrow_ = makeErrorValue(
-                    "integer value " + std::to_string(iv) + " out of byte range (0-255)",
+                    // Mesaj SARMA YOLUNU da gösterir: `as byte` kontrollüdür
+                    // (ADR-040 Faz 4 — tipler arası dönüşüm doğrular), sarma
+                    // isteyen kullanıcının yazabileceği ifade `(x & 255) as
+                    // byte`'tır ve o hata vermez. JIT'teki eşdeğer mesajla
+                    // birebir aynı tutulmalıdır (mir_backend.cpp).
+                    "integer value " + std::to_string(iv) +
+                        " out of byte range (0-255) — to wrap, mask first: "
+                        "`(value & 255) as byte`",
                     "E_CAST", instr.sourceLine, instr.sourceCol);
             } else {
                 frame.slots[instr.dest] = Value::fromInt(iv); // byte int olarak taşınır
