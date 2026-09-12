@@ -136,12 +136,25 @@ struct JitRuntime {
     std::vector<std::unique_ptr<DecimalObject>> decimalFallback;
 };
 
-// Tek erişim noktası. THREAD NOTU: bugün süreç-ömrü tek örnek; thread
-// desteğinde `static` → `thread_local` yapılır (MIRPLAN §9 modeli).
-JitRuntime& rt() {
-    static JitRuntime instance;
-    return instance;
-}
+// Tek erişim noktası.
+//
+// Depo FONKSİYON-İÇİ static DEĞİL, namespace kapsamındadır. Fonksiyon-içi
+// static her erişimde "başlatıldı mı?" guard'ı kontrol ettirir (C++
+// thread-safe statics); rt() sıcak yolda çok çağrılır — tek bir
+// rt_jit_host_call gövdesinde 28 kez — ve profilde bu guard tek başına
+// koşunun %25.86'sını alıyordu (perf, dizi push döngüsü).
+//
+// Namespace kapsamlı nesnenin başlatması program yüklenirken bir kez yapılır;
+// erişim sabit adrestir, kontrol yoktur. JitRuntime'ın kurucusu trivial
+// (POD üyeler + boş vector'ler), dolayısıyla statik başlatma sırası sorunu
+// doğurmaz: ilk kullanımdan önce sıfırlanmış olur.
+//
+// THREAD NOTU: bugün süreç-ömrü tek örnek; thread desteğinde bu satır
+// `thread_local JitRuntime g_jitRuntime;` olur (MIRPLAN §9 modeli) — o
+// biçimde de guard maliyeti yoktur.
+JitRuntime g_jitRuntime;
+
+JitRuntime& rt() { return g_jitRuntime; }
 
 StringObject*  jitNewString(std::string v);
 DecimalObject* jitBoxDecimal(const DecimalValue& v);
