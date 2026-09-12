@@ -1,0 +1,77 @@
+// Bölme opcode'ları hata dallarını KENDİLERİ yayılıma bağlar (genel
+// rt_jit_error_pending kontrolünden muaftırlar). Bu fixture o muafiyetin
+// hiçbir hata yolunu bozmadığını doğrular.
+//
+// Regresyon riski: muafiyet yanlış uygulanırsa sıfıra bölme hatası ya hiç
+// yayılmaz (program yanlış sonuçla devam eder) ya da try/catch'e ulaşmaz.
+// Altı opcode da ayrı ayrı sınanır: DIV, MOD, LDIV, LMOD, FDIV, F32DIV.
+
+int intBolme(int a, int b) {
+    int sonuc = -1;
+    try {
+        sonuc = a / b;
+        // Hatadan SONRA iş: yayılım bağlanmazsa akış buraya düşer, catch'e
+        // sapmaz ve hata sessizce yutulur (sonuç -1 yerine 900 olur).
+        sonuc = sonuc + 400;
+        sonuc = sonuc + 500;
+    } catch (Error e) { sonuc = -1; }
+    return sonuc;
+}
+
+int intMod(int a, int b) {
+    int sonuc = -2;
+    try { sonuc = a % b; } catch (Error e) { sonuc = -2; }
+    return sonuc;
+}
+
+longint longBolme(longint a, longint b) {
+    longint sonuc = -3;
+    try { sonuc = a / b; } catch (Error e) { sonuc = -3; }
+    return sonuc;
+}
+
+longint longMod(longint a, longint b) {
+    longint sonuc = -4;
+    try { sonuc = a % b; } catch (Error e) { sonuc = -4; }
+    return sonuc;
+}
+
+float floatBolme(float a, float b) {
+    float sonuc = -5.0;
+    try { sonuc = a / b; } catch (Error e) { sonuc = -5.0; }
+    return sonuc;
+}
+
+int main() {
+    // Hatasız yol
+    print(intBolme(10, 2));
+    print(intMod(10, 3));
+    print(longBolme(100, 4));
+    print(longMod(100, 7));
+    print(floatBolme(9.0, 2.0));
+
+    // Hata yolu — hepsi yakalanmalı
+    print(intBolme(10, 0));
+    print(intMod(10, 0));
+    print(longBolme(100, 0));
+    print(longMod(100, 0));
+    print(floatBolme(9.0, 0.0));
+
+    // INT_MIN / -1: donanım tuzağı, hata DEĞİL — 2's-complement sonucu
+    print(intBolme(-2147483647 - 1, -1));
+    print(intMod(-2147483647 - 1, -1));
+
+    // Sıcak döngü + sonda hata: muafiyet döngüde devrede, hata yine görülmeli
+    int toplam = 0;
+    try {
+        int i = 1;
+        while (i < 20000) { toplam = toplam + (i / 7); i = i + 1; }
+        int sifir = 0;
+        toplam = toplam / sifir;
+    } catch (Error e) {
+        print("dongu-sonu");
+        print(e.code);
+    }
+    print(toplam);
+    return 0;
+}

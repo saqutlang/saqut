@@ -1,0 +1,94 @@
+// Hata yayılımı kontrolü TALİMAT bazında emit edilmelidir, fonksiyon bazında
+// değil — ama daraltma hiçbir hatayı yutmamalıdır.
+//
+// Regresyon: eskiden fonksiyonda tek bir CALLHOST/DIV/ARRAY_GET bulunması, o
+// fonksiyondaki HER talimattan sonra bir native çağrı yayılmasına yol açıyordu.
+// Daraltma yanlış yapılırsa hata SESSİZCE YUTULUR — bu fixture her hata
+// kaynağının hâlâ yakalandığını ve try/catch'in çalıştığını doğrular.
+//
+// Kapsanan hata kaynakları: sıfıra bölme (int/mod), dizi sınırı, checked cast.
+// Her biri hem yakalanan (try) hem yakalanmayan bağlamda sınanır — ayrıca
+// SICAK DÖNGÜ içinde, çünkü daraltma tam da orada devreye giriyor.
+
+int bolmeDene(int a, int b) {
+    int sonuc = -1;
+    try {
+        sonuc = a / b;
+    } catch (Error e) {
+        sonuc = -1;
+    }
+    return sonuc;
+}
+
+int modDene(int a, int b) {
+    int sonuc = -2;
+    try {
+        sonuc = a % b;
+    } catch (Error e) {
+        sonuc = -2;
+    }
+    return sonuc;
+}
+
+int diziDene(int[] dizi, int indeks) {
+    int sonuc = -3;
+    try {
+        sonuc = dizi[indeks];
+        // Hatadan SONRA iş yapılır: yayılım kontrolü ARRAY_GET'ten hemen
+        // sonra emit edilmezse akış buraya düşer ve catch'e sapmaz —
+        // yani hata sessizce yutulur ve sonuç 999 olur.
+        sonuc = sonuc + 500;
+        sonuc = sonuc + 499;
+    } catch (Error e) {
+        sonuc = -3;
+    }
+    return sonuc;
+}
+
+int castDene(int deger) {
+    int sonuc = -4;
+    try {
+        byte b = deger as byte;
+        sonuc = b as int;
+    } catch (Error e) {
+        sonuc = -4;
+    }
+    return sonuc;
+}
+
+int main() {
+    // Hata YOK yolu — normal sonuçlar
+    print(bolmeDene(10, 2));
+    print(modDene(10, 3));
+    print(diziDene([7, 8, 9], 1));
+    print(castDene(200));
+
+    // Hata VAR yolu — hepsi yakalanmalı
+    print(bolmeDene(10, 0));
+    print(modDene(10, 0));
+    print(diziDene([7, 8, 9], 99));
+    print(castDene(300));
+
+    // Sıcak döngü + sonda hata: döngüde kontrol daraltılsa bile hata görülmeli
+    int toplam = 0;
+    try {
+        int i = 1;
+        while (i < 50000) {
+            toplam = toplam + (i / 7);
+            i = i + 1;
+        }
+        int sifir = 0;
+        toplam = toplam / sifir;
+    } catch (Error e) {
+        print("dongu-sonu-yakalandi");
+    }
+    print(toplam);
+
+    // CALLHOST içeren fonksiyonda saf aritmetik: eskiden bu döngü talimat
+    // başına bir native çağrı taşıyordu (ölçüldü: 1.9x → 57x fark).
+    int saf = 0;
+    int j = 0;
+    while (j < 100000) { saf = saf + j; j = j + 1; }
+    print(saf);
+    return 0;
+}

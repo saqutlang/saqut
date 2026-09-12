@@ -1,0 +1,17 @@
+// try DIŞINDA hata: program o noktada durmalı, sonraki satır çalışmamalı.
+//
+// Regresyon: hata yayılım kontrolü artık TALİMAT bazında emit ediliyor
+// (fonksiyon bazında değil). Daraltma bir hata kaynağını atlarsa, try dışında
+// hiçbir şey akışı kesmez — program yanlış sonuçla DEVAM eder ve exit 0 döner.
+// try İÇİ bu hatayı yakalamaz, çünkü orada handlerTarget>=0 zaten kontrol
+// emit ettiriyor; asıl açık burasıdır.
+//
+// Beklenen: stdout'a hiçbir şey yazılmadan runtime error, exit 70.
+int main() {
+    int[] dizi = [1, 2, 3];
+    int indeks = 99;
+    int x = dizi[indeks];
+    print("BU SATIR CALISMAMALI");
+    print(x);
+    return 0;
+}

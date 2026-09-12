@@ -908,16 +908,20 @@ extern "C" void rt_jit_print_decimal(void* d) { std::cout << jitDV(d).toString()
 //     f/f  → "runtime error: float division by zero"  exit 70
 // Önceki gerçekleme mod mesajını ASCII'ye düşürüyor ("sifira bolme") ve
 // üçünde de exit 1 döndürüyordu — merkezi kSoftwareError (70) sınıfı ihlali.
-extern "C" void rt_jit_div_zero() {
-    jitSetError("division by zero", "E_DIVZERO");
+// Sıfıra bölme hataları. Konum PARAMETRE olarak gelir; eskiden her bölme
+// talimatından ÖNCE koşulsuz bir rt_jit_error_location çağrısı emit ediliyordu
+// ve hata olmasa bile tur başına bir çağrı ödeniyordu. Bölme kodgen'i zaten
+// inline sıfır kontrolü yapıyor — konumu yalnız hata DALINDA yazmak yeterli.
+extern "C" void rt_jit_div_zero(int64_t line, int64_t col) {
+    jitSetError("division by zero", "E_DIVZERO", line, col);
 }
 
-extern "C" void rt_jit_mod_zero() {
-    jitSetError("sıfıra bölme (mod)", "E_DIVZERO");
+extern "C" void rt_jit_mod_zero(int64_t line, int64_t col) {
+    jitSetError("sıfıra bölme (mod)", "E_DIVZERO", line, col);
 }
 
-extern "C" void rt_jit_fdiv_zero() {
-    jitSetError("float division by zero", "E_DIVZERO");
+extern "C" void rt_jit_fdiv_zero(int64_t line, int64_t col) {
+    jitSetError("float division by zero", "E_DIVZERO", line, col);
 }
 
 // SlotType → MIR register tipi (MIRPLAN §3; ADR-040 genişletmesi).
@@ -1401,11 +1405,12 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
 
     MIR_item_t printDProto     = MIR_new_proto(ctx, "print_d_proto", 0, nullptr, 1, MIR_T_I64, "v");
     MIR_item_t printDImport    = MIR_new_import(ctx, "rt_jit_print_decimal");
-    MIR_item_t divZeroProto    = MIR_new_proto(ctx, "divzero_proto", 0, nullptr, 0);
+    MIR_var_t  zeroErrVars[2]  = {{MIR_T_I64, "line", 0}, {MIR_T_I64, "col", 0}};
+    MIR_item_t divZeroProto    = MIR_new_proto_arr(ctx, "divzero_proto", 0, nullptr, 2, zeroErrVars);
     MIR_item_t divZeroImport   = MIR_new_import(ctx, "rt_jit_div_zero");
-    MIR_item_t modZeroProto    = MIR_new_proto(ctx, "modzero_proto", 0, nullptr, 0);
+    MIR_item_t modZeroProto    = MIR_new_proto_arr(ctx, "modzero_proto", 0, nullptr, 2, zeroErrVars);
     MIR_item_t modZeroImport   = MIR_new_import(ctx, "rt_jit_mod_zero");
-    MIR_item_t fdivZeroProto   = MIR_new_proto(ctx, "fdivzero_proto", 0, nullptr, 0);
+    MIR_item_t fdivZeroProto   = MIR_new_proto_arr(ctx, "fdivzero_proto", 0, nullptr, 2, zeroErrVars);
     MIR_item_t fdivZeroImport  = MIR_new_import(ctx, "rt_jit_fdiv_zero");
     MIR_item_t errPendingProto = MIR_new_proto_arr(ctx, "err_pending_proto", 1, &i64Ret, 0, nullptr);
     MIR_item_t errPendingImport = MIR_new_import(ctx, "rt_jit_error_pending");
@@ -1474,10 +1479,25 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     // (fibonacci gibi: yalnız ADD/SUB/CMP/CALL(kendine)/RETURN) canRaise=false
     // kalır → MIRPLAN §7.1 gereği ZERO ek talimat taşır.
     std::unordered_map<std::string, bool> canRaise;
+    // Bir opcode ÇALIŞMA ZAMANINDA hata yayabilir mi (rt().pendingError'a
+    // yazabilir mi)? Liste, hata üreten trampolinlerin çağrıldığı opcode'lardan
+    // türetilmiştir; EKSİK bırakmak hatanın sessizce yutulması demektir
+    // (yayılım kontrolü emit edilmez, hata bir sonraki safepoint'e kadar
+    // görülmez). Fazla eklemek yalnız gereksiz kontrol maliyetidir.
+    //
+    // Kaynaklar (mir_backend.cpp):
+    //   div/mod/fdiv sıfır       → rt_jit_div_zero / mod_zero / fdiv_zero
+    //   dizi sınırı              → jitBoundsFail (array_get_*, array_set_*)
+    //   host çağrısı             → rt_jit_host_call (thunk hatası)
+    //   throw                    → rt_jit_throw_*
+    //   decimal taşma/sıfır      → rt_jit_decimal_add/sub/mul/div/mod
+    //                              ("decimal overflow" — DADD/DSUB/DMUL de
+    //                              hata yayar; eskiden listede YOKTU)
     auto errorCapable = [](Opcode op) {
         switch (op) {
             case Opcode::DIV: case Opcode::MOD: case Opcode::FDIV:
             case Opcode::LDIV: case Opcode::LMOD: case Opcode::F32DIV:
+            case Opcode::DADD: case Opcode::DSUB: case Opcode::DMUL:
             case Opcode::DDIV: case Opcode::DMOD:
             case Opcode::ARRAY_GET: case Opcode::ARRAY_SET:
             case Opcode::CALLHOST: case Opcode::THROW:
@@ -1837,17 +1857,44 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
             MIR_append_insn(ctx, func, labelAt[i]);
             const Instruction& instr = fn.instructions[i];
 
+            // Bölme opcode'larının hata dalı için: hatayı bayrağa yazdıktan
+            // sonra genel yayılım kontrolünü BEKLEMEDEN doğrudan hedefe atla.
+            //
+            // Neden: bölme kodgen'i sıfırı zaten inline kontrol ediyor ve o
+            // dalda hatanın oluştuğunu KESİN biliyor. Genel yayılım bloğunun
+            // yaptığı iş (rt_jit_error_pending çağırıp bayrağı sorgulamak)
+            // burada gereksizdir — cevabı önceden biliyoruz. Ölçülen fark:
+            // bölme yollarında 11x, aynı döngü bölmesiz 53x.
+            auto emitJumpToErrorTarget = [&]() {
+                if (handlerTarget[i] >= 0) {
+                    int errorSlot = handlerErrorSlot[i];
+                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 3,
+                        MIR_new_ref_op(ctx, errTakeProto),
+                        MIR_new_ref_op(ctx, errTakeImport), R(errorSlot)));
+                    emitShadowSet(errorSlot, (int)i + 1);
+                    MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_JMP,
+                        MIR_new_label_op(ctx, labelAt[static_cast<size_t>(handlerTarget[i])])));
+                } else {
+                    MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_JMP,
+                        MIR_new_label_op(ctx, propagateLabel)));
+                }
+            };
+
             // Hata konumu: yakalanabilir hata üretebilen opcode'dan ÖNCE
             // rt().errorLine/Col'u doldur — jitSetError defaults olarak bu
             // değerleri kullanır (VM'in instr.sourceLine/sourceCol kullanımıyla
             // birebir, ADR-025). Bir önceki instruction'ın konumu sızmasın.
             switch (instr.opcode) {
-                case Opcode::DIV:
-                case Opcode::MOD:
-                case Opcode::FDIV:
-                case Opcode::LDIV:
-                case Opcode::LMOD:
-                case Opcode::F32DIV:
+                // NOT: int/long/float sıfıra bölme (DIV/MOD/FDIV/LDIV/LMOD/
+                // F32DIV) bu listede DEĞİLDİR. Onların kodgen'i sıfır
+                // kontrolünü inline yapar ve konumu hata DALINDA, trampoline
+                // parametre olarak geçirir. Buraya koymak, hata olmasa bile
+                // tur başına bir rt_jit_error_location çağrısı demekti —
+                // sıcak bölme döngülerinde ölçülebilir maliyet.
+                //
+                // DDIV/DMOD (decimal) listede KALIR: onların hata yolu
+                // trampolinin içindedir (rt_jit_decimal_div), konumu dışarıdan
+                // geçirilemez.
                 case Opcode::DDIV:
                 case Opcode::DMOD:
                 case Opcode::ARRAY_GET:
@@ -2100,8 +2147,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     MIR_append_insn(ctx, func,
                         MIR_new_insn(ctx, MIR_BNE, MIR_new_label_op(ctx, okLabel), R(instr.right), MIR_new_int_op(ctx, 0)));
                     MIR_append_insn(ctx, func,
-                        MIR_new_call_insn(ctx, 2, MIR_new_ref_op(ctx, divZeroProto), MIR_new_ref_op(ctx, divZeroImport)));
-                    MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_JMP, MIR_new_label_op(ctx, doneLabel)));
+                        MIR_new_call_insn(ctx, 4, MIR_new_ref_op(ctx, divZeroProto), MIR_new_ref_op(ctx, divZeroImport), MIR_new_int_op(ctx, instr.sourceLine), MIR_new_int_op(ctx, instr.sourceCol)));
+                    emitJumpToErrorTarget();
                     MIR_append_insn(ctx, func, okLabel);
                     // INT_MIN / -1 donanımda tuzak (#DE) → 2's-complement sonucu INT_MIN
                     MIR_append_insn(ctx, func,
@@ -2123,8 +2170,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     MIR_append_insn(ctx, func,
                         MIR_new_insn(ctx, MIR_BNE, MIR_new_label_op(ctx, okLabel), R(instr.right), MIR_new_int_op(ctx, 0)));
                     MIR_append_insn(ctx, func,
-                        MIR_new_call_insn(ctx, 2, MIR_new_ref_op(ctx, modZeroProto), MIR_new_ref_op(ctx, modZeroImport)));
-                    MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_JMP, MIR_new_label_op(ctx, doneLabel)));
+                        MIR_new_call_insn(ctx, 4, MIR_new_ref_op(ctx, modZeroProto), MIR_new_ref_op(ctx, modZeroImport), MIR_new_int_op(ctx, instr.sourceLine), MIR_new_int_op(ctx, instr.sourceCol)));
+                    emitJumpToErrorTarget();
                     MIR_append_insn(ctx, func, okLabel);
                     // INT_MIN % -1 → tuzak → 2's-complement sonucu 0
                     MIR_append_insn(ctx, func,
@@ -2157,8 +2204,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     MIR_append_insn(ctx, func,
                         MIR_new_insn(ctx, MIR_DBNE, MIR_new_label_op(ctx, okLabel), R(instr.right), MIR_new_double_op(ctx, 0.0)));
                     MIR_append_insn(ctx, func,
-                        MIR_new_call_insn(ctx, 2, MIR_new_ref_op(ctx, fdivZeroProto), MIR_new_ref_op(ctx, fdivZeroImport)));
-                    MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_JMP, MIR_new_label_op(ctx, doneLabel)));
+                        MIR_new_call_insn(ctx, 4, MIR_new_ref_op(ctx, fdivZeroProto), MIR_new_ref_op(ctx, fdivZeroImport), MIR_new_int_op(ctx, instr.sourceLine), MIR_new_int_op(ctx, instr.sourceCol)));
+                    emitJumpToErrorTarget();
                     MIR_append_insn(ctx, func, okLabel);
                     MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_DDIV, R(instr.dest), R(instr.left), R(instr.right)));
                     MIR_append_insn(ctx, func, doneLabel);
@@ -2191,8 +2238,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     MIR_label_t doDiv = MIR_new_label(ctx);
                     MIR_label_t doneLabel = MIR_new_label(ctx);
                     MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_BNE, MIR_new_label_op(ctx, okLabel), R(instr.right), MIR_new_int_op(ctx, 0)));
-                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 2, MIR_new_ref_op(ctx, divZeroProto), MIR_new_ref_op(ctx, divZeroImport)));
-                    MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_JMP, MIR_new_label_op(ctx, doneLabel)));
+                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 4, MIR_new_ref_op(ctx, divZeroProto), MIR_new_ref_op(ctx, divZeroImport), MIR_new_int_op(ctx, instr.sourceLine), MIR_new_int_op(ctx, instr.sourceCol)));
+                    emitJumpToErrorTarget();
                     MIR_append_insn(ctx, func, okLabel);
                     // INT64_MIN / -1 → tuzak → 2's-complement sonucu INT64_MIN
                     MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_BNE, MIR_new_label_op(ctx, doDiv), R(instr.right), MIR_new_int_op(ctx, -1)));
@@ -2209,8 +2256,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     MIR_label_t doMod = MIR_new_label(ctx);
                     MIR_label_t doneLabel = MIR_new_label(ctx);
                     MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_BNE, MIR_new_label_op(ctx, okLabel), R(instr.right), MIR_new_int_op(ctx, 0)));
-                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 2, MIR_new_ref_op(ctx, modZeroProto), MIR_new_ref_op(ctx, modZeroImport)));
-                    MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_JMP, MIR_new_label_op(ctx, doneLabel)));
+                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 4, MIR_new_ref_op(ctx, modZeroProto), MIR_new_ref_op(ctx, modZeroImport), MIR_new_int_op(ctx, instr.sourceLine), MIR_new_int_op(ctx, instr.sourceCol)));
+                    emitJumpToErrorTarget();
                     MIR_append_insn(ctx, func, okLabel);
                     // INT64_MIN % -1 → tuzak → 0
                     MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_BNE, MIR_new_label_op(ctx, doMod), R(instr.right), MIR_new_int_op(ctx, -1)));
@@ -2264,8 +2311,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     MIR_label_t okLabel = MIR_new_label(ctx);
                     MIR_label_t doneLabel = MIR_new_label(ctx);
                     MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_FBNE, MIR_new_label_op(ctx, okLabel), R(instr.right), MIR_new_float_op(ctx, 0.0f)));
-                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 2, MIR_new_ref_op(ctx, fdivZeroProto), MIR_new_ref_op(ctx, fdivZeroImport)));
-                    MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_JMP, MIR_new_label_op(ctx, doneLabel)));
+                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 4, MIR_new_ref_op(ctx, fdivZeroProto), MIR_new_ref_op(ctx, fdivZeroImport), MIR_new_int_op(ctx, instr.sourceLine), MIR_new_int_op(ctx, instr.sourceCol)));
+                    emitJumpToErrorTarget();
                     MIR_append_insn(ctx, func, okLabel);
                     MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_FDIV, R(instr.dest), R(instr.left), R(instr.right)));
                     MIR_append_insn(ctx, func, doneLabel);
@@ -2821,12 +2868,52 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     setNullFlag(instr.dest, 0);
                 }
             }
-            // #110: hata yayılımı — (RETURN dışı) talimatın ardından
-            // rt().pendingError kontrolü. YALNIZCA bu fonksiyon hata taşıyabilir
-            // (canRaise) veya talimat bir try içindeyse (handlerTarget>=0) emit
-            // edilir; salt-skaler try'sız sıcak yollar (§7.1) sıfır ek yük taşır.
+            // #110: hata yayılımı — hata ÜRETEBİLEN talimatın ardından
+            // rt().pendingError kontrolü.
+            //
+            // Koşul TALİMAT bazındadır, fonksiyon bazında DEĞİL. Eskiden
+            // `canRaise[name]` idi: fonksiyonda tek bir CALLHOST/DIV/ARRAY_GET
+            // bulunması, o fonksiyondaki HER talimattan sonra bir native çağrı
+            // yayılmasına yol açıyordu — `mov`, `adds`, `lt` dahil, yani hata
+            // üretmesi mümkün olmayanlar dahil.
+            //
+            // Ölçülen etki (50M turluk saf tamsayı döngüsü, Release):
+            //   print YOK  → JIT  30 ms  (VM'in 56 katı hızlı)
+            //   print VAR  → JIT 914 ms  (VM'in 1.9 katı)
+            // Tek fark döngünün DIŞINDA, bir kez çalışan bir print'ti; o tek
+            // CALLHOST bütün fonksiyonu "hata taşıyabilir" ilan edip sıcak
+            // döngüye talimat başına bir çağrı ekliyordu.
+            //
+            // Neden güvenli: rt().pendingError yalnız errorCapable/
+            // fallibleCastOp trampolinleri tarafından yazılır. `adds`'ten sonra
+            // bayrağın set olmuş olması MÜMKÜN DEĞİLDİR; kontrolü oraya koymak
+            // doğruluk sağlamaz, yalnız maliyet üretir.
+            //
+            // CALL dahildir: çağrılan fonksiyon hata yayabilir ve dönüşte
+            // bayrak set olabilir. handlerTarget >= 0 (try bölgesi içi) da
+            // korunur — orada akışın catch'e sapması gerekebilir.
+            // Sıfıra bölme opcode'ları BU KONTROLDEN MUAFTIR: hata dallarını
+            // kendileri yayılıma bağlar (emitJumpToErrorTarget, yukarıda).
+            // Genel kontrolün yapacağı iş — rt_jit_error_pending çağırıp
+            // bayrağı sorgulamak — orada gereksizdir, cevap zaten bilinir.
+            // DDIV/DMOD (decimal) muaf DEĞİLDİR: onların hata yolu trampolinin
+            // içindedir, kodgen hatanın oluşup oluşmadığını göremez.
+            auto selfPropagatingDiv = [](Opcode op) {
+                switch (op) {
+                    case Opcode::DIV: case Opcode::MOD:
+                    case Opcode::LDIV: case Opcode::LMOD:
+                    case Opcode::FDIV: case Opcode::F32DIV:
+                        return true;
+                    default:
+                        return false;
+                }
+            };
+            const bool mayRaiseHere = (errorCapable(instr.opcode) &&
+                                       !selfPropagatingDiv(instr.opcode)) ||
+                                      fallibleCastOp(instr.opcode) ||
+                                      instr.opcode == Opcode::CALL;
             if (instr.opcode != Opcode::RETURN &&
-                (canRaise[name] || handlerTarget[i] >= 0)) {
+                (mayRaiseHere || handlerTarget[i] >= 0)) {
                 MIR_reg_t pending = newTmp("pending");
                 MIR_label_t noError = MIR_new_label(ctx);
                 MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 3,
