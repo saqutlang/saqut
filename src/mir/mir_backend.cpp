@@ -564,6 +564,44 @@ extern "C" void rt_jit_host_arg_i(int64_t idx, int64_t kind, int64_t v) {
     rt().hostArgs[idx].i    = v;
 }
 
+// ── Birleşik host çağrısı: argümanlar DOĞRUDAN geçer ────────────────────────
+//
+// Genel yol bir host çağrısını beş native çağrıya açıyordu:
+//   error_location → host_arg_i(0) → host_arg_i(1) → host_call → error_pending
+// Dördü yalnız köprüdür; asıl iş tek çağrıdadır. Dizi-yoğun programda
+// (`a.push(x)` döngüsü) bu köprü ölçülen maliyetin baskın kısmıydı:
+// JIT, VM'in yalnız 1.24 katıydı — aynı programda dizi OKUMA 3.90x.
+//
+// Bu trampolin ikisini birden yapar: argümanları tampona yazar ve çağrıyı
+// yürütür. Tek native çağrı, aynı semantik.
+//
+// Kapsam: TAMSAYI-benzeri (int/long/byte/date/ref/str — hepsi HostSlot.i
+// üzerinden taşınır) en çok iki argümanlı çağrılar. Float/double argüman
+// ayrı bir kanal ister (HostSlot.d) ve genel yola düşer; nullable argüman
+// da öyle (null bayrağı ayrıca yazılır).
+//
+// Hata konumu da parametre olarak gelir: eskiden her çağrıdan ÖNCE koşulsuz
+// bir rt_jit_error_location çağrısı vardı, hata olmasa bile ödeniyordu.
+// Burada yalnız hata yolunda kullanılır (jitSetError zaten line/col alır).
+extern "C" int64_t rt_jit_host_call(int64_t entryId, int64_t argc);  // aşağıda
+
+extern "C" int64_t rt_jit_host_call2(int64_t entryId, int64_t argc,
+                                     int64_t kind0, int64_t arg0,
+                                     int64_t kind1, int64_t arg1,
+                                     int64_t line, int64_t col) {
+    rt().errorLine = line;
+    rt().errorCol  = col;
+    if (argc >= 1) {
+        rt().hostArgs[0].kind = (HostKind)kind0;
+        rt().hostArgs[0].i    = arg0;
+    }
+    if (argc >= 2) {
+        rt().hostArgs[1].kind = (HostKind)kind1;
+        rt().hostArgs[1].i    = arg1;
+    }
+    return rt_jit_host_call(entryId, argc);
+}
+
 extern "C" void rt_jit_host_arg_d(int64_t idx, int64_t kind, double v) {
     if (idx < 0 || idx >= JitRuntime::kMaxHostArgs) return;
     rt().hostArgs[idx].kind = (HostKind)kind;
@@ -1377,6 +1415,14 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     MIR_var_t  hostCallVars[2] = {{MIR_T_I64, "e", 0}, {MIR_T_I64, "n", 0}};
     MIR_item_t hostCallProto   = MIR_new_proto_arr(ctx, "host_call_proto", 1, &i64Ret, 2, hostCallVars);
     MIR_item_t hostCallImport  = MIR_new_import(ctx, "rt_jit_host_call");
+    // Birleşik yol: argümanlar doğrudan geçer (bkz. rt_jit_host_call2).
+    MIR_var_t  hostCall2Vars[8] = {{MIR_T_I64, "e", 0},  {MIR_T_I64, "n", 0},
+                                   {MIR_T_I64, "k0", 0}, {MIR_T_I64, "a0", 0},
+                                   {MIR_T_I64, "k1", 0}, {MIR_T_I64, "a1", 0},
+                                   {MIR_T_I64, "ln", 0}, {MIR_T_I64, "cl", 0}};
+    MIR_item_t hostCall2Proto  = MIR_new_proto_arr(ctx, "host_call2_proto", 1, &i64Ret, 8,
+                                                   hostCall2Vars);
+    MIR_item_t hostCall2Import = MIR_new_import(ctx, "rt_jit_host_call2");
     MIR_item_t hostCallDProto  = MIR_new_proto_arr(ctx, "host_call_d_proto", 1, &dRet, 2, hostCallVars);
     MIR_item_t hostCallDImport = MIR_new_import(ctx, "rt_jit_host_call_d");
     MIR_item_t hostRetNullProto = MIR_new_proto_arr(ctx, "host_ret_null_proto", 1, &i64Ret, 0, nullptr);
@@ -1902,7 +1948,11 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                 case Opcode::DMOD:
                 case Opcode::ARRAY_GET:
                 case Opcode::ARRAY_SET:
-                case Opcode::CALLHOST:
+                    // NOT: CALLHOST bu listede DEĞİLDİR — konumu kendi
+                    // çağrısıyla birlikte taşır (hızlı yolda host_call2
+                    // parametresi, genel yolda aşağıdaki ayrı emit). Burada
+                    // koşulsuz bir çağrı, hata olmasa bile her host çağrısında
+                    // ödenirdi.
                     MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 4,
                         MIR_new_ref_op(ctx, errorLocationProto),
                         MIR_new_ref_op(ctx, errorLocationImport),
@@ -2703,6 +2753,124 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     break;
                 }
                 case Opcode::CALLHOST: {
+                    // HIZLI YOL: argümanlar doğrudan geçer (rt_jit_host_call2).
+                    //
+                    // Genel yol her argüman için ayrı bir native çağrı yayar
+                    // (rt_jit_host_arg_i), artı hata konumu için bir çağrı
+                    // daha. `a.push(x)` gibi iki argümanlı bir builtin JIT'te
+                    // beş çağrıya açılıyordu; dördü yalnız köprüydü.
+                    //
+                    // Koşullar — hepsi sağlanmazsa genel yola düşülür:
+                    //   - en çok 2 argüman (host_call2'nin taşıdığı kadar)
+                    //   - hiçbiri float/float32 (onlar HostSlot.d kanalını
+                    //     ister, ayrı bir alan)
+                    //   - hiçbiri nullable (null bayrağı ayrıca yazılır)
+                    // Kalan türler (int/long/byte/date/ref/str) HostSlot.i
+                    // üzerinden taşınır ve tek kanaldan geçer.
+                    auto hostArgKind = [&](int slot) -> HostKind {
+                        switch (slotKindOf(fn, slot)) {
+                            case SlotType::LongInt: return HostKind::LongInt;
+                            case SlotType::Float:   return HostKind::Float;
+                            case SlotType::Float32: return HostKind::Float32;
+                            case SlotType::Str:     return HostKind::Str;
+                            case SlotType::Decimal: return HostKind::Decimal;
+                            case SlotType::Date:    return HostKind::Date;
+                            case SlotType::Ref:     return HostKind::Ref;
+                            default:                return HostKind::Int;
+                        }
+                    };
+                    bool fastPath = instr.argSlots.size() <= 2;
+                    {
+                        // Dönüş türü float ise hızlı yol kullanılamaz (yukarıdaki
+                        // not). Kararı burada verip register ayırmaya hiç
+                        // girmiyoruz.
+                        const HostEntry* heProbe = hostEntryAt(instr.intValue);
+                        HostKind rkProbe = heProbe ? heProbe->retKind : HostKind::Void;
+                        if (instr.valueType != SlotType::Unknown) {
+                            switch (instr.valueType) {
+                                case SlotType::Str:     rkProbe = HostKind::Str;     break;
+                                case SlotType::Ref:     rkProbe = HostKind::Ref;     break;
+                                case SlotType::Decimal: rkProbe = HostKind::Decimal; break;
+                                default: break;
+                            }
+                        }
+                        if (rkProbe == HostKind::Float || rkProbe == HostKind::Float32)
+                            fastPath = false;
+                        // DEST SLOT tipi nihai otoritedir: registry retKind
+                        // eleman-tipli dönüşlerde (array::pop → float[] üzerinde
+                        // float döner) statik kalır ve float'ı göstermez.
+                        // Dest float ise dönüş double kanalından gelmeli.
+                        if (instr.dest >= 0) {
+                            const SlotType dt = slotKindOf(fn, instr.dest);
+                            if (dt == SlotType::Float || dt == SlotType::Float32)
+                                fastPath = false;
+                        }
+                    }
+                    for (int as : instr.argSlots) {
+                        const SlotType ast = slotKindOf(fn, as);
+                        if (ast == SlotType::Float || ast == SlotType::Float32 ||
+                            isNullableSlot(as)) {
+                            fastPath = false;
+                            break;
+                        }
+                    }
+                    if (fastPath) {
+                        const int64_t argc = (int64_t)instr.argSlots.size();
+                        MIR_op_t k0 = MIR_new_int_op(ctx, 0), a0 = MIR_new_int_op(ctx, 0);
+                        MIR_op_t k1 = MIR_new_int_op(ctx, 0), a1 = MIR_new_int_op(ctx, 0);
+                        if (argc >= 1) {
+                            k0 = MIR_new_int_op(ctx, (int64_t)hostArgKind(instr.argSlots[0]));
+                            a0 = R(instr.argSlots[0]);
+                        }
+                        if (argc >= 2) {
+                            k1 = MIR_new_int_op(ctx, (int64_t)hostArgKind(instr.argSlots[1]));
+                            a1 = R(instr.argSlots[1]);
+                        }
+                        const HostEntry* heFast = hostEntryAt(instr.intValue);
+                        HostKind rkFast = heFast ? heFast->retKind : HostKind::Void;
+                        if (instr.valueType != SlotType::Unknown) {
+                            switch (instr.valueType) {
+                                case SlotType::Str:     rkFast = HostKind::Str;     break;
+                                case SlotType::Ref:     rkFast = HostKind::Ref;     break;
+                                case SlotType::Decimal: rkFast = HostKind::Decimal; break;
+                                default: break;
+                            }
+                        }
+                        // Float dönüşlü çağrı hızlı yola GİRMEZ: dönüş double
+                        // kanalından gelir (host_call_d), int kanalı taşıyamaz.
+                        // Bu kontrol register AYRILMADAN ÖNCE yapılmalıdır —
+                        // aksi halde genel yola düşerken kullanılmayan bir
+                        // register adı tüketilir ve genel yol aynı adı yeniden
+                        // üretince MIR "Repeated reg declaration" ile reddeder.
+                        const bool retIsDFast = (rkFast == HostKind::Float ||
+                                                 rkFast == HostKind::Float32);
+                        if (!retIsDFast) {
+                            MIR_reg_t dstFast = instr.dest >= 0
+                                                  ? regs[static_cast<size_t>(instr.dest)]
+                                                  : newTmp("fasthostsink");
+                            // Operand sayısı: proto + import + dönüş + 8 argüman = 11
+                            MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 11,
+                                MIR_new_ref_op(ctx, hostCall2Proto),
+                                MIR_new_ref_op(ctx, hostCall2Import),
+                                MIR_new_reg_op(ctx, dstFast),
+                                MIR_new_int_op(ctx, instr.intValue),
+                                MIR_new_int_op(ctx, argc),
+                                k0, a0, k1, a1,
+                                MIR_new_int_op(ctx, instr.sourceLine),
+                                MIR_new_int_op(ctx, instr.sourceCol)));
+                            if (instr.dest >= 0 && isNullableSlot(instr.dest))
+                                MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 3,
+                                    MIR_new_ref_op(ctx, hostRetNullProto),
+                                    MIR_new_ref_op(ctx, hostRetNullImport),
+                                    MIR_new_reg_op(ctx,
+                                        nullFlagRegs[static_cast<size_t>(instr.dest)])));
+                            if (instr.dest >= 0 &&
+                                (rkFast == HostKind::Str || rkFast == HostKind::Ref ||
+                                 rkFast == HostKind::Decimal))
+                                emitShadowSet(instr.dest, (int)i + 1);
+                            break;
+                        }
+                    }
                     for (size_t ai = 0; ai < instr.argSlots.size(); ++ai) {
                         int      as  = instr.argSlots[ai];
                         SlotType ast = slotKindOf(fn, as);
@@ -2737,6 +2905,13 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                                 isD ? asDoubleOperand(as) : R(as)));
                         }
                     }
+                    // Genel yol: konumu çağrıdan hemen önce yaz (hızlı yol
+                    // bunu parametre olarak taşır, buraya düşmez).
+                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 4,
+                        MIR_new_ref_op(ctx, errorLocationProto),
+                        MIR_new_ref_op(ctx, errorLocationImport),
+                        MIR_new_int_op(ctx, instr.sourceLine),
+                        MIR_new_int_op(ctx, instr.sourceCol)));
                     const HostEntry* he = hostEntryAt(instr.intValue);
                     // valueType doluysa (built-in metodlar) o otoritedir:
                     // registry retKind'i eleman-tipli dönüşlerde statik kalır.
@@ -2990,6 +3165,7 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     MIR_load_external(ctx, "rt_jit_host_arg_nullable_i", reinterpret_cast<void*>(rt_jit_host_arg_nullable_i));
     MIR_load_external(ctx, "rt_jit_host_arg_nullable_d", reinterpret_cast<void*>(rt_jit_host_arg_nullable_d));
     MIR_load_external(ctx, "rt_jit_host_call",   reinterpret_cast<void*>(rt_jit_host_call));
+    MIR_load_external(ctx, "rt_jit_host_call2",  reinterpret_cast<void*>(rt_jit_host_call2));
     MIR_load_external(ctx, "rt_jit_host_call_d", reinterpret_cast<void*>(rt_jit_host_call_d));
     MIR_load_external(ctx, "rt_jit_host_ret_is_null", reinterpret_cast<void*>(rt_jit_host_ret_is_null));
     MIR_load_external(ctx, "rt_jit_call_arg_null_set", reinterpret_cast<void*>(rt_jit_call_arg_null_set));
