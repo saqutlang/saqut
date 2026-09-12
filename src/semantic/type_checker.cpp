@@ -1123,13 +1123,33 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         Type objType = checkExpr(ma->object);
         // ADR-021: direct field access on nullable object forbidden
         if (objType.nullable) {
+            // ADR-021 (#232): daraltma AD tabanlıdır — yalnız değişken adları
+            // daraltılabilir (narrowedNonNull_, extractNullCheck). `d.ic` bir
+            // ifadedir, adı yoktur ve daraltmaya giremez.
+            //
+            // Bu kasıtlıdır, eksik değil: struct'lar referans tiplidir
+            // (ADR-020), dolayısıyla `if (d.ic != null)` ile kullanım arasında
+            // araya giren bir çağrı alanı null'layabilir — derleyicinin
+            // göremediği bir alias üzerinden. Yerel değişkende bu risk yoktur.
+            //
+            // Bu yüzden hint, ifade için DOĞRU çözümü göstermelidir: değeri
+            // önce bir yerel değişkene al. Eski hint her iki durumda da
+            // "if (variable != null)" diyordu — alan erişiminde o kalıp
+            // çalışmaz ve kullanıcıyı çalışmayan bir yola sokuyordu.
+            const std::string nonNullType =
+                objType.toString().substr(0, objType.toString().size() - 1);
+            const bool isPlainVariable = ma->object->kind == ASTKind::Identifier;
             diag_.report(
                 "E003", node->loc,
                 "direct access on nullable type '" + objType.toString() +
                     "' — use if to check for null",
-                "if (variable != null) { variable.field ... } or make the type non-null: `" +
-                    objType.toString().substr(0, objType.toString().size() - 1) +
-                    " variable = ...;`");
+                isPlainVariable
+                    ? ("if (variable != null) { variable.field ... } or make the "
+                       "type non-null: `" + nonNullType + " variable = ...;`")
+                    : ("assign to a local first, then check it: `" + objType.toString() +
+                       " local = <expression>; if (local != null) { local.field ... }` "
+                       "— narrowing works on variables, not on field/index "
+                       "expressions"));
             result = Type::error();
             break;
         }

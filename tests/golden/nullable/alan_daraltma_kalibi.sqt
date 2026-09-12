@@ -1,0 +1,20 @@
+// #232: null daraltma AD tabanlıdır — `d.ic` gibi ifadeler daraltılamaz.
+//
+// Bu kasıtlıdır, eksik değil: struct'lar referans tiplidir (ADR-020), yani
+// `if (d.ic != null)` ile kullanım arasına giren bir çağrı alanı null'layabilir
+// (derleyicinin göremediği bir alias üzerinden). Yerel değişkende bu risk yok.
+//
+// Bu fixture, E003 hata mesajının hint'inde ÖNERİLEN kalıbın gerçekten
+// çalıştığını doğrular. Hint yanlış bir yol gösterirse kullanıcı çalışmayan
+// koda yönlendirilmiş olur — eski hint tam bunu yapıyordu ("if (variable
+// != null)" diyordu, ama o kalıp alan erişiminde derlenmez).
+struct Ic { int deger; }
+struct Dis { Ic? ic; }
+int main() {
+    Ic g; g.deger = 7;
+    Dis d; d.ic = g;
+    // hint'in onerdigi kalip
+    Ic? local = d.ic;
+    if (local != null) { print(local.deger); }
+    return 0;
+}
