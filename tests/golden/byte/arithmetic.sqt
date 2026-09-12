@@ -1,18 +1,50 @@
-// #86: byte aritmetikte int'e terfi eder (C modeli); bitwise de int döner.
+// ADR-040 Faz 4 (ürün sahibi kararı, 2026-09-13): byte aritmetiği
+//
+//   byte ⊕ byte  → byte, 8 bit'e SARAR (& 0xFF)
+//   byte ⊕ int   → int  (byte terfi eder, sonuç int — sarma YOK)
+//   int as byte  → aralık denetimli (dış veri doğrulaması; 300 → hata)
+//
+// Bu fixture #86'nın ilk kararını (her byte aritmetiği int'e terfi eder)
+// SUPERSEDE eder. Gerekçe: aynı ifade iki farklı niyete hizmet ediyordu —
+// aritmetik sarma (kripto/hash/checksum) ile dış veri doğrulaması. C ve
+// Rust'ın ayrımı alındı: tip içi aritmetik sarar, tipler arası dönüşüm
+// (açık `as`) kontrollü kalır.
 int main() {
     byte a = 100;
     byte b = 200;
-    int sum = a + b;        // 300 — byte'a sığmaz, int'e terfi
+
+    // ── byte ⊕ byte → byte, sarar. Cast yazmaya gerek YOK (ergonomi). ──
+    byte sum = a + b;        // 300 & 0xFF = 44
     print(sum);
-    int diff = b - a;       // 100
+    byte diff = b - a;       // 100 (sarma gerekmiyor)
     print(diff);
+    byte prod = a * b;       // 20000 & 0xFF = 32
+    print(prod);
+
     byte m = 240;
     byte n = 15;
-    int orr = m | n;        // 255
+    byte orr = m | n;        // 255
     print(orr);
-    int andd = m & n;       // 0
+    byte andd = m & n;       // 0
     print(andd);
-    int shifted = a << 2;   // 400
-    print(shifted);
+    byte xorr = m ^ n;       // 255
+    print(xorr);
+
+    // ── byte ⊕ int → int: sarma YOK, int aralığı korunur ──
+    // NOT: sağdaki int bir DEĞİŞKEN olmalıdır. Literal, byte bağlamında
+    // tiplenmeye çalışılır (0-255 denetimi) — bu ayrı ve mevcut bir
+    // davranıştır, bu karardan etkilenmez.
+    int buyukDeger = 300;
+    int genis = a + buyukDeger;     // 400 — sarma yok
+    print(genis);
+    int kaydir = (a as int) << 2;   // 400
+    print(kaydir);
+
+    // ── Açık cast hâlâ doğrular: aralık dışı yakalanır ──
+    int disVeri = 300;
+    byte? gecersiz = disVeri as byte?;
+    print(gecersiz);         // null
+    byte? gecerli = 42 as byte?;
+    print(gecerli);          // 42
     return 0;
 }

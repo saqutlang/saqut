@@ -984,11 +984,43 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             leftType.isNumeric())
             rightType = checkExpr(bin->Right, leftType);
 
-        // byte C-modeli terfi (#86): byte operand int'e yükselir, sonuç asla
-        // byte olmaz (byte + byte → int; byte & byte → int). numericRank byte
-        // içermez, o yüzden burada elle int'e çeviriyoruz.
+        // byte aritmetiği (ADR-040 Faz 4 kararı, ürün sahibi 2026-09-13):
+        //
+        //   byte ⊕ byte  → byte, 8 bit'e SARAR (& 0xFF)
+        //   byte ⊕ int   → int  (byte terfi eder, sonuç int)
+        //
+        // Ayrımın gerekçesi — aynı ifade iki farklı niyete hizmet ediyordu:
+        //   (A) aritmetik sarma:  `byte t = x + y;`     kripto/hash/checksum
+        //   (B) dış veri kontrolü: `byte d = girdi as byte;`  parse edilmiş sayı
+        // Her `as byte`'ı sarmaya çevirmek (B)'deki doğrulamayı yok ederdi;
+        // her aritmetiği hata yapmak (A)'yı kullanılamaz kılıyordu. C ve
+        // Rust'ın ayrımı alınmıştır: TİP İÇİ aritmetik sarar, TİPLER ARASI
+        // dönüşüm (açık `as`) kontrollü kalır.
+        //
+        // Karışık işlemde (byte ⊕ int) sonucun int olması bilinçlidir: `b * 256`
+        // gibi bir ifadede kullanıcı int aralığı bekler, sessiz sarma sürpriz
+        // olurdu. Sarma istiyorsa `(b * 256) as byte` yazar — ki o cast
+        // ADR-040 gereği kontrollüdür ve aralık dışını bildirir.
+        //
+        // Karşılaştırma/mantık operatörleri bu daldan ÖNCE ele alınır; buraya
+        // yalnızca aritmetik ve bitsel operatörler düşer, dolayısıyla
+        // "iki byte → byte" kuralı bool sonuçlu operatörleri etkilemez.
+        // Sarma yalnız GERÇEK byte ifadeler arasında geçerlidir. Literal
+        // taraf hariç tutulur: `a + 100` yazan kullanıcı int aralığı bekler,
+        // ama bağlamsal tipleme (yukarıdaki "byte bağlamı" dalı) o literali
+        // byte olarak tiplediği için naif kural onu da sarardı. Literal zaten
+        // 0-255'e sınırlanmış durumda; gerçek niyeti belirleyen taraf
+        // değişkenlerdir.
+        const bool leftIsLit  = bin->Left  && bin->Left->kind  == ASTKind::Literal;
+        const bool rightIsLit = bin->Right && bin->Right->kind == ASTKind::Literal;
+        const bool bothByte = leftType.isByte() && rightType.isByte() &&
+                              !leftIsLit && !rightIsLit;
         Type lArith = leftType.isByte() ? Type::Int() : leftType;
         Type rArith = rightType.isByte() ? Type::Int() : rightType;
+        if (bothByte) {
+            result = Type::Byte();
+            break;
+        }
 
         // ADR-040: longint rank kulesi dışında izole (numericRank longint'i
         // tanımaz) — int/longint karışımı serbest (sonuç longint), ama

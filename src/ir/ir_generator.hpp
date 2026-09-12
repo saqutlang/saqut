@@ -57,8 +57,11 @@ private:
     int generateExpression(ASTNode* node);
 
     // ── İkili operatör (binary op) için ortak yardımcı ───────────────────
+    // resultNode: ifadenin KENDİ düğümü — sonuç tipi ondan okunur (byte
+    // sarması için, bkz. ADR-040 Faz 4). Operandların tipinden çıkarılamaz:
+    // literal taraf bağlamsal olarak byte tiplenebilir ama ifade int olabilir.
     int generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTNode* rightNode,
-                                 int line = 0, int col = 0);
+                                 int line = 0, int col = 0, ASTNode* resultNode = nullptr);
 
     // ── Slot yönetimi ─────────────────────────────────────────────────────
     int  freshSlot();                           // Yeni slot numarası al (nextSlot_++)
@@ -119,6 +122,9 @@ private:
                       const SourceLocation& loc = {});
     void emitBinaryOp(Opcode op, int destSlot, int leftSlot, int rightSlot,
                       int line = 0, int col = 0);
+    // byte ⊕ byte sonucunu 8 bite sarar (& 0xFF) — ADR-040 Faz 4.
+    // Gerekçe ve tip-içi/tipler-arası ayrımı gerçeklemede (ir_generator.cpp).
+    int  emitByteWrap(int valueSlot, int line = 0, int col = 0);
     void emitReturn(int srcSlot, int line = 0, int col = 0);
     // Koşulsuz atlama yazar; instruction indeksini döndürür (backpatch için).
     // Hedef bilinmiyorsa -1 geçilir, patchJump() ile doldurulur.

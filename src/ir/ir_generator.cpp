@@ -1040,40 +1040,40 @@ int IRGenerator::generateExpression(ASTNode* node) {
         const int L = bin->loc.line, C = bin->loc.column;
         switch (bin->Operator) {
         case TokenType::PLUS:
-            return generateBinaryArithmetic(Opcode::ADD, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::ADD, bin->Left, bin->Right, L, C, bin);
         case TokenType::MINUS:
-            return generateBinaryArithmetic(Opcode::SUB, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::SUB, bin->Left, bin->Right, L, C, bin);
         case TokenType::STAR:
-            return generateBinaryArithmetic(Opcode::MUL, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::MUL, bin->Left, bin->Right, L, C, bin);
         case TokenType::SLASH:
-            return generateBinaryArithmetic(Opcode::DIV, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::DIV, bin->Left, bin->Right, L, C, bin);
         case TokenType::PERCENT:
-            return generateBinaryArithmetic(Opcode::MOD, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::MOD, bin->Left, bin->Right, L, C, bin);
         // Karşılaştırma operatörleri
         case TokenType::LESS:
-            return generateBinaryArithmetic(Opcode::LESS, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::LESS, bin->Left, bin->Right, L, C, bin);
         case TokenType::LESS_EQUAL:
-            return generateBinaryArithmetic(Opcode::LESS_EQUAL, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::LESS_EQUAL, bin->Left, bin->Right, L, C, bin);
         case TokenType::GREATER:
-            return generateBinaryArithmetic(Opcode::GREATER, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::GREATER, bin->Left, bin->Right, L, C, bin);
         case TokenType::GREATER_EQUAL:
-            return generateBinaryArithmetic(Opcode::GREATER_EQUAL, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::GREATER_EQUAL, bin->Left, bin->Right, L, C, bin);
         case TokenType::EQUAL_EQUAL:
-            return generateBinaryArithmetic(Opcode::EQUAL_EQUAL, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::EQUAL_EQUAL, bin->Left, bin->Right, L, C, bin);
         case TokenType::BANG_EQUAL:
-            return generateBinaryArithmetic(Opcode::NOT_EQUAL, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::NOT_EQUAL, bin->Left, bin->Right, L, C, bin);
 
         // Bitsel operatörler
         case TokenType::AMPERSAND:
-            return generateBinaryArithmetic(Opcode::BAND, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::BAND, bin->Left, bin->Right, L, C, bin);
         case TokenType::PIPE:
-            return generateBinaryArithmetic(Opcode::BOR, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::BOR, bin->Left, bin->Right, L, C, bin);
         case TokenType::CARET:
-            return generateBinaryArithmetic(Opcode::BXOR, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::BXOR, bin->Left, bin->Right, L, C, bin);
         case TokenType::LSHIFT:
-            return generateBinaryArithmetic(Opcode::SHL, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::SHL, bin->Left, bin->Right, L, C, bin);
         case TokenType::RSHIFT:
-            return generateBinaryArithmetic(Opcode::SHR, bin->Left, bin->Right, L, C);
+            return generateBinaryArithmetic(Opcode::SHR, bin->Left, bin->Right, L, C, bin);
 
         // Mantıksal operatörler — ADR-008: kısa devre VAR, sonuç 1/0'dır.
         //
@@ -1509,7 +1509,7 @@ int IRGenerator::generateExpression(ASTNode* node) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 int IRGenerator::generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTNode* rightNode,
-                                          int line, int col) {
+                                          int line, int col, ASTNode* resultNode) {
     int leftSlot = generateExpression(leftNode);
     int rightSlot = generateExpression(rightNode);
     int destSlot = freshSlot();
@@ -1522,18 +1522,22 @@ int IRGenerator::generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTN
     bool leftIsDouble = false, rightIsDouble = false; // 64-bit double
     bool leftIsLong = false, rightIsLong = false; // 64-bit int
     bool leftIsString = false, rightIsString = false;
+    bool leftIsByte = false, rightIsByte = false;   // ADR-040 Faz 4: tip-içi sarma
     auto classify = [](ASTNode* n, bool& isDec, bool& isF32, bool& isDbl, bool& isLong,
-                       bool& isStr) {
+                       bool& isStr, bool& isByte) {
         if (auto* e = dynamic_cast<ExpressionNode*>(n)) {
             isDec = e->resolvedType.isDecimal();
             isF32 = e->resolvedType.isPrimitive() && e->resolvedType.prim == PrimitiveKind::Float;
             isDbl = e->resolvedType.isPrimitive() && e->resolvedType.prim == PrimitiveKind::Double;
             isLong = e->resolvedType.isLongInt();
             isStr = e->resolvedType.isString();
+            isByte = e->resolvedType.isByte();
         }
     };
-    classify(leftNode, leftIsDecimal, leftIsFloat32, leftIsDouble, leftIsLong, leftIsString);
-    classify(rightNode, rightIsDecimal, rightIsFloat32, rightIsDouble, rightIsLong, rightIsString);
+    classify(leftNode, leftIsDecimal, leftIsFloat32, leftIsDouble, leftIsLong, leftIsString,
+             leftIsByte);
+    classify(rightNode, rightIsDecimal, rightIsFloat32, rightIsDouble, rightIsLong, rightIsString,
+             rightIsByte);
 
     bool leftIsFloat = leftIsFloat32 || leftIsDouble;
     bool rightIsFloat = rightIsFloat32 || rightIsDouble;
@@ -1687,8 +1691,41 @@ int IRGenerator::generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTN
         emitBinaryOp(floatOp, destSlot, leftSlot, rightSlot, line, col);
     } else {
         emitBinaryOp(opcode, destSlot, leftSlot, rightSlot, line, col);
+        // byte ⊕ byte → byte: sonucu 8 bite sar (ADR-040 Faz 4).
+        //
+        // Kaynak TypeChecker'ın verdiği sonuç tipidir, operandların tipi
+        // değil: literal taraf bağlamsal olarak byte tiplenebilir
+        // (`a + 100`), ama o ifade int'tir ve sarılmamalıdır. Kuralın tek
+        // sahibi TypeChecker'dır (type_checker.cpp "byte aritmetiği" bloğu);
+        // burada yalnız kararı uyguluyoruz.
+        bool resultIsByte = false;
+        if (auto* resultExpr = dynamic_cast<ExpressionNode*>(resultNode))
+            resultIsByte = resultExpr->resolvedType.isByte();
+        if (resultIsByte)
+            destSlot = emitByteWrap(destSlot, line, col);
     }
     return destSlot;
+}
+
+// byte ⊕ byte sonucunu 8 bite sarar (ADR-040 Faz 4): `& 0xFF`.
+//
+// TypeChecker yalnız İKİ operandı da byte olan aritmetik/bitsel ifadeye byte
+// tipi verir (type_checker.cpp, "byte aritmetiği" bloğu); karışık işlem int
+// kalır ve buraya düşmez. Dolayısıyla bu maskeleme tam olarak tip-içi
+// aritmetiği kapsar.
+//
+// Neden `as byte` cast'i DEĞİL: o cast aralık denetimlidir ve dış veri
+// doğrulaması için ayrılmıştır (300 → hata). Tip-içi aritmetik ise sarmalıdır
+// (300 → 44). İki niyet ayrı yollardan geçer.
+//
+// Maliyet tek bir BAND talimatı — çalışma zamanı çağrısı yoktur, VM'de ve
+// JIT'te aynı şekilde tek makine talimatına iner.
+int IRGenerator::emitByteWrap(int valueSlot, int line, int col) {
+    int maskSlot = freshSlot();
+    emitLoadConst(maskSlot, 0xFF, SourceLocation{"", line, col, 0});
+    int wrappedSlot = freshSlot();
+    emitBinaryOp(Opcode::BAND, wrappedSlot, valueSlot, maskSlot, line, col);
+    return wrappedSlot;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
