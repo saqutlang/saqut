@@ -115,7 +115,8 @@ private:
                       const SourceLocation& loc = {});
     void emitArrayGet(int destSlot, int arrSlot, int idxSlot,
                       int line = 0, int col = 0,
-                      SlotType valueType = SlotType::Unknown);
+                      SlotType valueType = SlotType::Unknown,
+                      ArrayElemKind elemKind = ArrayElemKind::Ref);
     void emitArraySet(int arrSlot, int idxSlot, int valSlot,
                       int line = 0, int col = 0);
     void emitArrayLen(int destSlot, int arrSlot,

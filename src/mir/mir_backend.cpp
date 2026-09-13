@@ -669,6 +669,21 @@ extern "C" int64_t rt_jit_host_call(int64_t entryId, int64_t argc) {
         // koşunun heap'inde (jitEnv.heap) tahsis etti — pointer register'a
         // olduğu gibi iletilir. Köklenmesi kodgen'in işidir: CALLHOST'tan
         // sonra dest slot'u için emitShadowSet yayılır, nesne oradan görünür.
+        //
+        // jitData/jitLength SENKRONU BURADA: host gövdeleri diziyi doğrudan
+        // doldurur (`arr->bytes.resize(...)` + okuma) ve çoğu syncJitView()
+        // çağırmaz — 9 allocArray çağrı yerinden 7'si. Bu, `a[i]`'nin doğrudan
+        // bellek erişimi yaptığı JIT'te view'ı eskimiş bırakıyordu:
+        // readFile'ın döndürdüğü byte[] JIT'te uzunluk 0 görünüyordu
+        // (tests/golden/fs/bytes.sqt). Trampoline yolu dataArraySize()
+        // kullandığından bu tutarsızlık görünmüyordu.
+        //
+        // Tek geçiş noktası burasıdır: her host Ref dönüşü buradan geçer.
+        // Host gövdelerinin her birine senkron eklemek 7 ayrı yerde elle
+        // tutarlılık istemek olurdu (§10.2 tek-kaynak ilkesi).
+        if (auto* retObj = static_cast<Object*>(rt().hostFrame.ret.p))
+            if (retObj->type == ObjectType::Array)
+                static_cast<ArrayObject*>(retObj)->syncJitView();
         rt().hostFrame.ret = HostSlot::fromRef(rt().hostFrame.ret.p);
     }
     return rt().hostFrame.ret.i;
@@ -2565,10 +2580,47 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     // arr.ints, jitData/jitLength view'ından sabit offset ile okunur;
                     // trampoline çağrısı (rt_jit_array_get_i) hot path'te yok.
                     // valueType != Unknown zaten wholeProgramSupported'ta garanti.
-                    const bool directInt = vt == SlotType::Int &&
-                                           instr.arrayElemKind == ArrayElemKind::Int;
-                    const bool directByte = instr.arrayElemKind == ArrayElemKind::Byte;
-                    if (directInt || directByte) {
+                    // `a[i]` dilin SÖZDİZİMİDİR — trampoline çağrısı değil,
+                    // doğrudan bellek erişimi olmalıdır. jitData/jitLength
+                    // (ArrayObject) JIT'in packed tampona bakan görüntüsüdür
+                    // ve sabit offset'ten yüklenir; taşımasız GC (ADR-022)
+                    // adreslerin sabit kalmasını garanti eder.
+                    //
+                    // TÜM packed eleman tipleri kapsanır. Eskiden yalnız
+                    // Int ve Byte inline'dı; LongInt/Float32/Float64
+                    // trampoline gidiyordu ve Float32 orada BOZUKTU
+                    // (rt_jit_array_get_d double bekler, dest MIR_T_F'tir →
+                    // "unexpected operand mode ... Got 'float', expected
+                    // 'double'" ile JIT reddediyordu; VM doğru çalışıyordu).
+                    //
+                    // Kapsam dışı: Ref/Str/Decimal elemanlar — onlar Value
+                    // taşır, pointer lowering'i yok (Aşama 4) ve GC kökleme
+                    // gerektirir; trampoline yolunda kalırlar.
+                    MIR_type_t elemLoadType = MIR_T_I64;
+                    int        elemSize     = 0;
+                    switch (instr.arrayElemKind) {
+                        case ArrayElemKind::Byte:
+                            elemLoadType = MIR_T_U8;  elemSize = 1; break;
+                        case ArrayElemKind::Int:
+                            elemLoadType = MIR_T_I32; elemSize = 4; break;
+                        case ArrayElemKind::LongInt:
+                            elemLoadType = MIR_T_I64; elemSize = 8; break;
+                        case ArrayElemKind::Float32:
+                            elemLoadType = MIR_T_F;   elemSize = 4; break;
+                        case ArrayElemKind::Float64:
+                            elemLoadType = MIR_T_D;   elemSize = 8; break;
+                        default:
+                            elemSize = 0; break;  // Ref/Decimal → trampoline
+                    }
+                    // Hedef register genişliği eleman tipiyle uyuşmalı: float
+                    // eleman float register'a, double double'a yüklenir.
+                    // Uyuşmazlık MIR tarafından reddedilir.
+                    const MIR_type_t destType = mirType(vt);
+                    const bool widthMatches =
+                        (elemLoadType == MIR_T_F)  ? destType == MIR_T_F   :
+                        (elemLoadType == MIR_T_D)  ? destType == MIR_T_D   :
+                                                     destType == MIR_T_I64;
+                    if (elemSize > 0 && widthMatches) {
                         static int spikeRegCounter = 0;
                         std::string dName = "agdata" + std::to_string(spikeRegCounter++);
                         std::string lName = "aglen"  + std::to_string(spikeRegCounter++);
@@ -2596,12 +2648,17 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                         // dest = [data + idx*4]  (int32_t eleman).
                         // Signed load is required: ARRAY_GET must preserve
                         // negative int values when the slot is i64-backed.
-                        const MIR_type_t loadType = directByte ? MIR_T_U8 : MIR_T_I32;
-                        const int elementSize = directByte ? 1 : 4;
-                        MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_MOV,
+                        // Yükleme talimatı eleman genişliğine göre seçilir:
+                        // float/double için MIR_FMOV/MIR_DMOV, tamsayılar için
+                        // MIR_MOV (I32 yüklemesi işaret genişletir — negatif
+                        // int değerleri i64 slot'ta korunmalıdır).
+                        const MIR_insn_code_t moveOp =
+                            elemLoadType == MIR_T_F ? MIR_FMOV :
+                            elemLoadType == MIR_T_D ? MIR_DMOV : MIR_MOV;
+                        MIR_append_insn(ctx, func, MIR_new_insn(ctx, moveOp,
                             R(instr.dest),
-                            MIR_new_mem_op(ctx, loadType, 0, dataReg,
-                                           R(instr.right).u.reg, elementSize)));
+                            MIR_new_mem_op(ctx, elemLoadType, 0, dataReg,
+                                           R(instr.right).u.reg, elemSize)));
                         MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_JMP, MIR_new_label_op(ctx, okL)));
 
                         // cold error block: bounds fail → pending error → uncaught exit
@@ -2615,8 +2672,16 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                             MIR_new_ref_op(ctx, abndProto),
                             MIR_new_ref_op(ctx, abndImport),
                             R(instr.right), MIR_new_reg_op(ctx, lenReg)));
-                        // RET — JIT'te try/catch yok; uncaught exit runProgram'da
-                        MIR_append_insn(ctx, func, MIR_new_ret_insn(ctx, 1, R(instr.dest)));
+                        // Hata dalı yayılım hedefine gider: try içindeyse
+                        // catch'e, değilse propagateLabel'a. Eskiden burada
+                        // koşulsuz RET vardı ("JIT'te try/catch yok" notuyla)
+                        // — o not artık geçerli değil, JIT try/catch'i #110'dan
+                        // beri destekliyor. RET yapmak yakalanabilir bir sınır
+                        // hatasını yakalanamaz hale getiriyordu; inline yol
+                        // yalnız Int/Byte'ı kapsadığı için bu yalnız o iki
+                        // tipte görünüyordu (diğerleri trampoline düşüp doğru
+                        // davranıyordu).
+                        emitJumpToErrorTarget();
                         MIR_append_insn(ctx, func, okL);
                         break;
                     }

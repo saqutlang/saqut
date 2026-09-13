@@ -1,0 +1,59 @@
+// `a[i]` dilin SÖZDİZİMİDİR — her packed eleman tipinde doğrudan bellek
+// erişimiyle derlenmelidir (trampoline çağrısı değil).
+//
+// Bu fixture üç şeyi birden korur:
+//
+//   1. DOĞRULUK — beş packed tip (byte/int/longint/float/double) VM ve JIT'te
+//      aynı değeri vermeli. float[] (Float32) JIT'te ÇÖKÜYORDU:
+//      "unexpected operand mode ... Got 'float', expected 'double'"
+//      (rt_jit_array_get_d double bekler, dest MIR_T_F'tir).
+//
+//   2. İŞARET GENİŞLETME — negatif int elemanı i64 slot'a yüklenirken
+//      işaret korunmalı (MIR_T_I32 signed load).
+//
+//   3. SINIR HATASI YAKALANABİLİR — inline yol eskiden hata dalında koşulsuz
+//      RET yapıyordu ("JIT'te try/catch yok" notuyla); o not #110'dan beri
+//      geçersiz. Sınır hatası try/catch ile yakalanabilmeli ve e.line doğru
+//      olmalı.
+int elemanOku(int hangi) {
+    byte[] b = [10, 20, 30];
+    int[] i = [100, 200, 300];
+    longint[] l = [1000, 2000, 3000];
+    if (hangi == 0) { return b[1] as int; }
+    if (hangi == 1) { return i[1]; }
+    return (l[1] as int);
+}
+
+int main() {
+    // Beş packed tip
+    print(elemanOku(0));
+    print(elemanOku(1));
+    print(elemanOku(2));
+    float[] f = [1.5, 2.5, 3.5];
+    print(f[1]);
+    double[] d = [10.5, 20.5, 30.5];
+    print(d[1]);
+
+    // İşaret genişletme
+    int[] neg = [-5, -10, -15];
+    print(neg[1]);
+
+    // Sınır hatası: yakalanabilir olmalı, e.line doğru
+    double[] kisa = [1.5, 2.5];
+    int tasan = 50;
+    try {
+        print(kisa[tasan]);
+    } catch (Error e) {
+        print(e.line);
+        print(e.code);
+    }
+
+    // Negatif indeks de yakalanabilir
+    int eksi = -1;
+    try {
+        print(kisa[eksi]);
+    } catch (Error e) {
+        print(e.code);
+    }
+    return 0;
+}

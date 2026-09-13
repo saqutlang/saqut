@@ -1338,8 +1338,16 @@ int IRGenerator::generateExpression(ASTNode* node) {
         int arrSlot = generateExpression(idx->object);
         int idxSlot = generateExpression(idx->index);
         int destSlot = freshSlot();
+        // Eleman tipi (#206 packed temsili) talimata yazılır: JIT bunu
+        // doğrudan bellek erişimi için kullanır (çağrısız `a[i]`). Kaynak
+        // DİZİNİN tipidir — sonucun değil: `idx->resolvedType` eleman tipini
+        // verir ama packed dizilim bilgisi dizide durur.
+        ArrayElemKind elemKind = ArrayElemKind::Ref;
+        if (auto* objExpr = dynamic_cast<ExpressionNode*>(idx->object))
+            if (objExpr->resolvedType.isArray() && objExpr->resolvedType.elementType)
+                elemKind = arrayElemKindFromType(objExpr->resolvedType);
         emitArrayGet(destSlot, arrSlot, idxSlot, idx->loc.line, idx->loc.column,
-                     slotTypeFromType(idx->resolvedType));
+                     slotTypeFromType(idx->resolvedType), elemKind);
         return destSlot;
     }
 
@@ -2315,12 +2323,16 @@ static ArrayElemKind arrayElemKindFromType(const Type& t) {
 }
 
 void IRGenerator::emitArrayGet(int destSlot, int arrSlot, int idxSlot, int line, int col,
-                                SlotType valueType) {
+                                SlotType valueType, ArrayElemKind elemKind) {
     Instruction ins(Opcode::ARRAY_GET);
     ins.dest = destSlot;
     ins.left = arrSlot;
     ins.right = idxSlot;
     ins.valueType = valueType;
+    // #206: packed eleman tipi. ARRAY_NEW'de zaten taşınıyordu; ARRAY_GET'te
+    // eksikti ve JIT doğrudan bellek erişimi için onu okuyor — eksik olduğu
+    // sürece her eleman tipi Ref görünüyor ve trampoline düşüyordu.
+    ins.arrayElemKind = elemKind;
     ins.sourceLine = (line == 0 && col == 0 && currentLoc_.isValid()) ? currentLoc_.line : line;
     ins.sourceCol = (line == 0 && col == 0 && currentLoc_.isValid()) ? currentLoc_.column : col;
     currentFunction_->instructions.push_back(std::move(ins));
