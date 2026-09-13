@@ -2697,10 +2697,32 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                 }
                 case Opcode::ARRAY_SET: {
                     SlotType vt = slotKindOf(fn, instr.right);
-                    const bool directInt = vt == SlotType::Int &&
-                                           instr.arrayElemKind == ArrayElemKind::Int;
-                    const bool directByte = instr.arrayElemKind == ArrayElemKind::Byte;
-                    if (directInt || directByte) {
+                    // `a[i] = x` de sözdizimidir — ARRAY_GET ile aynı kapsam
+                    // ve aynı gerekçe (bkz. oradaki not). Tüm packed eleman
+                    // tipleri doğrudan bellek yazımıyla derlenir.
+                    MIR_type_t setStoreType = MIR_T_I64;
+                    int        setElemSize  = 0;
+                    switch (instr.arrayElemKind) {
+                        case ArrayElemKind::Byte:
+                            setStoreType = MIR_T_U8;  setElemSize = 1; break;
+                        case ArrayElemKind::Int:
+                            setStoreType = MIR_T_I32; setElemSize = 4; break;
+                        case ArrayElemKind::LongInt:
+                            setStoreType = MIR_T_I64; setElemSize = 8; break;
+                        case ArrayElemKind::Float32:
+                            setStoreType = MIR_T_F;   setElemSize = 4; break;
+                        case ArrayElemKind::Float64:
+                            setStoreType = MIR_T_D;   setElemSize = 8; break;
+                        default:
+                            setElemSize = 0; break;  // Ref/Decimal → trampoline
+                    }
+                    // Kaynak register genişliği eleman tipiyle uyuşmalı.
+                    const MIR_type_t srcType = mirType(vt);
+                    const bool setWidthMatches =
+                        (setStoreType == MIR_T_F) ? srcType == MIR_T_F   :
+                        (setStoreType == MIR_T_D) ? srcType == MIR_T_D   :
+                                                    srcType == MIR_T_I64;
+                    if (setElemSize > 0 && setWidthMatches) {
                         static int spikeSetRegCounter = 0;
                         std::string dName = "asdata" + std::to_string(spikeSetRegCounter++);
                         std::string lName = "aslen"  + std::to_string(spikeSetRegCounter++);
@@ -2722,12 +2744,15 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                         MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_BLT,
                             MIR_new_label_op(ctx, failL), R(instr.left), MIR_new_int_op(ctx, 0)));
 
-                        // ARRAY_SET stores the VM payload width; the source slot
-                        // is i64-backed and is truncated to the array element.
-                        const MIR_type_t storeType = directByte ? MIR_T_U8 : MIR_T_I32;
-                        MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_MOV,
-                            MIR_new_mem_op(ctx, storeType, 0, dataReg,
-                                           R(instr.left).u.reg, directByte ? 1 : 4),
+                        // Yazma talimatı eleman genişliğine göre seçilir.
+                        // Tamsayı elemanlarda kaynak slot i64'tür ve eleman
+                        // genişliğine kırpılır (VM payload sözleşmesi).
+                        const MIR_insn_code_t setMoveOp =
+                            setStoreType == MIR_T_F ? MIR_FMOV :
+                            setStoreType == MIR_T_D ? MIR_DMOV : MIR_MOV;
+                        MIR_append_insn(ctx, func, MIR_new_insn(ctx, setMoveOp,
+                            MIR_new_mem_op(ctx, setStoreType, 0, dataReg,
+                                           R(instr.left).u.reg, setElemSize),
                             R(instr.right)));
                         MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_JMP,
                             MIR_new_label_op(ctx, okL)));
@@ -2742,10 +2767,11 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                             MIR_new_ref_op(ctx, abndProto),
                             MIR_new_ref_op(ctx, abndImport),
                             R(instr.left), MIR_new_reg_op(ctx, lenReg)));
-                        // The generated function has an i64 return ABI even for
-                        // statement-like opcodes. Match ARRAY_GET's error exit
-                        // shape instead of emitting a zero-operand RET.
-                        MIR_append_insn(ctx, func, MIR_new_ret_insn(ctx, 1, R(instr.dest)));
+                        // Hata dalı yayılım hedefine gider (ARRAY_GET ile aynı):
+                        // try içindeyse catch'e, değilse propagateLabel'a.
+                        // Eskiden koşulsuz RET vardı ve yakalanabilir bir sınır
+                        // hatasını yakalanamaz hale getiriyordu.
+                        emitJumpToErrorTarget();
                         MIR_append_insn(ctx, func, okL);
                         break;
                     }

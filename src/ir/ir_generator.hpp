@@ -118,7 +118,8 @@ private:
                       SlotType valueType = SlotType::Unknown,
                       ArrayElemKind elemKind = ArrayElemKind::Ref);
     void emitArraySet(int arrSlot, int idxSlot, int valSlot,
-                      int line = 0, int col = 0);
+                      int line = 0, int col = 0,
+                      ArrayElemKind elemKind = ArrayElemKind::Ref);
     void emitArrayLen(int destSlot, int arrSlot,
                       const SourceLocation& loc = {});
     void emitBinaryOp(Opcode op, int destSlot, int leftSlot, int rightSlot,

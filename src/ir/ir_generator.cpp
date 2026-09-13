@@ -896,7 +896,13 @@ int IRGenerator::generateExpression(ASTNode* node) {
                 auto* idx = (IndexExpressionNode*) bin->Left;
                 int arrSlot = generateExpression(idx->object);
                 int idxSlot = generateExpression(idx->index);
-                emitArraySet(arrSlot, idxSlot, rhsSlot, bin->loc.line, bin->loc.column);
+                // Eleman tipi kaynak DİZİDEN okunur (ARRAY_GET ile aynı kural).
+                ArrayElemKind setElemKind = ArrayElemKind::Ref;
+                if (auto* objExpr = dynamic_cast<ExpressionNode*>(idx->object))
+                    if (objExpr->resolvedType.isArray() && objExpr->resolvedType.elementType)
+                        setElemKind = arrayElemKindFromType(objExpr->resolvedType);
+                emitArraySet(arrSlot, idxSlot, rhsSlot, bin->loc.line, bin->loc.column,
+                             setElemKind);
                 return rhsSlot;
             }
 
@@ -1327,7 +1333,7 @@ int IRGenerator::generateExpression(ASTNode* node) {
             int idxSlot = freshSlot();
             emitLoadConst(idxSlot, i);
             int valSlot = generateExpression(al->elements[i]);
-            emitArraySet(arrSlot, idxSlot, valSlot);
+            emitArraySet(arrSlot, idxSlot, valSlot, 0, 0, ak);
         }
         return arrSlot;
     }
@@ -2338,11 +2344,15 @@ void IRGenerator::emitArrayGet(int destSlot, int arrSlot, int idxSlot, int line,
     currentFunction_->instructions.push_back(std::move(ins));
 }
 
-void IRGenerator::emitArraySet(int arrSlot, int idxSlot, int valSlot, int line, int col) {
+void IRGenerator::emitArraySet(int arrSlot, int idxSlot, int valSlot, int line, int col,
+                                ArrayElemKind elemKind) {
     Instruction ins(Opcode::ARRAY_SET);
     ins.dest = arrSlot;
     ins.left = idxSlot;
     ins.right = valSlot;
+    // #206: packed eleman tipi — ARRAY_GET ile aynı gerekçe. Eksik olduğu
+    // sürece JIT her eleman tipini Ref görüp trampoline düşüyordu.
+    ins.arrayElemKind = elemKind;
     ins.sourceLine = (line == 0 && col == 0 && currentLoc_.isValid()) ? currentLoc_.line : line;
     ins.sourceCol = (line == 0 && col == 0 && currentLoc_.isValid()) ? currentLoc_.column : col;
     currentFunction_->instructions.push_back(std::move(ins));

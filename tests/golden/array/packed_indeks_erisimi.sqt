@@ -55,5 +55,21 @@ int main() {
     } catch (Error e) {
         print(e.code);
     }
+
+    // ── YAZMA yolu (a[i] = x) — okuma ile aynı kapsam ──
+    byte[] wb = [0, 0];      wb[1] = 200;      print(wb[1]);
+    int[] wi = [0, 0];       wi[1] = 12345;    print(wi[1]);
+    longint[] wl = [0, 0];   wl[1] = 9999999;  print(wl[1]);
+    float[] wf = [0.0, 0.0]; wf[1] = 2.5;      print(wf[1]);
+    double[] wd = [0.0, 0.0];wd[1] = 20.5;     print(wd[1]);
+    int[] wn = [0, 0];       wn[1] = -42;      print(wn[1]);
+
+    // Yazmada sınır hatası da yakalanabilir olmalı
+    try {
+        kisa[tasan] = 1.0;
+        print("olmamali");
+    } catch (Error e) {
+        print(e.code);
+    }
     return 0;
 }
