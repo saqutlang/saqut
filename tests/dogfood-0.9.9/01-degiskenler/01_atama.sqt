@@ -1,0 +1,15 @@
+// Adım 1: değişkene değer atama. En küçük şey.
+int main() {
+    int a = 5;
+    print(a);
+    print("\n");
+
+    a = 7;
+    print(a);
+    print("\n");
+
+    int b = a;
+    print(b);
+    print("\n");
+    return 0;
+}

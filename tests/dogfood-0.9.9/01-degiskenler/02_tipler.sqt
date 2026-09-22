@@ -1,0 +1,21 @@
+// Adım 2: her tipten bir değişken, ata ve yazdır.
+int main() {
+    int i = 42;
+    longint L = 9000000000;
+    float f = 1.5;
+    double d = 2.25;
+    decimal m = 10.05d;
+    byte b = 200;
+    bool t = true;
+    string s = "merhaba";
+
+    print(i); print("\n");
+    print(L); print("\n");
+    print(f); print("\n");
+    print(d); print("\n");
+    print(m); print("\n");
+    print(b); print("\n");
+    print(t); print("\n");
+    print(s); print("\n");
+    return 0;
+}

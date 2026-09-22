@@ -1,0 +1,13 @@
+struct K { bool bayrak; }
+int main() {
+    bool t = true;
+    print(t); print("|");                    // dogrudan
+    print(t as string); print("|");          // cast
+    print("deger: " + (t as string)); print("|");  // birlestirme
+    bool[] dizi = [true, false];
+    print(dizi[0]); print("|");              // dizi elemani
+    K k; k.bayrak = true;
+    print(k.bayrak); print("|");             // struct alani
+    print(k.toJson());                       // json
+    return 0;
+}
