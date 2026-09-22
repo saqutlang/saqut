@@ -1,0 +1,55 @@
+// Adım 5c: SÜREKLİ ÇALIŞAN uygulama.
+//
+// Uzun ömürlü, durum tutan, sürekli tahsis yapan bir iş simülasyonu.
+// Amaç: runtime'ın uzun koşuda kararlı kalıp kalmadığını görmek —
+// canlı küme büyüyor mu, sonuç kayıyor mu, yavaşlıyor mu.
+//
+// Kullanım: saqut run surekli.sqt -- <tur>
+import { args } from sys;
+
+struct Kayit { int id; string etiket; int deger; }
+struct Kuyruk { Kayit[] bekleyen; int islenen; int toplam; }
+
+// Her tur: birkaç kayıt üret, işle, kuyruğu tüket.
+void tur(Kuyruk k, int no) {
+    // üret (kısa ömürlü string trafiği dahil)
+    for (int i = 0; i < 10; i++) {
+        Kayit r;
+        r.id = no * 10 + i;
+        r.etiket = "kayit-" + (r.id as string);
+        r.deger = (no + i) % 97;
+        k.bekleyen.push(r);
+    }
+    // işle ve boşalt
+    Kayit[] kalan = [];
+    for (int i = 0; i < k.bekleyen.length(); i++) {
+        Kayit r = k.bekleyen[i];
+        if (r.deger % 3 == 0) {
+            k.toplam = k.toplam + r.deger;
+            k.islenen++;
+        } else {
+            // bir kısmı bir sonraki tura kalsın (canlı küme sabit kalmalı)
+            if (kalan.length() < 5) { kalan.push(r); }
+        }
+    }
+    k.bekleyen = kalan;
+}
+
+int main() {
+    string[] a = args();
+    int turSayisi = 1000;
+    if (a.length() > 0) { turSayisi = a[0] as int; }
+
+    Kuyruk k;
+    k.bekleyen = []; k.islenen = 0; k.toplam = 0;
+
+    for (int t = 0; t < turSayisi; t++) {
+        tur(k, t);
+    }
+
+    print("tur: ");      print(turSayisi);        print("\n");
+    print("islenen: ");  print(k.islenen);        print("\n");
+    print("toplam: ");   print(k.toplam);         print("\n");
+    print("bekleyen: "); print(k.bekleyen.length()); print("\n");
+    return 0;
+}

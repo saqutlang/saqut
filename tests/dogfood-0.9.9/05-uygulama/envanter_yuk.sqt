@@ -1,0 +1,54 @@
+// Adım 5b: aynı uygulama, gerçekçi ölçekte. 5000 ürün, 20000 işlem.
+struct Urun { int kod; string ad; int adet; double birimFiyat; }
+struct Envanter { Urun[] urunler; }
+
+int bul(Envanter e, int kod) {
+    for (int i = 0; i < e.urunler.length(); i++) {
+        if (e.urunler[i].kod == kod) { return i; }
+    }
+    return -1;
+}
+
+double toplamDeger(Envanter e) {
+    double t = 0.0;
+    for (int i = 0; i < e.urunler.length(); i++) {
+        t = t + (e.urunler[i].adet as double) * e.urunler[i].birimFiyat;
+    }
+    return t;
+}
+
+int main() {
+    Envanter e;
+    e.urunler = [];
+
+    for (int i = 0; i < 5000; i++) {
+        Urun u;
+        u.kod = i;
+        u.ad = "urun" + (i as string);
+        u.adet = 100;
+        u.birimFiyat = 10.0;
+        e.urunler.push(u);
+    }
+    print("urun sayisi: "); print(e.urunler.length()); print("\n");
+    print("baslangic degeri: "); print(toplamDeger(e)); print("\n");
+
+    // 20000 stok hareketi (indeks üzerinden, arama yok)
+    int basarili = 0;
+    for (int t = 0; t < 20000; t++) {
+        int idx = t % 5000;
+        if (e.urunler[idx].adet > 0) {
+            e.urunler[idx].adet = e.urunler[idx].adet - 1;
+            basarili++;
+        }
+    }
+    print("basarili hareket: "); print(basarili); print("\n");
+    print("son deger: "); print(toplamDeger(e)); print("\n");
+
+    // arama maliyeti: 200 lineer arama
+    int bulunan = 0;
+    for (int q = 0; q < 200; q++) {
+        if (bul(e, q * 25) >= 0) { bulunan++; }
+    }
+    print("bulunan: "); print(bulunan); print("\n");
+    return 0;
+}
