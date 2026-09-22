@@ -1,0 +1,43 @@
+// Adım 6b: nullable tipler ve akış-analizi (ADR-021).
+struct Dugum { int deger; }
+
+int main() {
+    // temel
+    string? s = "dolu";
+    if (s != null) { print(s); } else { print("bos"); }
+    print("\n");
+
+    string? bos = null;
+    if (bos == null) { print("null dogru"); } else { print(bos); }
+    print("\n");
+
+    // cast başarısızlığı null verir
+    int? sayi = "123" as int?;
+    int? hatali = "abc" as int?;
+    if (sayi != null)   { print("sayi="); print(sayi); }
+    print(" ");
+    if (hatali == null) { print("cast basarisiz -> null"); }
+    print("\n");
+
+    // && ile kısa devre daraltma (ADR-021)
+    string? t = "abc";
+    if (t != null && t.length() == 3) { print("daraltma calisti"); }
+    print("\n");
+
+    // nullable struct
+    Dugum? d = null;
+    if (d == null) { print("dugum null"); }
+    print("\n");
+
+    // NOT: T?[] (nullable elemanlı dizi) dilde YOK — tasarım kararı (#233).
+    // "eleman yok"un karşılığı boş dizidir.
+    string[] liste = [];
+    liste.push("a"); liste.push("c");
+    print("dolu: "); print(liste.length()); print("\n");   // 2
+
+    // dizinin KENDİSİ null olabilir: T[]?
+    int[]? belki = null;
+    if (belki == null) { print("dizi null"); }
+    print("\n");
+    return 0;
+}

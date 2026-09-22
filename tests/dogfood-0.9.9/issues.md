@@ -194,3 +194,93 @@ bir backend'de çalışıp diğerinde çöküyor.
 kanıtı olabilir.
 
 ---
+## I-04 — `try`/`catch` ikisi de `return` etse bile E006
+
+**Durum:** karar bekliyor
+**Bulgu dosyası:** `06-hata-null/BULGU-04-trycatch-return.md`
+**Ölçüm:** `0.9.9`, commit `1fa6562`. Derleme zamanı; backend farkı yok.
+
+### Sorun
+
+```c
+int guvenliBol(int a, int b) {
+    try   { return a / b; }
+    catch (Error e) { return -1; }
+}
+```
+
+```
+error [E006]: 'guvenliBol' function must return int but some paths have no return
+```
+
+Her iki yol da return ediyor. Aynı yapı `if/else` ile yazılınca **kabul
+ediliyor**.
+
+### Kök neden
+
+`type_checker.cpp:135` `pathAlwaysReturns()` içinde `IfStatement` ve
+`SwitchStatement` case'leri var, **`TryStatement` case'i yok** → `default:
+return false`.
+
+Doğru kural `if/else` ile aynı: try bloğu VE catch bloğu ikisi de garantili
+dönüyorsa, try/catch garantili döner.
+
+### Kullanıcının ödediği bedel
+
+Ulaşılamaz bir satır yazmak zorunda:
+
+```c
+    try { return a / b; } catch (Error e) { return -1; }
+    return 0;      // ULAŞILAMAZ ama zorunlu
+```
+
+Üstelik bu satır için **ulaşılamaz kod uyarısı da verilmiyor** (`saqut check`
+0 error 0 warning). Derleyici hem ölü kodu zorunlu kılıyor hem de ölü
+olduğunu söylemiyor.
+
+### Neden önemli
+
+"Hatayı yakala, varsayılan dön" try/catch'in birincil kalıbı. Dili kullanan
+biri ilk try/catch'li fonksiyonunda buna çarpar.
+
+### Öneri
+
+`pathAlwaysReturns`'e `TryStatement` case'i eklensin. Tek yerde, ~5 satır.
+
+---
+
+## I-05 — `finally` ayrılmış ama uygulanmamış
+
+**Durum:** karar bekliyor (düşük öncelik)
+**Ölçüm:** `0.9.9`, commit `1fa6562`
+
+`finally` tokenizer'da anahtar kelime olarak tanımlı
+(`token.hpp:191` `KW_FINALLY`, `token.hpp:476` kelime tablosu) ama
+**`src/` altında .cpp tarafında hiç kullanılmıyor** — parser'da karşılığı,
+AST'de alanı yok.
+
+```
+$ saqut run fin.sqt
+error [E901]: unexpected token 'finally' — expected a statement
+```
+
+**İyi haber:** sessizce yanlış çalışmıyor, açıkça hata veriyor. `**`'ın eski
+durumundan (sessizce 0) farklı olarak bu güvenli taraf.
+
+Yine de kullanıcıya görünen durum kafa karıştırıcı: `finally` bir anahtar
+kelime, yani değişken adı olarak da kullanılamaz, ama bir iş de yapmıyor.
+
+### Seçenekler
+
+1. **Uygulansın.** try/catch/finally tam olur. I-04 ile birlikte
+   `pathAlwaysReturns` kuralı da finally'yi hesaba katmalı.
+2. **Anahtar kelime listesinden çıkarılsın.** Kullanılmayan rezervasyon
+   kaldırılır, `finally` sıradan bir tanımlayıcı olur.
+3. **Rezerve kalsın, belgede "ileride" diye yazılsın.** Bugünkü durum, ama
+   yazılı hale gelir.
+
+Not: hata mesajı "unexpected token 'finally'" diyor; eğer (3) seçilirse
+mesaj "finally is reserved but not implemented yet" gibi açık bir şey
+olmalı.
+
+---

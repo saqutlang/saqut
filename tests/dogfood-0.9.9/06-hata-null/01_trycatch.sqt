@@ -1,0 +1,50 @@
+// Adım 6a: try/catch/throw ve nullable akış.
+int bol(int a, int b) { return a / b; }
+
+int guvenliBol(int a, int b) {
+    try {
+        return bol(a, b);
+    } catch (Error e) {
+        print("[yakalandi: "); print(e.message); print("] ");
+        return -1;
+    }
+    return 0;   // I-04: ULAŞILAMAZ, ama E006 yüzünden zorunlu
+}
+
+int main() {
+    print(guvenliBol(10, 2)); print(" ");     // 5
+    print(guvenliBol(10, 0)); print("\n");    // -1, mesajla
+
+    // kendi hatamı fırlat
+    try {
+        throw "ozel hata";
+    } catch (Error e) {
+        print("mesaj: "); print(e.message); print("\n");
+    }
+
+    // catch sonrası program devam etmeli
+    print("devam ediyor\n");
+
+    // iç içe try
+    try {
+        try {
+            int s = 0;
+            print(7 / s);
+        } catch (Error e) {
+            print("ic catch, yeniden firlatiliyor\n");
+            throw "ikinci";
+        }
+    } catch (Error e) {
+        print("dis catch: "); print(e.message); print("\n");
+    }
+
+    // dizi sınırı yakalanabiliyor mu
+    try {
+        int[] a = [1,2,3];
+        int i = 10;
+        print(a[i]);
+    } catch (Error e) {
+        print("sinir: "); print(e.message); print("\n");
+    }
+    return 0;
+}
