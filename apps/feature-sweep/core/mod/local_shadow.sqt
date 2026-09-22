@@ -1,0 +1,4 @@
+// P-6: kaynak sembolü global scope'a sızıyor -> yerel aynı adla tanım E002
+import { kare } from "lib.sqt";
+int kare(int n) { return n + 100; }
+int main() { print(kare(2)); return 0; }

@@ -1,0 +1,3 @@
+import { kare } from "lib.sqt";
+import { etiket } from "lib.sqt";
+int main(){ print(kare(2)); print(etiket("x")); return 0; }

@@ -1,0 +1,3 @@
+// P-6: FFI takma adı mevcut sembolle çakışınca SESSİZCE yok sayılır (tanı yok)
+import { abs as print } from math;
+int main() { print("hala builtin print"); return 0; }

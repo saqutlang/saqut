@@ -1,0 +1,4 @@
+// P-6: yinelenen (aynı) kaynak import sessizce dedupe
+import { kare } from "lib.sqt";
+import { kare } from "lib.sqt";
+int main() { print(kare(6)); return 0; }

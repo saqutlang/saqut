@@ -17,6 +17,21 @@ os, terminal, fs, process, sys, date, stdin/stdout/stderr), CLI ve GC.
 
 ---
 
+## 0. Öncelikli GERÇEK problemler (ürün kararı bekleyen)
+
+- **P-6 — Import sistemi yollar arası tutarsız.** Gereklilik: import semantiği
+  (bağlama, takma ad, çakışma, görünürlük) FFI ve kaynak-dosya importunda
+  **eşit** olmalı; şu anda iki ayrı kod yolu farklı davranıyor.
+- **P-33 — `>>>` sessizce yanlış sonuç veriyor.** Mantıksal kaydırma operatörü
+  yok; `>>` + `>` diye ayrışıp 0 üretiyor. Sessiz yanlış değer kabul edilemez;
+  ya operatör olarak uygulanmalı ya da sözdizimi hatası verilmeli.
+- **P-31/P-32 — Sessiz yutma.** `check`/`run` parse hatasını görmezden geliyor;
+  eksik operand (`5 +`) yanlış değer (10) üretiyor.
+- **P-1 — `float`/`double` `%` her zaman hata** (VM sıfıra-bölme, JIT MIR hatası).
+- **P-2 — `date as longint` karşılaştırması** VM'de int32'ye kırpılıyor (VM≠JIT).
+
+---
+
 ## 1. Gerçek hatalar (correctness)
 
 ### P-1 — `float`/`double` `%` HER ZAMAN hata veriyor (VM≢JIT)
@@ -130,36 +145,47 @@ nullable-değerli harita gibi yaygın modeller yazılamıyor.
 
 ---
 
-### P-6 — `import { X as Y }` takma adı YALNIZ FFI modüllerinde çalışıyor; kaynak-dosya importunda bozuk
+### P-6 — Import sistemi yollar arası TUTARSIZ (FFI ≠ kaynak dosya) — GERÇEK PROBLEM
 
-**Düzeltme (kullanıcı geri bildirimi üzerine kaynak okundu):** takma ad
-özelliği vardır; ama iki import yolu farklı davranıyor.
+**Gereklilik (ürün kararı):** import semantiği her yerde **aynı** olmalı —
+bağlama, takma ad (`as`), çakışma davranışı ve görünürlük gömülü FFI modülleri
+ile kaynak-dosya importları arasında ayrışmamalı. Şu anda iki ayrı kod yolu
+var ve davranışları farklı.
 
-**Çalışan — FFI (gömülü) modül importu:**
-```c
-import { existsFile as ef, readFile as rf } from fs;
-import { sqrt as kok } from math;
-// ef("/etc")=1   kok(16)=4.0   (orijinal ad 'existsFile' doğru şekilde görünmez)
-```
+**Gözlenen farklar:**
 
-**Bozuk — kaynak-dosya importu:**
-```c
-import { kare as sq } from "lib.sqt";
-print(sq(6));    // error [E001]: 'sq' is not defined
-print(kare(6));  // error [E_SYMBOL_NOT_IMPORTED]
-```
+- **Takma ad, farklı ad:**
+  - FFI: `import { existsFile as ef } from fs;` → `ef` çalışır ✓
+  - kaynak: `import { kare as sq } from "lib.sqt";` → `sq` **tanımsız** ✗,
+    üstelik `kare` de erişilemez.
+- **Takma ad, aynı ad:** ikisi de çalışır (`import { kare as kare } ...` ✓).
+- **Takma ad çakışması (ad zaten var):**
+  - FFI: `import { abs as print } from math;` → **sessizce yok sayılır**, tanı yok.
+  - kaynak: benzer çakışma → `E002 'kare' already defined in this scope`.
+- **Sembol sızıntısı:** kaynak modül sembolleri **global scope'a** tanımlanıyor;
+  bu yüzden `import { kare } from "lib.sqt"` + yerel `int kare(...)` → E002
+  (hata kaynağı lib.sqt satırına işaret ediyor). FFI'de böyle bir sızıntı yok.
+- **Yinelenen import:** kaynak tarafta `import { kare } ...` iki kez → sessizce
+  dedupe; takma adlı ikinci import ise yine bozuk (`alias_dup`).
 
 **Kök neden (kaynak okundu — hipotez değil):**
 - FFI yolu `SymbolCollector::resolveFfiImport` yerel adı
-  `table_.define(local, ...)` ile tanımlıyor → takma ad çalışır.
-- Kaynak-dosya yolu (`src/symbol/symbol_collector.cpp`, kaynak-modül import
-  döngüsü) yalnız `moduleImports_[moduleId].insert(localName)` yapıyor;
-  sembolü yerel adla **yeniden bağlamıyor**. Sembol orijinal adla kaldığı,
-  erişim listesi ise takma adı içerdiği için ne takma ad ne orijinal ad
-  kullanılabiliyor.
+  `table_.define(local, ...)` ile **bağlıyor** → görünürlük doğal.
+- Kaynak yolu (`src/symbol/symbol_collector.cpp`, `validateImports`) yalnız
+  `moduleImports_[moduleId].insert(localName)` yapıyor (satır ~406); sembolü
+  yerel adla **yeniden tanımlamıyor**. Sembol, kaynak modül toplanırken
+  orijinal adıyla — ve global scope'ta — kalıyor. Görünürlük kapısı
+  (`symbol_collector.cpp:697`) yerel adı arıyor; sembol orada olmadığı için
+  takma ad çözülemiyor, orijinal ad da erişim listesinde olmadığı için düşüyor.
 
-**Kanıt:** `apps/feature-sweep/core/mod/ffi_alias.sqt` (çalışır),
-`alias4.sqt`/`alias5.sqt` (bozuk). Sınıf: FFI↔kaynak import yolu tutarsızlığı.
+**Düzeltme yönü:** kaynak-import yolu da FFI gibi **yerel (takma) adı bu
+modülde bağlamalı**; kaynak sembollerinin global scope'a sızması bırakılmalı;
+iki tür import tek bir bağlama rutinini paylaşmalı.
+
+**Kanıt:** `apps/feature-sweep/core/mod/` → `ffi_alias.sqt` (FFI ✓),
+`alias4.sqt` (kaynak ✗), `alias_same.sqt` (aynı ad ✓), `alias_dup.sqt`,
+`ffi_dup.sqt` (FFI çakışma sessiz), `local_shadow.sqt` (E002 sızıntı),
+`dup_import.sqt`.
 
 ---
 
@@ -390,20 +416,31 @@ tehlikeli sınıf (P-31'in değer üreten yüzü).
 
 ---
 
-### P-33 — `>>>` operatörü yok; sessizce YANLIŞ sonuç veriyor
+### P-33 — `>>>` sessizce YANLIŞ sonuç veriyor — GERÇEK PROBLEM
 
-```
+```c
 int a = 8;
-print(a >>> 1);   // 0     (beklenen: mantıksal kaydırma / ya da syntax hatası)
+print(a >>> 1);   // 0     (mantıksal kaydırma beklenir)
 print(a >> 1);    // 4     (doğru)
 print(8 >>> 2);   // 0
 print(16 >>> 2);  // 0
 ```
-`saqut ast --json` gösteriyor ki `8 >>> 1`, `>>` ve `>` token'larına ayrılıp
+`saqut ast --json` gösteriyor: `8 >>> 1`, `>>` ve `>` token'larına ayrılıp
 `BinaryExpression(">")` içinde `BinaryExpression(">>")` olarak ayrışıyor.
-Yani `>>>` diye bir operatör YOK; `>>` + `>` olarak sessizce yanlış ayrışıyor
-ve 0 üretiyor. Mantıksal sağ kaydırma operatörü dilde bulunmuyor (kullanıcı
-maskelemek zorunda; bkz. P-20, `>>` aritmetik).
+Yani `>>>` diye bir operatör yok; iki operatör olarak sessizce yanlış ayrışıyor
+ve 0 üretiyor.
+
+**Neden gerçek problem:** sessiz yanlış sonuç — sözdizimi hatası da verilmiyor,
+çalışma-zamanı hatası da; kullanıcı 0'ı geçerli sonuç sanıyor. Üstelik
+`>>` **aritmetiktir** (P-20), yani dilde **mantıksal sağ kaydırma operatörü
+yok**; bit-karıştırma algoritması yazan kullanıcı maskelemek zorunda ve
+`>>>`'ün var olduğunu sanıp yanlış sonuç alabiliyor.
+
+**Gereklilik:** `>>>` ya gerçek bir mantıksal kaydırma operatörü olarak
+uygulanmalı ve belgelenmeli, ya da `>>` + `>` diye sessizce ayrışmak yerine
+**açık sözdizimi hatası** vermeli. Sessiz yanlış değer kabul edilemez.
+
+**Kanıt:** `apps/feature-sweep/core/parse-silence.sh` (>>> satırı), `edges.sqt`.
 
 ---
 
@@ -498,9 +535,11 @@ kayda değer çünkü dilde `uninitialized` uyarısı yok ve hata da yok.
 - Dizi `toJson` yok, dizi `toString`/`print` çalışmıyor (P-4) — bilinen boşluk.
 
 **Gerçek boşluklar (kayda değer):**
-- **Mantıksal sağ kaydırma operatörü** (`>>>`) yok; `>>` aritmetik (P-33/P-20).
+- **Mantıksal sağ kaydırma operatörü** (`>>>`) yok; `>>` aritmetik ve `>>>`
+  sessizce yanlış sonuç veriyor (P-33/P-20).
 - **Nullable elemanlı dizi** `T?[]` ifade edilemiyor (P-5).
-- **`import { X as Y }` kaynak-dosya importunda bozuk** (FFI'de çalışıyor — P-6).
+- **`import { X as Y }` import yolları tutarsız** (FFI'de çalışıyor,
+  kaynak-dosyada bozuk); semantik her yerde eşit olmalı (P-6).
 - **String sıralaması** yok → sıralı konteynerler için elle karşılaştırma (P-16).
 - **Varsayılan parametre / aşırı yükleme** yok (P-36).
 - **`auto`** yok (P-18).

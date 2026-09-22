@@ -1,0 +1,3 @@
+// P-6: takma ad AYNI adla -> kaynak importta da çalışır
+import { kare as kare } from "lib.sqt";
+int main() { print(kare(6)); return 0; }

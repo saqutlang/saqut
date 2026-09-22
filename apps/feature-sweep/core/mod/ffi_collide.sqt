@@ -1,0 +1,2 @@
+import { abs as kare } from math;
+int main(){ print(kare(3)); return 0; }
