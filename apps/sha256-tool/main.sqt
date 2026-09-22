@@ -1,0 +1,82 @@
+// ============================================================================
+// sha256-tool — terminal arayüzü (main.sqt)
+// ============================================================================
+//
+// Kullanım:
+//   saqut run apps/sha256-tool/main.sqt -- <dosya>          dosya özeti
+//   saqut run apps/sha256-tool/main.sqt -- -s "metin"       metin özeti
+//   saqut run apps/sha256-tool/main.sqt -- --self-test      NIST vektörleri
+//
+// Çıkış kodları: 0 başarılı, 1 self-test başarısız, 64 kullanım, 66 dosya yok.
+// ============================================================================
+
+import { args } from sys;
+import { readFile, existsFile } from fs;
+import { encode } from utf8;
+import { sha256Hex } from "sha256.sqt";
+
+int usage() {
+    print("kullanim: sha256-tool <dosya> | -s <metin> | --self-test\n");
+    return 64;
+}
+
+int checkVector(string label, string input, string expected) {
+    string got = sha256Hex(encode(input));
+    if (got == expected) {
+        print("PASS  " + label + "\n");
+        return 0;
+    }
+    print("FAIL  " + label + "\n");
+    print("      got      = " + got + "\n");
+    print("      expected = " + expected + "\n");
+    return 1;
+}
+
+int selfTest() {
+    int fails = 0;
+    fails = fails + checkVector("bos",
+        "", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    fails = fails + checkVector("abc",
+        "abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    fails = fails + checkVector("iki bloga yayilan mesaj",
+        "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    fails = fails + checkVector("hizli kahverengi tilki",
+        "The quick brown fox jumps over the lazy dog",
+        "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592");
+    fails = fails + checkVector("bir milyon 'a'",
+        "a".repeat(1000000),
+        "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+
+    if (fails == 0) {
+        print("tum vektorler GECTI\n");
+        return 0;
+    }
+    print((fails as string) + " vektor BASARISIZ\n");
+    return 1;
+}
+
+int main() {
+    string[] argv = args();
+    if (argv.length() < 1) { return usage(); }
+
+    if (argv[0] == "--self-test") {
+        return selfTest();
+    }
+    if (argv[0] == "-s") {
+        if (argv.length() < 2) { return usage(); }
+        print(sha256Hex(encode(argv[1])));
+        print("\n");
+        return 0;
+    }
+
+    string path = argv[0];
+    if (!existsFile(path)) {
+        print("hata: dosya bulunamadi: " + path + "\n");
+        return 66;
+    }
+    byte[] data = readFile(path);
+    print(sha256Hex(data));
+    print("  " + path + "\n");
+    return 0;
+}

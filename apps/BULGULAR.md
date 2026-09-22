@@ -257,7 +257,72 @@ error [E003]: integer literal 4000000000 is out of int range (-2147483648 to 214
 
 Ama `longint x = 4000000000;` (düz atama) kabul ediliyor. Yani hedef tip
 `longint` olsa bile **aritmetik ifade içindeki** literal int bağlamında
-denetleniyor ve reddediliyor. Kullanıcı `longint` hesabı yazamıyor.
+denetleniyor ve reddediliyor. Kullanıcı `longint` hesabı yazamıyor. Aynı
+sınıf SHA-256 yazılırken de çıktı:
+
+```c
+longint v = 1234567890123456;
+longint lo = v & 4294967295;   // error [E003]: 4294967295 out of int range
+```
+
+`v & MASK` açıkça `longint` bağlamında olmasına rağmen maske literalı int
+sayılıyor; sabiti ayrı bir `longint` değişkene almak gerekiyor.
+
+---
+
+## B-08 — Döküman: `>>` işaret davranışı belirtilmemiş (aritmetik çıktı)
+
+**Sınıf:** doküman boşluğu (bit algoritmaları için correctness tuzağı)
+**Durum:** Doğrulandı
+**Kaynak doc:** `saqutwebside/src/content/docs/operators.md` (shift tablosu)
+
+`operators.md` `<<`/`>>` operatörlerini listeler ama negatif işlenenlerde
+davranışı söylemez. Ölçüm:
+
+```c
+int neg = 0 - 8;                 // 0xFFFFFFF8
+print((neg >> 1) as string);     // -4      -> ARİTMETİK (işaret genişletir)
+```
+
+Bit-karıştırma algoritmaları (hash, checksum, sıkıştırma) mantıksal kaydırma
+ister; `>>`'in aritmetik olduğunu bilmeyen kullanıcı sessizce yanlış sonuç
+üretir. Doğru davranış tanımlanmalı ve belgeye yazılmalı.
+
+---
+
+## B-09 — `longint` doğrudan `byte`'a cast edilemiyor
+
+**Sınıf:** doküman boşluğu / tutarlılık
+**Durum:** Doğrulandı
+**Kaynak doc:** `saqutwebside/.../type-casting.md` (yalnız `int`→`byte`)
+
+```c
+longint v = 1234567890123456;
+byte b = (v >> 56) as byte;      // error: only 'int' can be cast to byte
+```
+
+Hata mesajı doğru yönlendiriyor (`as int as byte`), ama doc'taki cast tablosu
+`longint` kaynağını içermiyor. `byte[]`'e yazmak isteyen kullanıcı bunu
+deneyerek öğrenir.
+
+---
+
+## B-10 — Ölçüm (hata değil): SHA-256 VM'de ~0.35 MB/s, lineer
+
+**Sınıf:** performans ölçümü (regresyon tabanı)
+**Durum:** Doğrulandı
+
+Saf saQut SHA-256, VM üzerinde:
+
+```
+1 MB rastgele -> 2.80 s
+4 MB rastgele -> 10.39 s      (4x girdi, ~3.7x süre -> lineer)
+6 MB ikili    -> 17.1  s      (sha256sum: 0.028 s)
+```
+
+Süper-lineer davranış gözlenmedi; `byte[]` indeksleme lineer, dizi `push`
+amortize O(1). Fark sabit çarpandır (yorumlanan VM + bayt-başına erişim/push).
+Hata değil; ileride perf işleri için taban çizgisidir.
 
 ---
 

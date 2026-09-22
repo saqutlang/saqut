@@ -15,7 +15,7 @@ kaydetmek.
 | Dizin | Ne | Durum |
 |---|---|---|
 | `xml-tool/` | XML 1.0 alt kümesi ayrıştırıcı + check/pretty/query/stats CLI | çalışıyor (VM); büyük dosyada dil kaynaklı yavaşlık için BULGULAR B-02 |
-| `sha256-tool/` | (planlandı) kriptografik hash CLI — bitwise/byte[]/longint | — |
+| `sha256-tool/` | SHA-256 CLI — bitwise/byte[]/tamsayı sarması; NIST + `sha256sum` ile doğrulandı | çalışıyor (VM) |
 | `btree-kv/` | (planlandı) B-tree kalıcı anahtar-değer deposu + REPL | — |
 
 ## Koşum

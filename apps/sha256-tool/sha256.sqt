@@ -1,0 +1,208 @@
+// ============================================================================
+// sha256-tool — SHA-256 (FIPS 180-4) saf saQut uygulaması
+// ============================================================================
+//
+// Bit düzeyi hesaplama, byte[] işleme ve tamsayı taşma davranışını gerçek bir
+// kriptografik algoritmada zorlar.
+//
+// Dil notları (ölçülmüş, 0.9.9 VM):
+//   - `>>` ARİTMETİKTİR (işaret genişletir); SHA-256 mantıksal kaydırma ister,
+//     bu yüzden lshr() maske ile yapar.
+//   - int toplama 2^32 modunda sarar; `+` zincirleri SHA-256 için doğrudur.
+//   - 32-bit sabitler > 2^31 ise negatif ondalık yazılır (literal int
+//     aralığı denetimi; apps/BULGULAR.md B-07).
+//   - `int` -> `byte` cast'i vardır; `longint` doğrudan byte'a CAST EDİLEMEZ
+//     ("only 'int' can be cast to byte"), önce `as int` gerekir.
+//
+// Doğrulama: NIST vektörleri (`--self-test`) ve harici `sha256sum` çapraz
+// kontrolü (bkz. README).
+// ============================================================================
+
+// ── 32-bit bit işlemleri ─────────────────────────────────────────────────────
+
+// Mantıksal sağ kaydırma (1..31). Aritmetik `>>` sonrası maske.
+int lshr(int x, int n) {
+    if (n <= 0) { return x; }
+    int mask = 2147483647 >> (n - 1);
+    return (x >> n) & mask;
+}
+
+// Sağa döndürme (1..31).
+int rotr(int x, int n) {
+    return lshr(x, n) | (x << (32 - n));
+}
+
+int ch(int x, int y, int z) {
+    return (x & y) ^ ((~x) & z);
+}
+
+int maj(int x, int y, int z) {
+    return (x & y) ^ (x & z) ^ (y & z);
+}
+
+int bigSigma0(int x) { return rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22); }
+int bigSigma1(int x) { return rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25); }
+int smallSigma0(int x) { return rotr(x, 7) ^ rotr(x, 18) ^ lshr(x, 3); }
+int smallSigma1(int x) { return rotr(x, 17) ^ rotr(x, 19) ^ lshr(x, 10); }
+
+// ── hex çıktı ────────────────────────────────────────────────────────────────
+
+string hexDigit(int v) {
+    if (v == 0)  { return "0"; }
+    if (v == 1)  { return "1"; }
+    if (v == 2)  { return "2"; }
+    if (v == 3)  { return "3"; }
+    if (v == 4)  { return "4"; }
+    if (v == 5)  { return "5"; }
+    if (v == 6)  { return "6"; }
+    if (v == 7)  { return "7"; }
+    if (v == 8)  { return "8"; }
+    if (v == 9)  { return "9"; }
+    if (v == 10) { return "a"; }
+    if (v == 11) { return "b"; }
+    if (v == 12) { return "c"; }
+    if (v == 13) { return "d"; }
+    if (v == 14) { return "e"; }
+    return "f";
+}
+
+export string hex32(int word) {
+    string out = "";
+    int shift = 28;
+    while (shift >= 0) {
+        out = out + hexDigit((word >> shift) & 15);
+        shift = shift - 4;
+    }
+    return out;
+}
+
+// ── sabit tablolar ───────────────────────────────────────────────────────────
+
+int[] kTable() {
+    int[] k = [
+        1116352408, 1899447441, -1245643825, -373957723, 961987163, 1508970993, -1841331548, -1424204075,
+        -670586216, 310598401, 607225278, 1426881987, 1925078388, -2132889090, -1680079193, -1046744716,
+        -459576895, -272742522, 264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986,
+        -1740746414, -1473132947, -1341970488, -1084653625, -958395405, -710438585, 113926993, 338241895,
+        666307205, 773529912, 1294757372, 1396182291, 1695183700, 1986661051, -2117940946, -1838011259,
+        -1564481375, -1474664885, -1035236496, -949202525, -778901479, -694614492, -200395387, 275423344,
+        430227734, 506948616, 659060556, 883997877, 958139571, 1322822218, 1537002063, 1747873779,
+        1955562222, 2024104815, -2067236844, -1933114872, -1866530822, -1538233109, -1090935817, -965641998,
+    ];
+    return k;
+}
+
+int[] initialH() {
+    int[] h = [1779033703, -1150833019, 1013904242, -1521486534, 1359893119, -1694144372, 528734635, 1541459225];
+    return h;
+}
+
+// ── mesaj dolgusu (padding) ──────────────────────────────────────────────────
+// 0x80 + sıfırlar + 64-bit big-endian bit uzunluğu; toplam 64'ün katı.
+
+byte[] padMessage(byte[] msg) {
+    int n = msg.length();
+    byte[] out = [];
+    int i = 0;
+    while (i < n) {
+        out.push(msg[i]);
+        i = i + 1;
+    }
+    out.push(128 as byte); // 0x80
+    // uzunluk alanı için 8 bayt yer bırakacak şekilde sıfırla
+    while (out.length() % 64 != 56) {
+        out.push(0 as byte);
+    }
+    // 64-bit bit uzunluğu: (n*8) longint olarak, big-endian 8 bayt
+    longint bits = (n as longint) * 8;
+    int shift = 56;
+    while (shift >= 0) {
+        int b = ((bits >> shift) & 255) as int;
+        out.push(b as byte);
+        shift = shift - 8;
+    }
+    return out;
+}
+
+// ── sıkıştırma fonksiyonu ────────────────────────────────────────────────────
+
+void compress(int[] h, byte[] data, int off) {
+    int[] w = [];
+    int i = 0;
+    while (i < 16) {
+        int base = off + i * 4;
+        int word = ((data[base] as int) << 24)
+                 | ((data[base + 1] as int) << 16)
+                 | ((data[base + 2] as int) << 8)
+                 | (data[base + 3] as int);
+        w.push(word);
+        i = i + 1;
+    }
+    while (i < 64) {
+        int x = w[i - 15];
+        int y = w[i - 2];
+        int s0 = smallSigma0(x);
+        int s1 = smallSigma1(y);
+        w.push(w[i - 16] + s0 + w[i - 7] + s1);
+        i = i + 1;
+    }
+
+    int[] k = kTable();
+    int a = h[0];
+    int b = h[1];
+    int c = h[2];
+    int d = h[3];
+    int e = h[4];
+    int f = h[5];
+    int g = h[6];
+    int hh = h[7];
+
+    i = 0;
+    while (i < 64) {
+        int S1 = bigSigma1(e);
+        int chv = ch(e, f, g);
+        int t1 = hh + S1 + chv + k[i] + w[i];
+        int S0 = bigSigma0(a);
+        int mj = maj(a, b, c);
+        int t2 = S0 + mj;
+
+        hh = g;
+        g = f;
+        f = e;
+        e = d + t1;
+        d = c;
+        c = b;
+        b = a;
+        a = t1 + t2;
+        i = i + 1;
+    }
+
+    h[0] = h[0] + a;
+    h[1] = h[1] + b;
+    h[2] = h[2] + c;
+    h[3] = h[3] + d;
+    h[4] = h[4] + e;
+    h[5] = h[5] + f;
+    h[6] = h[6] + g;
+    h[7] = h[7] + hh;
+}
+
+// ── tek atımlık özet ─────────────────────────────────────────────────────────
+
+export string sha256Hex(byte[] msg) {
+    byte[] padded = padMessage(msg);
+    int[] h = initialH();
+    int blocks = padded.length() / 64;
+    int b = 0;
+    while (b < blocks) {
+        compress(h, padded, b * 64);
+        b = b + 1;
+    }
+    string out = "";
+    int i = 0;
+    while (i < 8) {
+        out = out + hex32(h[i]);
+        i = i + 1;
+    }
+    return out;
+}
