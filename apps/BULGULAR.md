@@ -10,8 +10,9 @@ doküman-gerçek sapmalarını ve ölçülmüş kısıtları kaydeder.
 - Her bulgu, en ucuz deneyle (küçük `.sqt` + gözlenen çıktı) kanıtlanmıştır.
   Issue açmak ürün sahibi kararıdır; burada yalnız kayıt tutulur.
 
-Bu turdaki uygulama: `apps/xml-tool/`. Ayrıca izole doğrulama probları
-(`/tmp/sqt-probe`) kullanıldı; kalıcı kanıt komutları aşağıdadır.
+Bu turdaki uygulamalar: `apps/xml-tool/` (XML CLI), `apps/sha256-tool/`
+(SHA-256 CLI) ve `apps/btree-kv/` (B-tree KV + REPL). Ayrıca izole doğrulama
+probları (`/tmp/sqt-probe`) kullanıldı; kalıcı kanıt komutları aşağıdadır.
 
 ---
 
@@ -326,6 +327,52 @@ Hata değil; ileride perf işleri için taban çizgisidir.
 
 ---
 
+## B-11 — String sıralaması yok: sıralı yapılar elle karşılaştırma gerektiriyor
+
+**Sınıf:** dil kısıtı (belgelenmiş, ama etkisi kayda değer)
+**Durum:** Doğrulandı
+**Kaynak doc:** `saqutwebside/.../strings.md` ("String ordering operators
+(`<`, `>`, `<=`, `>=`) are not available")
+
+B-tree / sıralı harita / indeks gibi temel veri yapıları anahtar sıralamasına
+dayandığından, kullanıcı kendi karşılaştırıcısını yazmak zorunda:
+
+```c
+int cmpStr(string a, string b) {
+    byte[] ba = encode(a);
+    byte[] bb = encode(b);
+    ... // bayt sözlük sırası
+}
+```
+
+Bu **belgelenmiş bir kısıt** (B-03/B-04 gibi çelişki değil), ancak sonucu
+kayda değer: `apps/btree-kv` gibi bir uygulama bu yüzden her karşılaştırmada
+`utf8::encode` çağırıp iki geçici `byte[]` üretir (O(len), tahsisli). Sıralı
+konteynerler dile doğal olarak oturmuyor; `cmpStr` benzeri yardımcı ya stdlib'de
+olmalı ya da sıralı string karşılaştırması tasarım kararı olarak verilmeli.
+
+---
+
+## B-12 — Ölçüm (hata değil): B-tree VM'de kararlı ve lineer
+
+**Sınıf:** performans ölçümü (uzun ömürlü çalışma tabanı)
+**Durum:** Doğrulandı
+
+`apps/btree-kv` (arena B-tree, t=2):
+
+```
+bench 5000   -> 155 ms,  yukseklik 11,  ~13 MB RSS
+bench 20000  -> 884 ms,  yukseklik 13,  ~34 MB RSS
+REPL stresi  -> 5000 set + 2000 get, 0.23 s, ~13 MB RSS (kararlı)
+```
+
+5000→20000 (4x anahtar) için 5.7x süre; logaritmik karşılaştırma etkisi
+beklenen aralıkta. REPL döngüsünde bellek büyümesi/sızıntı gözlenmedi.
+`Entry`/`BNode` başına bellek ~1.7 KB; struct+string+GC yükü için makul.
+Hata değil; uzun ömürlü çalışma için taban çizgisidir.
+
+---
+
 ## Doğrulanmayanlar / kapsam dışı
 
 - B-01 için kök nedenin "host dönüş etiketi" mi yoksa "GREATER dispatch" mı
@@ -336,3 +383,7 @@ Hata değil; ileride perf işleri için taban çizgisidir.
   etti ve VM'den farklı sonuç verdi.
 - Dogfood turundan kalan I-01..I-05 hâlâ "karar bekliyor"; silinen ağaçta
   yalnız git geçmişinde (`387006e`), GitHub issue'su açılmadı.
+- `btree-kv` gerçek B-tree silme (birleştirme/ödünç alma) içermiyor;
+  tombstone kullanıyor — kapsam dışı, belgelendi.
+- Tüm uygulamalar `--jit` altında koşulmadı; JIT karşılaştırması yalnız
+  `--jit`'in programı kabul ettiği B-01 deneyinde yapıldı.

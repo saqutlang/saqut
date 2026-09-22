@@ -1,0 +1,56 @@
+// ============================================================================
+// btree-kv — kalıcılık (kvstore.sqt)
+// ============================================================================
+//
+// Basit metin biçimi: her satır  "<anahtar>\t<deger>".
+// Save sırasında tombstone'lar yazılmaz (sıkıştırma). Anahtar ve değerlerde
+// sekme/yeni satır bulunmaması gerekir (kısıt; belgelenmiştir).
+// ============================================================================
+
+import { Entry, BTree, treeEntries, treeSet } from "btree.sqt";
+import { writeFile, readFile, existsFile } from fs;
+import { encode, decode } from utf8;
+
+export string serialize(BTree tr) {
+    Entry[] all = treeEntries(tr);
+    string out = "";
+    int i = 0;
+    while (i < all.length()) {
+        Entry e = all[i];
+        out = out + e.key + "\t" + e.value + "\n";
+        i = i + 1;
+    }
+    return out;
+}
+
+export void saveTree(BTree tr, string path) {
+    writeFile(path, encode(serialize(tr)));
+}
+
+// Dönüş: yüklenen kayıt sayısı; dosya yoksa -1.
+export int loadTree(BTree tr, string path) {
+    if (!existsFile(path)) { return -1; }
+    string text = decode(readFile(path));
+    string[] lines = text.split("\n");
+    int n = 0;
+    int i = 0;
+    while (i < lines.length()) {
+        string line = lines[i];
+        if (line.length() > 0) {
+            int tabPos = -1;
+            int j = 0;
+            while (j < line.length()) {
+                if (line.charAt(j) == "\t") { tabPos = j; break; }
+                j = j + 1;
+            }
+            if (tabPos >= 0) {
+                string k = line.substring(0, tabPos);
+                string v = line.substring(tabPos + 1, line.length() - tabPos - 1);
+                treeSet(tr, k, v);
+                n = n + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return n;
+}

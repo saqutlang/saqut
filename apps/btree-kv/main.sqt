@@ -1,0 +1,260 @@
+// ============================================================================
+// btree-kv — terminal arayüzü: REPL + demo + bench (main.sqt)
+// ============================================================================
+//
+// Kullanım:
+//   saqut run apps/btree-kv/main.sqt -- repl  [dosya]   etkileşimli REPL
+//   saqut run apps/btree-kv/main.sqt -- demo            öz-doğrulama dizisi
+//   saqut run apps/btree-kv/main.sqt -- bench <n>       n anahtar ekle, ölç
+//
+// REPL uzun ömürlü bir döngüdür: stdin'den satır okur, EOF'ta kapanır.
+// Uzun süre çalışan sistem davranışını (GC, bellek, tekrarlı komut) zorlar.
+//
+// Çıkış kodları: 0 başarılı, 1 demo başarısız, 64 kullanım, 66 dosya hatası.
+// ============================================================================
+
+import { args } from sys;
+import { readLine } from stdin;
+import { now, diffMillis } from date;
+import { Entry, BTree, newTree, treeGet, treeSet, treeDelete, treeEntries,
+         treeCount, treeHeight, cmpStr } from "btree.sqt";
+import { saveTree, loadTree } from "kvstore.sqt";
+
+int usage() {
+    print("kullanim: btree-kv repl [dosya] | demo | bench <n>\n");
+    return 64;
+}
+
+void printHelp() {
+    print("komutlar:\n");
+    print("  set <anahtar> <deger>   ekle/guncelle\n");
+    print("  get <anahtar>           oku\n");
+    print("  del <anahtar>           sil (tombstone)\n");
+    print("  keys                    tum anahtarlar (sirali)\n");
+    print("  dump                    anahtar=deger (sirali)\n");
+    print("  range <lo> <hi>         [lo,hi] araligi\n");
+    print("  count | height          canli kayit / agac yuksekligi\n");
+    print("  save <dosya> | load <dosya>\n");
+    print("  help | quit\n");
+}
+
+int findSpace(string s) {
+    int i = 0;
+    while (i < s.length()) {
+        if (s.charAt(i) == " ") { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+string zeroPad(int n, int width) {
+    string s = n as string;
+    if (s.length() >= width) { return s; }
+    return "0".repeat(width - s.length()) + s;
+}
+
+// Dönüş false = döngüden çık.
+bool handleLine(BTree tr, string line) {
+    string s = line.trim();
+    if (s.length() == 0) { return true; }
+
+    int sp = findSpace(s);
+    string cmd = s;
+    string rest = "";
+    if (sp >= 0) {
+        cmd = s.substring(0, sp);
+        rest = s.substring(sp + 1, s.length() - sp - 1).trim();
+    }
+
+    if (cmd == "quit" || cmd == "exit") { return false; }
+    if (cmd == "help") { printHelp(); return true; }
+
+    if (cmd == "keys" || cmd == "dump") {
+        Entry[] all = treeEntries(tr);
+        int i = 0;
+        while (i < all.length()) {
+            Entry e = all[i];
+            if (cmd == "keys") { print(e.key); print("\n"); }
+            else { print(e.key); print("="); print(e.value); print("\n"); }
+            i = i + 1;
+        }
+        print("(" + (all.length() as string) + " kayit)\n");
+        return true;
+    }
+    if (cmd == "count") { print((treeCount(tr) as string) + "\n"); return true; }
+    if (cmd == "height") { print((treeHeight(tr) as string) + "\n"); return true; }
+
+    if (cmd == "get") {
+        string? v = treeGet(tr, rest);
+        if (v == null) { print("(yok)\n"); } else { print(v); print("\n"); }
+        return true;
+    }
+    if (cmd == "del") {
+        bool ok = treeDelete(tr, rest);
+        if (ok) { print("silindi\n"); } else { print("(yok)\n"); }
+        return true;
+    }
+    if (cmd == "set") {
+        int sp2 = findSpace(rest);
+        if (sp2 < 0) { print("kullanim: set <anahtar> <deger>\n"); return true; }
+        string k = rest.substring(0, sp2);
+        string v = rest.substring(sp2 + 1, rest.length() - sp2 - 1);
+        treeSet(tr, k, v);
+        print("ok\n");
+        return true;
+    }
+    if (cmd == "save") {
+        saveTree(tr, rest);
+        print("kaydedildi: " + rest + "\n");
+        return true;
+    }
+    if (cmd == "load") {
+        int n = loadTree(tr, rest);
+        if (n < 0) { print("dosya yok: " + rest + "\n"); }
+        else { print((n as string) + " kayit yuklendi\n"); }
+        return true;
+    }
+    if (cmd == "range") {
+        int sp2 = findSpace(rest);
+        if (sp2 < 0) { print("kullanim: range <lo> <hi>\n"); return true; }
+        string lo = rest.substring(0, sp2);
+        string hi = rest.substring(sp2 + 1, rest.length() - sp2 - 1).trim();
+        Entry[] all = treeEntries(tr);
+        int hits = 0;
+        int i = 0;
+        while (i < all.length()) {
+            Entry e = all[i];
+            if (cmpStr(e.key, lo) >= 0 && cmpStr(e.key, hi) <= 0) {
+                print(e.key); print("="); print(e.value); print("\n");
+                hits = hits + 1;
+            }
+            i = i + 1;
+        }
+        print("(" + (hits as string) + " kayit)\n");
+        return true;
+    }
+
+    print("bilinmeyen komut: " + cmd + " (help yazin)\n");
+    return true;
+}
+
+int repl(string path) {
+    BTree tr = newTree(2);
+    if (path != "") {
+        int n = loadTree(tr, path);
+        if (n < 0) {
+            print("uyari: dosya yok, bos agacla baslandi: " + path + "\n");
+        } else {
+            print((n as string) + " kayit yuklendi: " + path + "\n");
+        }
+    }
+    print("btree-kv REPL — 'help' ile komutlar, 'quit' ile cikis\n");
+    while (true) {
+        string? line = readLine();
+        if (line == null) { break; }
+        if (!handleLine(tr, line)) { break; }
+    }
+    print("gorusuruz\n");
+    return 0;
+}
+
+// ── öz-doğrulama ─────────────────────────────────────────────────────────────
+
+int demo() {
+    int fails = 0;
+    BTree tr = newTree(2);
+
+    // 1) 1000 anahtar ekle (split'leri tetikler): k0000..k0999
+    int i = 0;
+    while (i < 1000) {
+        string k = "k" + zeroPad(i, 4);
+        treeSet(tr, k, (i * 3) as string);
+        i = i + 1;
+    }
+    int count = treeCount(tr);
+    if (count == 1000) { print("PASS  ekleme: 1000 kayit\n"); }
+    else { print("FAIL  ekleme: " + (count as string) + " (beklenen 1000)\n"); fails = fails + 1; }
+
+    // 2) sıralı mı?
+    Entry[] all = treeEntries(tr);
+    bool sorted = true;
+    i = 1;
+    while (i < all.length()) {
+        if (cmpStr(all[i - 1].key, all[i].key) >= 0) { sorted = false; break; }
+        i = i + 1;
+    }
+    if (sorted) { print("PASS  siralama: artan\n"); }
+    else { print("FAIL  siralama bozuk\n"); fails = fails + 1; }
+
+    // 3) nokta okuma
+    string? v = treeGet(tr, "k0500");
+    if (v == "1500") { print("PASS  get k0500 = 1500\n"); }
+    else { print("FAIL  get k0500\n"); fails = fails + 1; }
+
+    // 4) güncelleme
+    treeSet(tr, "k0500", "yeni");
+    string? v2 = treeGet(tr, "k0500");
+    if (v2 == "yeni" && treeCount(tr) == 1000) { print("PASS  guncelleme sayiyi artirmiyor\n"); }
+    else { print("FAIL  guncelleme\n"); fails = fails + 1; }
+
+    // 5) tombstone silme
+    bool del = treeDelete(tr, "k0500");
+    string? v3 = treeGet(tr, "k0500");
+    if (del && v3 == null && treeCount(tr) == 999) { print("PASS  silme: canli 999\n"); }
+    else { print("FAIL  silme\n"); fails = fails + 1; }
+
+    // 6) olmayan anahtar
+    string? v4 = treeGet(tr, "yok123");
+    if (v4 == null) { print("PASS  olmayan anahtar null\n"); }
+    else { print("FAIL  olmayan anahtar\n"); fails = fails + 1; }
+
+    int h = treeHeight(tr);
+    if (h > 0) { print("PASS  yukseklik = " + (h as string) + "\n"); }
+    else { print("FAIL  yukseklik\n"); fails = fails + 1; }
+
+    if (fails == 0) { print("demo GECTI\n"); return 0; }
+    print((fails as string) + " demo kontrolu BASARISIZ\n");
+    return 1;
+}
+
+// ── bench ────────────────────────────────────────────────────────────────────
+
+int bench(int n) {
+    BTree tr = newTree(2);
+    date start = now();
+    int i = 0;
+    while (i < n) {
+        treeSet(tr, "k" + zeroPad(i, 8), (i as string));
+        i = i + 1;
+    }
+    date end = now();
+    longint ms = diffMillis(end, start);
+    print("n        : " + (n as string) + "\n");
+    print("count    : " + (treeCount(tr) as string) + "\n");
+    print("height   : " + (treeHeight(tr) as string) + "\n");
+    print("sure ms  : " + (ms as string) + "\n");
+    return 0;
+}
+
+int main() {
+    string[] argv = args();
+    if (argv.length() < 1) { return usage(); }
+
+    if (argv[0] == "demo") { return demo(); }
+    if (argv[0] == "repl") {
+        string path = "";
+        if (argv.length() >= 2) { path = argv[1]; }
+        return repl(path);
+    }
+    if (argv[0] == "bench") {
+        if (argv.length() < 2) { return usage(); }
+        int? n = argv[1] as int?;
+        if (n == null) {
+            print("gecersiz sayi\n");
+            return 64;
+        } else {
+            return bench(n);
+        }
+    }
+    return usage();
+}

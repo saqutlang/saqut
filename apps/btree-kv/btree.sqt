@@ -1,0 +1,237 @@
+// ============================================================================
+// btree-kv — B-tree çekirdeği (btree.sqt)
+// ============================================================================
+//
+// Düğümler tek bir "arena" dizisinde tutulur (indeks tabanlı), böylece
+// özyinelemeli yapı dil tarafında dizi-içi-struct referansıyla kurulur.
+// Minimum derece `t`: düğüm başına en çok 2t-1 anahtar.
+//
+// Önemli dil notu: saQut'ta string sıralama karşılaştırması (<, >) YOK.
+// Sıralı bir yapı için anahtar karşılaştırması elle yazılır; burada UTF-8
+// baytları üzerinden sözlük sırası kullanılır (deterministik).
+//
+// Silme "tombstone" ile yapılır: Entry.deleted işaretlenir, okuma/tarama/save
+// bunları atlar (save sırasında sıkıştırma yapılır). B-tree düğüm birleştirme/
+// ödünç alma (gerçek delete) bu turda kapsam dışıdır.
+// ============================================================================
+
+import { encode } from utf8;
+
+export struct Entry {
+    string key;
+    string value;
+    bool deleted;
+}
+
+export struct BNode {
+    Entry[] keys;     // sıralı
+    int[] children;   // yaprakta boş
+    bool leaf;
+}
+
+export struct BTree {
+    BNode[] nodes;    // arena; nodes[root] kök
+    int root;
+    int t;            // minimum derece
+}
+
+// UTF-8 bayt sözlük sırası: a<b -> -1, a==b -> 0, a>b -> 1.
+export int cmpStr(string a, string b) {
+    byte[] ba = encode(a);
+    byte[] bb = encode(b);
+    int n = ba.length();
+    if (bb.length() < n) { n = bb.length(); }
+    int i = 0;
+    while (i < n) {
+        int x = ba[i] as int;
+        int y = bb[i] as int;
+        if (x < y) { return -1; }
+        if (x > y) { return 1; }
+        i = i + 1;
+    }
+    if (ba.length() < bb.length()) { return -1; }
+    if (ba.length() > bb.length()) { return 1; }
+    return 0;
+}
+
+BNode newBNode(bool leaf) {
+    BNode n;
+    n.keys = [];
+    n.children = [];
+    n.leaf = leaf;
+    return n;
+}
+
+export BTree newTree(int t) {
+    BTree tr;
+    tr.t = t;
+    tr.nodes = [];
+    tr.nodes.push(newBNode(true));
+    tr.root = 0;
+    return tr;
+}
+
+export int maxKeys(BTree tr) {
+    return 2 * tr.t - 1;
+}
+
+// ── okuma ────────────────────────────────────────────────────────────────────
+
+string? getIn(BTree tr, int nodeIdx, string key) {
+    BNode node = tr.nodes[nodeIdx];
+    int i = 0;
+    while (i < node.keys.length()) {
+        int c = cmpStr(key, node.keys[i].key);
+        if (c == 0) {
+            if (node.keys[i].deleted) { return null; }
+            return node.keys[i].value;
+        }
+        if (c < 0) { break; }
+        i = i + 1;
+    }
+    if (node.leaf) { return null; }
+    return getIn(tr, node.children[i], key);
+}
+
+export string? treeGet(BTree tr, string key) {
+    return getIn(tr, tr.root, key);
+}
+
+// ── yazma ────────────────────────────────────────────────────────────────────
+
+void splitChild(BTree tr, int parentIdx, int i) {
+    int t = tr.t;
+    int mid = t - 1;
+
+    BNode parent = tr.nodes[parentIdx];
+    BNode child = tr.nodes[parent.children[i]];
+
+    BNode right = newBNode(child.leaf);
+    right.keys = child.keys.slice(mid + 1, child.keys.length());
+    if (!child.leaf) {
+        right.children = child.children.slice(t, child.children.length());
+    }
+    Entry median = child.keys[mid];
+
+    child.keys = child.keys.slice(0, mid);
+    if (!child.leaf) {
+        child.children = child.children.slice(0, t);
+    }
+
+    tr.nodes.push(right);
+    int rightIdx = tr.nodes.length() - 1;
+
+    parent.keys.insert(i, median);
+    parent.children.insert(i + 1, rightIdx);
+}
+
+void insertNonFull(BTree tr, int nodeIdx, string key, string value) {
+    BNode node = tr.nodes[nodeIdx];
+    int i = 0;
+    while (i < node.keys.length() && cmpStr(key, node.keys[i].key) > 0) {
+        i = i + 1;
+    }
+    if (i < node.keys.length() && cmpStr(key, node.keys[i].key) == 0) {
+        node.keys[i].value = value;
+        node.keys[i].deleted = false;
+        return;
+    }
+    if (node.leaf) {
+        Entry e;
+        e.key = key;
+        e.value = value;
+        e.deleted = false;
+        node.keys.insert(i, e);
+        return;
+    }
+    BNode child = tr.nodes[node.children[i]];
+    if (child.keys.length() >= maxKeys(tr)) {
+        splitChild(tr, nodeIdx, i);
+        BNode node2 = tr.nodes[nodeIdx];
+        int c = cmpStr(key, node2.keys[i].key);
+        if (c == 0) {
+            node2.keys[i].value = value;
+            node2.keys[i].deleted = false;
+            return;
+        }
+        if (c > 0) { i = i + 1; }
+    }
+    BNode node3 = tr.nodes[nodeIdx];
+    insertNonFull(tr, node3.children[i], key, value);
+}
+
+export void treeSet(BTree tr, string key, string value) {
+    BNode root = tr.nodes[tr.root];
+    if (root.keys.length() >= maxKeys(tr)) {
+        BNode newRoot = newBNode(false);
+        newRoot.children.push(tr.root);
+        tr.nodes.push(newRoot);
+        int ni = tr.nodes.length() - 1;
+        splitChild(tr, ni, 0);
+        tr.root = ni;
+        insertNonFull(tr, ni, key, value);
+        return;
+    }
+    insertNonFull(tr, tr.root, key, value);
+}
+
+// Tombstone silme: anahtar varsa işaretlenir; yoksa false.
+export bool treeDelete(BTree tr, string key) {
+    bool found = markDeleted(tr, tr.root, key);
+    return found;
+}
+
+bool markDeleted(BTree tr, int nodeIdx, string key) {
+    BNode node = tr.nodes[nodeIdx];
+    int i = 0;
+    while (i < node.keys.length()) {
+        int c = cmpStr(key, node.keys[i].key);
+        if (c == 0) {
+            if (node.keys[i].deleted) { return false; }
+            node.keys[i].deleted = true;
+            return true;
+        }
+        if (c < 0) { break; }
+        i = i + 1;
+    }
+    if (node.leaf) { return false; }
+    return markDeleted(tr, node.children[i], key);
+}
+
+// ── tarama ───────────────────────────────────────────────────────────────────
+
+// In-order: canlı girdiler sıralı olarak `out` dizisine eklenir.
+void collectIn(BTree tr, int nodeIdx, Entry[] out) {
+    BNode node = tr.nodes[nodeIdx];
+    int i = 0;
+    while (i < node.keys.length()) {
+        if (!node.leaf) { collectIn(tr, node.children[i], out); }
+        if (!node.keys[i].deleted) { out.push(node.keys[i]); }
+        i = i + 1;
+    }
+    if (!node.leaf) { collectIn(tr, node.children[i], out); }
+}
+
+export Entry[] treeEntries(BTree tr) {
+    Entry[] out = [];
+    collectIn(tr, tr.root, out);
+    return out;
+}
+
+export int treeCount(BTree tr) {
+    Entry[] all = treeEntries(tr);
+    return all.length();
+}
+
+// Ağaç yüksekliği (kenar sayısı); yaprak yüksekliği tüm yollar için aynıdır.
+export int treeHeight(BTree tr) {
+    int h = 0;
+    int idx = tr.root;
+    while (true) {
+        BNode n = tr.nodes[idx];
+        if (n.leaf) { return h; }
+        idx = n.children[0];
+        h = h + 1;
+    }
+    return h;
+}
