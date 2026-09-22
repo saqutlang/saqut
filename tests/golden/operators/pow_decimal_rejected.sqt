@@ -1,0 +1,7 @@
+// #237: decimal sabit ölçeklidir (ADR-028); üs alma sonucu genel durumda
+// temsil edilemez. Sessizce float'a düşürmek yerine açık cast istenir.
+int main() {
+    decimal d = 2.0d;
+    print(d ** 2);
+    return 0;
+}

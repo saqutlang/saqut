@@ -1,0 +1,7 @@
+// #237: tamsayıda negatif üs runtime hatası vermeli — sonuç kesirli olurdu.
+// (Ondalıkta geçerlidir: 2.0 ** -1.0 = 0.5, bkz. pow.sqt)
+int main() {
+    int e = -1;
+    print(2 ** e);
+    return 0;
+}

@@ -87,6 +87,10 @@ inline const char* opSymbol(Opcode op) {
         case Opcode::FMUL:          return "*.";
         case Opcode::FDIV:          return "/.";
         case Opcode::MOD:           return "%";
+        case Opcode::POW:           return "**";
+        case Opcode::LPOW:          return "**L";
+        case Opcode::FPOW:          return "**.";
+        case Opcode::F32POW:        return "**f";
         case Opcode::BAND:          return "&";
         case Opcode::BOR:           return "|";
         case Opcode::BXOR:          return "^";
@@ -114,6 +118,7 @@ static bool isBinaryOp(Opcode op) {
     switch (op) {
         case Opcode::ADD: case Opcode::SUB: case Opcode::MUL:
         case Opcode::DIV: case Opcode::MOD:
+        case Opcode::POW: case Opcode::LPOW: case Opcode::FPOW: case Opcode::F32POW:
         case Opcode::FADD: case Opcode::FSUB: case Opcode::FMUL: case Opcode::FDIV:
         case Opcode::BAND: case Opcode::BOR: case Opcode::BXOR:
         case Opcode::SHL: case Opcode::SHR:
@@ -361,6 +366,7 @@ inline std::string operands(const Instruction& ins, const Palette& p = kFlatPale
         // -Wswitch için case'ler yine de gerekli (boş).
         case Opcode::ADD: case Opcode::SUB: case Opcode::MUL:
         case Opcode::DIV: case Opcode::MOD:
+        case Opcode::POW: case Opcode::LPOW: case Opcode::FPOW: case Opcode::F32POW:
         case Opcode::FADD: case Opcode::FSUB: case Opcode::FMUL: case Opcode::FDIV:
         case Opcode::BAND: case Opcode::BOR: case Opcode::BXOR:
         case Opcode::SHL: case Opcode::SHR:

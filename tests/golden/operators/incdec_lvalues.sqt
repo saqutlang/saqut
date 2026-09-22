@@ -1,0 +1,30 @@
+// #238: ++/-- dört l-value biçiminde ve her sayısal tipte çalışmalı.
+// Regresyon: eskiden yalnız YEREL int değişkende doğruydu; ondalıkta
+// sessizce yanlış (1.5++ → 1), dizi elemanı ve struct alanında ise
+// sessizce hiçbir şey yapmıyordu.
+struct P { int x; }
+
+int sayac = 0;   // global
+
+int main() {
+    float f = 1.5;   f++;   print(f);   print("|");   // 2.5
+    double d = 1.5;  d++;   print(d);   print("|");   // 2.5
+    float g = 3.5;   g--;   print(g);   print("|");   // 2.5
+
+    int[] a = [10, 20];
+    a[0]++;   print(a[0]);  print("|");               // 11
+    a[1]--;   print(a[1]);  print("|");               // 19
+
+    P p;  p.x = 7;
+    p.x++;    print(p.x);   print("|");               // 8
+
+    byte b = 3;      b++;   print(b);   print("|");   // 4
+    longint L = 5;   L++;   print(L);   print("|");   // 6
+
+    sayac++;  sayac++;      print(sayac); print("|"); // 2
+
+    // Önek/sonek dönüş değeri farkı (#237)
+    int x = 5;  int y = ++x;  print(y); print("|"); print(x); print("|"); // 6 6
+    int w = 5;  int v = w++;  print(v); print("|"); print(w);             // 5 6
+    return 0;
+}

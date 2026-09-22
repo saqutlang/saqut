@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <set>
 
+#include "core/int_arithmetic.hpp"  // #237: wrapPowI32/I64 — VM ile TEK kaynak
 #include "ffi/host_bridge.hpp"
 #include "ffi/host_registry.hpp"
 #include "gc/shadow_stack.hpp"
@@ -993,6 +994,37 @@ extern "C" void rt_jit_fdiv_zero(int64_t line, int64_t col) {
     jitSetError("float division by zero", "E_DIVZERO", line, col);
 }
 
+// #237: ** üs alma. MIR'de native üs komutu YOKTUR, dolayısıyla dört tip de
+// bir köprü çağrısı üzerinden gider.
+//
+// Bu, "backend'ler callhost'u kendine göre yazmasın" kuralının İHLALİ DEĞİL:
+// çağrılan gövdeler VM'in kullandığı gövdelerin ta kendisidir
+// (saqut::intmath::wrapPow*, std::pow, std::powf). Ayrı bir JIT gerçeklemesi
+// yazmak VM≡JIT bit-birebirliğini riske atardı — özellikle tamsayıda, çünkü
+// tekrarlı çarpmanın sarma davranışı libm pow()'dan farklıdır.
+//
+// Negatif üs kontrolü kodgen'de İNLİNE yapılır (bkz. Opcode::POW); bu
+// gövdeler yalnız hesaplamayı yapar, hata dalı ayrıdır.
+extern "C" int64_t rt_jit_pow_i32(int64_t base, int64_t exp) {
+    return saqut::intmath::wrapPowI32(static_cast<int>(base), static_cast<int>(exp));
+}
+
+extern "C" int64_t rt_jit_pow_i64(int64_t base, int64_t exp) {
+    return saqut::intmath::wrapPowI64(base, exp);
+}
+
+extern "C" double rt_jit_pow_d(double base, double exp) {
+    return std::pow(base, exp);
+}
+
+extern "C" float rt_jit_pow_f(float base, float exp) {
+    return std::powf(base, exp);
+}
+
+extern "C" void rt_jit_pow_negative(int64_t line, int64_t col) {
+    jitSetError("negatif üs tamsayıda tanımsız", "E_POWNEG", line, col);
+}
+
 // SlotType → MIR register tipi (MIRPLAN §3; ADR-040 genişletmesi).
 //   Float   → MIR_T_D (64-bit double)
 //   Float32 → MIR_T_F (32-bit single — gerçek precision, VM ile birebir)
@@ -1489,6 +1521,21 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     MIR_item_t modZeroImport   = MIR_new_import(ctx, "rt_jit_mod_zero");
     MIR_item_t fdivZeroProto   = MIR_new_proto_arr(ctx, "fdivzero_proto", 0, nullptr, 2, zeroErrVars);
     MIR_item_t fdivZeroImport  = MIR_new_import(ctx, "rt_jit_fdiv_zero");
+    // #237: ** — MIR'de native üs komutu yok, dört tip de köprüden geçer.
+    // Gövdeler VM ile aynı (saqut::intmath::wrapPow*, std::pow/powf).
+    MIR_var_t  powIVars[2]     = {{MIR_T_I64, "base", 0}, {MIR_T_I64, "exp", 0}};
+    MIR_var_t  powDVars[2]     = {{MIR_T_D, "base", 0}, {MIR_T_D, "exp", 0}};
+    MIR_var_t  powFVars[2]     = {{MIR_T_F, "base", 0}, {MIR_T_F, "exp", 0}};
+    MIR_item_t powI32Proto     = MIR_new_proto_arr(ctx, "pow_i32_proto", 1, &i64Ret, 2, powIVars);
+    MIR_item_t powI32Import    = MIR_new_import(ctx, "rt_jit_pow_i32");
+    MIR_item_t powI64Proto     = MIR_new_proto_arr(ctx, "pow_i64_proto", 1, &i64Ret, 2, powIVars);
+    MIR_item_t powI64Import    = MIR_new_import(ctx, "rt_jit_pow_i64");
+    MIR_item_t powDProto       = MIR_new_proto_arr(ctx, "pow_d_proto", 1, &dRet, 2, powDVars);
+    MIR_item_t powDImport      = MIR_new_import(ctx, "rt_jit_pow_d");
+    MIR_item_t powFProto       = MIR_new_proto_arr(ctx, "pow_f_proto", 1, &fRet, 2, powFVars);
+    MIR_item_t powFImport      = MIR_new_import(ctx, "rt_jit_pow_f");
+    MIR_item_t powNegProto     = MIR_new_proto_arr(ctx, "pow_neg_proto", 0, nullptr, 2, zeroErrVars);
+    MIR_item_t powNegImport    = MIR_new_import(ctx, "rt_jit_pow_negative");
     MIR_item_t errPendingProto = MIR_new_proto_arr(ctx, "err_pending_proto", 1, &i64Ret, 0, nullptr);
     MIR_item_t errPendingImport = MIR_new_import(ctx, "rt_jit_error_pending");
     MIR_var_t errorLocationVars[2] = {{MIR_T_I64, "l", 0}, {MIR_T_I64, "c", 0}};
@@ -1576,6 +1623,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
             case Opcode::LDIV: case Opcode::LMOD: case Opcode::F32DIV:
             case Opcode::DADD: case Opcode::DSUB: case Opcode::DMUL:
             case Opcode::DDIV: case Opcode::DMOD:
+            // #237: tamsayı ** negatif üste E_POWNEG yayar (float'ta değil).
+            case Opcode::POW: case Opcode::LPOW:
             case Opcode::ARRAY_GET: case Opcode::ARRAY_SET:
             case Opcode::CALLHOST: case Opcode::THROW:
                 return true;
@@ -2267,6 +2316,37 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     MIR_append_insn(ctx, func, doneLabel);
                     break;
                 }
+                // ── #237: ** üs alma ────────────────────────────────────
+                //
+                // Tamsayıda negatif üs VM'de E_POWNEG verir; aynı kontrol
+                // burada inline yapılır (bölmedeki sıfır kontrolüyle aynı
+                // desen: hata DALINDA konum yazılır, sıcak yolda ek yük yok).
+                case Opcode::POW:
+                case Opcode::LPOW: {
+                    MIR_label_t okLabel = MIR_new_label(ctx);
+                    MIR_append_insn(ctx, func,
+                        MIR_new_insn(ctx, MIR_BGE, MIR_new_label_op(ctx, okLabel), R(instr.right), MIR_new_int_op(ctx, 0)));
+                    MIR_append_insn(ctx, func,
+                        MIR_new_call_insn(ctx, 4, MIR_new_ref_op(ctx, powNegProto), MIR_new_ref_op(ctx, powNegImport), MIR_new_int_op(ctx, instr.sourceLine), MIR_new_int_op(ctx, instr.sourceCol)));
+                    emitJumpToErrorTarget();
+                    MIR_append_insn(ctx, func, okLabel);
+                    const bool isLong = (instr.opcode == Opcode::LPOW);
+                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 5,
+                        MIR_new_ref_op(ctx, isLong ? powI64Proto : powI32Proto),
+                        MIR_new_ref_op(ctx, isLong ? powI64Import : powI32Import),
+                        R(instr.dest), R(instr.left), R(instr.right)));
+                    break;
+                }
+                case Opcode::FPOW:
+                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 5,
+                        MIR_new_ref_op(ctx, powDProto), MIR_new_ref_op(ctx, powDImport),
+                        R(instr.dest), R(instr.left), R(instr.right)));
+                    break;
+                case Opcode::F32POW:
+                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 5,
+                        MIR_new_ref_op(ctx, powFProto), MIR_new_ref_op(ctx, powFImport),
+                        R(instr.dest), R(instr.left), R(instr.right)));
+                    break;
                 // ── Float aritmetiği (Dilim 1.5) ────────────────────────
                 case Opcode::FADD:
                     MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_DADD, R(instr.dest), R(instr.left), R(instr.right)));
@@ -3065,13 +3145,28 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                         emitShadowSet(instr.dest, (int)i + 1);
                     break;
                 }
-                case Opcode::LOAD_NULL:
+                case Opcode::LOAD_NULL: {
                     // #221: değer register'ı 0'a çekilir (belirlenmiş durum —
                     // çöp okumayı önler), null'luk yandaş bayrakta taşınır.
                     // Bayrak aşağıdaki toplu adımda 1 yapılır.
-                    MIR_append_insn(ctx, func,
-                        MIR_new_insn(ctx, MIR_MOV, R(instr.dest), MIR_new_int_op(ctx, 0)));
+                    //
+                    // #239: sıfırlama register SINIFINA uymalıdır. Slot tipi
+                    // artık tüketicisinden gelebiliyor (`double? f = null`),
+                    // ve float bir register'a MIR_MOV yazmak "unexpected
+                    // operand mode" ile reddedilir — LOAD_SLOT'un DMOV/FMOV
+                    // seçimiyle aynı kural.
+                    const SlotType nk = slotKindOf(fn, instr.dest);
+                    if (nk == SlotType::Float)
+                        MIR_append_insn(ctx, func,
+                            MIR_new_insn(ctx, MIR_DMOV, R(instr.dest), MIR_new_double_op(ctx, 0.0)));
+                    else if (nk == SlotType::Float32)
+                        MIR_append_insn(ctx, func,
+                            MIR_new_insn(ctx, MIR_FMOV, R(instr.dest), MIR_new_float_op(ctx, 0.0f)));
+                    else
+                        MIR_append_insn(ctx, func,
+                            MIR_new_insn(ctx, MIR_MOV, R(instr.dest), MIR_new_int_op(ctx, 0)));
                     break;
+                }
                 case Opcode::RETURN:
                     if (needsShadowFrame)
                         MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 3,
@@ -3326,6 +3421,12 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     MIR_load_external(ctx, "rt_jit_div_zero",    reinterpret_cast<void*>(rt_jit_div_zero));
     MIR_load_external(ctx, "rt_jit_mod_zero",    reinterpret_cast<void*>(rt_jit_mod_zero));
     MIR_load_external(ctx, "rt_jit_fdiv_zero",   reinterpret_cast<void*>(rt_jit_fdiv_zero));
+    // #237: ** köprüleri — gövdeler VM ile tek kaynak (bkz. tanımları).
+    MIR_load_external(ctx, "rt_jit_pow_i32",     reinterpret_cast<void*>(rt_jit_pow_i32));
+    MIR_load_external(ctx, "rt_jit_pow_i64",     reinterpret_cast<void*>(rt_jit_pow_i64));
+    MIR_load_external(ctx, "rt_jit_pow_d",       reinterpret_cast<void*>(rt_jit_pow_d));
+    MIR_load_external(ctx, "rt_jit_pow_f",       reinterpret_cast<void*>(rt_jit_pow_f));
+    MIR_load_external(ctx, "rt_jit_pow_negative", reinterpret_cast<void*>(rt_jit_pow_negative));
 
     MIR_gen_init(ctx);
     //MIR_output(ctx,stdout);

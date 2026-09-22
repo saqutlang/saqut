@@ -488,6 +488,21 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
             frame.slots[instr.dest] = Value::fromInt(wrapModI32(frame.slots[instr.left].intValue(), d));
             break;
         }
+        // #237: ** — negatif üs tamsayıda kesirli sonuç verirdi, hata.
+        case Opcode::POW: {
+            int e = frame.slots[instr.right].intValue();
+            if (e < 0) { pendingThrow_ = makeErrorValue("negatif üs tamsayıda tanımsız", "E_POWNEG", instr.sourceLine, instr.sourceCol); break; }
+            frame.slots[instr.dest] = Value::fromInt(
+                wrapPowI32(frame.slots[instr.left].intValue(), e));
+            break;
+        }
+        case Opcode::LPOW: {
+            long long e = frame.slots[instr.right].int64Value();
+            if (e < 0) { pendingThrow_ = makeErrorValue("negatif üs tamsayıda tanımsız", "E_POWNEG", instr.sourceLine, instr.sourceCol); break; }
+            frame.slots[instr.dest] = Value::fromLongInt(
+                wrapPowI64(frame.slots[instr.left].int64Value(), e));
+            break;
+        }
 
         // ── Bitsel ────────────────────────────────────────────────────────
         case Opcode::BAND:
@@ -711,6 +726,15 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
             frame.slots[instr.dest] = Value::fromFloat(frame.slots[instr.left].floatValue() / r);
             break;
         }
+        // #237: double üs — libm pow(). Tamsayıdan farklı olarak burada
+        // pow() DOĞRU seçimdir: JIT de aynı libm pow()'u çağırır (MIR'de
+        // native üs komutu yok), yani iki backend bit-birebir aynı sonucu
+        // verir. Negatif üs ondalıkta tanımlıdır (2.0 ** -1 = 0.5), hata yok.
+        case Opcode::FPOW:
+            frame.slots[instr.dest] = Value::fromFloat(
+                std::pow(frame.slots[instr.left].floatValue(),
+                         frame.slots[instr.right].floatValue()));
+            break;
         case Opcode::FNEG:
             frame.slots[instr.dest] = Value::fromFloat(-frame.slots[instr.src].floatValue());
             break;
@@ -746,6 +770,13 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
             frame.slots[instr.dest] = Value::fromFloat32((double)((float)frame.slots[instr.left].floatValue() / r));
             break;
         }
+        // #237: float32 üs — powf() (double'a genişletip pow() DEĞİL:
+        // çift yuvarlama JIT ile ayrışmaya yol açardı, F32ADD ile aynı kural).
+        case Opcode::F32POW:
+            frame.slots[instr.dest] = Value::fromFloat32((double)(
+                std::powf((float)frame.slots[instr.left].floatValue(),
+                          (float)frame.slots[instr.right].floatValue())));
+            break;
         case Opcode::F32NEG:
             frame.slots[instr.dest] = Value::fromFloat32((double)(-(float)frame.slots[instr.src].floatValue()));
             break;

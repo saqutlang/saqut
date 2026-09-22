@@ -63,6 +63,50 @@ private:
     int generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTNode* rightNode,
                                  int line = 0, int col = 0, ASTNode* resultNode = nullptr);
 
+    // ── L-value: yazılabilir bir konum (#237/#238) ───────────────────────
+    //
+    // `x = v`, `x += v` ve `x++` üçü de "bir konumu oku, hesapla, AYNI
+    // konuma geri yaz" yapar. Konum dört biçimde olabilir ve her birinin
+    // geri-yazma talimatı farklıdır:
+    //
+    //   Local   → emitLoadSlot      (slot'un kendisi)
+    //   Global  → emitStoreGlobal   (global belleğe)
+    //   Field   → emitFieldSet      (struct nesnesine)
+    //   Element → emitArraySet      (dizi nesnesine)
+    //
+    // Bu ayrım daha önce her operatörde ayrı ayrı ele alınıyordu ve hiçbiri
+    // tam değildi: `++` yalnız Local'i biliyordu (Global sonradan yamandı,
+    // Field/Element sessizce kayboluyordu), birleşik atama ise Left'i kontrol
+    // etmeden IdentifierNode'a cast ediyordu — `a[0] += 5` derleyiciyi
+    // segfault ediyordu. Tek yerde toplanınca dört biçim de her operatörde
+    // çalışır ve yeni bir operatör eklendiğinde aynı hata tekrar edemez.
+    struct LValue {
+        enum class Kind { Invalid, Local, Global, Field, Element } kind = Kind::Invalid;
+        int slot        = -1;   // Local: değişkenin slotu
+        int globalIndex = -1;   // Global: global tablo indeksi
+        int objSlot     = -1;   // Field/Element: nesne slotu
+        int fieldIndex  = -1;   // Field: alan indeksi
+        int indexSlot   = -1;   // Element: indeks slotu
+        ArrayElemKind elemKind = ArrayElemKind::Ref; // Element: eleman türü
+    };
+
+    // Bir AST düğümünü yazılabilir konuma çözer. Nesne/indeks ifadeleri
+    // BİR KEZ hesaplanır — `a[f()]++` gibi yan etkili indekslerde f() iki
+    // kez çağrılmamalıdır.
+    LValue resolveLValue(ASTNode* node);
+    int    emitLValueLoad(const LValue& lv, const Type& t);
+    void   emitLValueStore(const LValue& lv, int valueSlot, int line = 0, int col = 0);
+
+    // Tipine uygun `1` sabiti üretir (#238). Sabit her zaman int yüklenirse
+    // `f++` float32 bir slota int 1 ekler: VM karışık ADD'den geçip yanlış
+    // sonuç verir, JIT ise fmov'a int operand geldiğini bildirip çöker.
+    int emitOneConstant(const Type& t, const SourceLocation& loc = {});
+
+    // Artırma/azaltma ortak gövdesi: önek ve sonek yalnız DÖNDÜRDÜKLERİ
+    // değerde ayrışır (önek yeni, sonek eski), yan etki aynıdır.
+    int generateIncDec(ASTNode* operand, bool isIncrement, bool isPrefix,
+                       const Type& resultType, const SourceLocation& loc);
+
     // ── Slot yönetimi ─────────────────────────────────────────────────────
     int  freshSlot();                           // Yeni slot numarası al (nextSlot_++)
     void registerVariable(const std::string& name, int slot); // name → slot kaydı

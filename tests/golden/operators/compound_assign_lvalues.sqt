@@ -1,0 +1,28 @@
+// #238 yan bulgusu: birleşik atama (`+=`) da l-value biçimlerinde bozuktu.
+//
+//   a[0] += 5;   → DERLEYİCİ SEGFAULT (Left kontrol edilmeden
+//                  IdentifierNode'a cast ediliyordu)
+//   f += 1.0;    → sessizce 0 (opcode tipe göre seçilmiyordu)
+//
+// ++/-- ile aynı l-value çözümlemesini paylaşır.
+struct P { int x; }
+
+int toplam = 0;   // global
+
+int main() {
+    float f = 1.5;   f += 1.0;   print(f);   print("|");   // 2.5
+    double d = 1.5;  d -= 0.5;   print(d);   print("|");   // 1
+
+    int[] a = [10, 20];
+    a[0] += 5;   print(a[0]);    print("|");               // 15
+    a[1] *= 2;   print(a[1]);    print("|");               // 40
+
+    P p;  p.x = 7;
+    p.x += 3;    print(p.x);     print("|");               // 10
+
+    byte b = 250;   b += 10;     print(b);   print("|");   // 4 (8 bite sarar)
+    longint L = 5;  L += 3;      print(L);   print("|");   // 8
+
+    toplam += 40;  toplam += 2;  print(toplam);            // 42
+    return 0;
+}

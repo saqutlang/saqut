@@ -32,7 +32,10 @@ std::string ScopeCallNode::toJson(int depth) {
 // PostfixNode
 PostfixNode::PostfixNode() { kind = ASTKind::Postfix; }
 void PostfixNode::log(int indent) {
-    std::cout << jsonIndent(indent) << Color::SoftMavi << "Postfix" << Color::Reset
+    // #237: önek ve sonek AYNI düğümdür ama farklı değer döndürür; dışarıya
+    // ayırt edilebilir görünmeli (cam kutu ilkesi).
+    std::cout << jsonIndent(indent) << Color::SoftMavi
+              << (isPrefix ? "Prefix" : "Postfix") << Color::Reset
               << " (" << Color::SoftMor
               << (OPERATOR_MAP_REV.count(Operator) ? OPERATOR_MAP_REV.at(Operator) : "?")
               << Color::Reset << ")\n";
@@ -42,6 +45,7 @@ std::string PostfixNode::toJson(int depth) {
     JsonObject obj(depth);
     obj.add("kind", "Postfix");
     obj.add("operator", std::string(OPERATOR_MAP_REV.count(Operator) ? OPERATOR_MAP_REV.at(Operator) : "?"));
+    obj.add("fix", std::string(isPrefix ? "prefix" : "postfix"));   // #237
     if (operand) obj.addRaw("operand", operand->toJson(depth + 1));
     obj.addRaw("resolvedType", resolvedTypeJson());
     obj.addRaw("location", loc.toJson());

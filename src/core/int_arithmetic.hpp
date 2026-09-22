@@ -76,6 +76,29 @@ inline int wrapNegI32(int a) {
     return static_cast<int32_t>(0U - static_cast<uint32_t>(a));
 }
 
+// #237: tamsayı üs alma (`**`).
+//
+// libm pow() KULLANILMAZ. pow() double üzerinden çalışır ve 2^53'ü aşan
+// tamsayı sonuçlarda yuvarlama hatası verir (ör. pow(3,34) tam değeri
+// veremez); ayrıca farklı libm sürümleri son bitte ayrışabilir. Tekrarlı
+// çarpma hem tam sonucu verir hem de VM ile JIT'in bit-birebir aynı değeri
+// üretmesini garanti eder (ADR-040 wrap sözleşmesi taşma için de geçerli:
+// sonuç int32'ye sarar, tanımsız davranış yok).
+//
+// Negatif üs çağıran tarafından ELENMELİDİR (tamsayı sonucu kesirli olurdu):
+// VM'de E_POWNEG runtime hatası, sabit katlamada katlama atlanır.
+inline int wrapPowI32(int base, int exp) {
+    int result = 1;
+    int b = base;
+    unsigned e = static_cast<unsigned>(exp);
+    while (e) {                       // kare-al-ve-çarp: O(log e)
+        if (e & 1u) result = wrapMulI32(result, b);
+        e >>= 1;
+        if (e) b = wrapMulI32(b, b);
+    }
+    return result;
+}
+
 // ── int64 (saQut `longint`) ─────────────────────────────────────────────────
 
 inline long long wrapAddI64(long long a, long long b) {
@@ -101,6 +124,19 @@ inline long long wrapShrI64(long long a, long long b) {
 }
 inline long long wrapNegI64(long long a) {
     return static_cast<int64_t>(0ULL - static_cast<uint64_t>(a));
+}
+
+// #237: longint üs alma — wrapPowI32 ile aynı sözleşme, 64-bit sarma.
+inline long long wrapPowI64(long long base, long long exp) {
+    long long result = 1;
+    long long b = base;
+    unsigned long long e = static_cast<unsigned long long>(exp);
+    while (e) {
+        if (e & 1ull) result = wrapMulI64(result, b);
+        e >>= 1;
+        if (e) b = wrapMulI64(b, b);
+    }
+    return result;
 }
 
 }  // namespace saqut::intmath

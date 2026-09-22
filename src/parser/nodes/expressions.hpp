@@ -22,6 +22,10 @@ class PostfixNode : public ExpressionNode {
 public:
     ASTNode*  operand  = nullptr;
     TokenType Operator;
+    // #237: önek biçimi (++x) de bu düğümle temsil edilir. Yan etki iki
+    // biçimde aynıdır; fark yalnız döndürülen değerdedir — önek YENİ,
+    // sonek ESKİ değeri verir.
+    bool      isPrefix = false;
     PostfixNode();
     ~PostfixNode() override { delete operand; }
     void log(int indent = 0) override;

@@ -1,0 +1,28 @@
+// #239: nullable bir slotun DEĞER TİPİ korunmalı.
+//
+// İki ayrı kök neden vardı, ikisi de yalnız JIT'i etkiliyordu (VM tipi
+// Value'nun kendisinde taşır, slotTypes yalnız JIT'in okuduğu türetilmiş
+// bilgidir):
+//   1. slotTypeFromType nullable tipte toString() ile "string?" üretiyor,
+//      hiçbir adla eşleşmeyip Int'e düşüyordu.
+//   2. LOAD_NULL'ın dest'i Int işaretlenip LOAD_SLOT ile gerçek tipi eziyordu.
+// Sonuç: `print(s)` string yerine ham işaretçi (ASLR ile her koşuda değişen
+// bir sayı) basıyordu — deterministik olmadığı için harness de yakalayamazdı.
+int main() {
+    string? s = "merhaba";
+    if (1 == 2) { s = null; }          // hiç çalışmayan dal, ama LOAD_NULL üretir
+    print(s);  print("|");
+
+    double? d = 2.5;
+    if (1 == 2) { d = null; }
+    print(d);  print("|");
+
+    longint? L = 7;
+    if (1 == 2) { L = null; }
+    print(L);  print("|");
+
+    // null yolu doğru çalışmaya devam etmeli
+    string? bos = null;
+    if (bos == null) { print("null-dogru"); }
+    return 0;
+}

@@ -225,6 +225,7 @@ inline ASTNode* deepClone(ASTNode* node) {
         auto* dst = new PostfixNode();
         dst->loc          = src->loc;
         dst->Operator     = src->Operator;
+        dst->isPrefix     = src->isPrefix;   // #237: kopyalanmazsa ++x sonek gibi davranır
         dst->resolvedType = src->resolvedType;
         dst->isConstant   = src->isConstant;
         dst->operand      = cloneChild(src->operand, dst);

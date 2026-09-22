@@ -941,8 +941,12 @@ int IRGenerator::generateExpression(ASTNode* node) {
             bin->Operator == TokenType::AMPERSAND_EQUAL || bin->Operator == TokenType::PIPE_EQUAL ||
             bin->Operator == TokenType::CARET_EQUAL || bin->Operator == TokenType::LSHIFT_EQUAL ||
             bin->Operator == TokenType::RSHIFT_EQUAL) {
-            auto* lhsId = (IdentifierNode*) bin->Left;
-            std::string varName = lhsId->parserToken.token->token;
+            // #237/#238: Left KONTROL EDİLMEDEN IdentifierNode'a cast
+            // ediliyordu. `a[0] += 5` yazıldığında Left bir
+            // IndexExpressionNode'dur; parserToken.token çöp gösterir ve
+            // derleyici SEGFAULT eder. L-value çözümlemesi dört biçimi de
+            // tanır ve geri-yazmayı doğru talimatla yapar.
+            LValue lv = resolveLValue(bin->Left);
             int rhsSlot = generateExpression(bin->Right);
 
             Opcode arithOp = Opcode::ADD;
@@ -972,21 +976,71 @@ int IRGenerator::generateExpression(ASTNode* node) {
                         arithOp = Opcode::STRING_CONCAT;
             }
 
-            int resultSlot = freshSlot();
+            if (lv.kind == LValue::Kind::Invalid)
+                return rhsSlot;   // tip denetleyici bildirmiş olmalı
 
-            if (isGlobal(varName)) {
-                int currentSlot = freshSlot();
-                emitLoadGlobal(currentSlot, getGlobalIndex(varName));
-                emitBinaryOp(arithOp, resultSlot, currentSlot, rhsSlot, bin->loc.line,
-                             bin->loc.column);
-                emitStoreGlobal(resultSlot, getGlobalIndex(varName));
-                return resultSlot;
+            // #238: opcode TİPE GÖRE seçilir. Eskiden her zaman int ADD/SUB
+            // yayılıyordu; `f += 1.0` ondalık bir slota int toplama uygular
+            // ve sessizce 0 üretirdi (`f++` ile aynı kök neden).
+            Type lhsType;
+            if (auto* lhsExpr = dynamic_cast<ExpressionNode*>(bin->Left))
+                lhsType = lhsExpr->resolvedType;
+
+            if (arithOp != Opcode::STRING_CONCAT) {
+                if (lhsType.isDecimal()) {
+                    switch (arithOp) {
+                    case Opcode::ADD: arithOp = Opcode::DADD; break;
+                    case Opcode::SUB: arithOp = Opcode::DSUB; break;
+                    case Opcode::MUL: arithOp = Opcode::DMUL; break;
+                    case Opcode::DIV: arithOp = Opcode::DDIV; break;
+                    case Opcode::MOD: arithOp = Opcode::DMOD; break;
+                    default: break;
+                    }
+                } else if (lhsType.isPrimitive() && lhsType.prim == PrimitiveKind::Double) {
+                    switch (arithOp) {
+                    case Opcode::ADD: arithOp = Opcode::FADD; break;
+                    case Opcode::SUB: arithOp = Opcode::FSUB; break;
+                    case Opcode::MUL: arithOp = Opcode::FMUL; break;
+                    case Opcode::DIV: arithOp = Opcode::FDIV; break;
+                    default: break;
+                    }
+                } else if (lhsType.isPrimitive() && lhsType.prim == PrimitiveKind::Float) {
+                    switch (arithOp) {
+                    case Opcode::ADD: arithOp = Opcode::F32ADD; break;
+                    case Opcode::SUB: arithOp = Opcode::F32SUB; break;
+                    case Opcode::MUL: arithOp = Opcode::F32MUL; break;
+                    case Opcode::DIV: arithOp = Opcode::F32DIV; break;
+                    default: break;
+                    }
+                } else if (lhsType.isLongInt()) {
+                    switch (arithOp) {
+                    case Opcode::ADD:  arithOp = Opcode::LADD;  break;
+                    case Opcode::SUB:  arithOp = Opcode::LSUB;  break;
+                    case Opcode::MUL:  arithOp = Opcode::LMUL;  break;
+                    case Opcode::DIV:  arithOp = Opcode::LDIV;  break;
+                    case Opcode::MOD:  arithOp = Opcode::LMOD;  break;
+                    case Opcode::BAND: arithOp = Opcode::LBAND; break;
+                    case Opcode::BOR:  arithOp = Opcode::LBOR;  break;
+                    case Opcode::BXOR: arithOp = Opcode::LBXOR; break;
+                    case Opcode::SHL:  arithOp = Opcode::LSHL;  break;
+                    case Opcode::SHR:  arithOp = Opcode::LSHR;  break;
+                    default: break;
+                    }
+                }
             }
 
-            int varSlot = lookupVariable(varName);
-            emitBinaryOp(arithOp, resultSlot, varSlot, rhsSlot, bin->loc.line, bin->loc.column);
-            emitLoadSlot(varSlot, resultSlot);
-            return varSlot;
+            const int currentSlot = emitLValueLoad(lv, lhsType);
+            const int resultSlot  = freshSlot();
+            emitBinaryOp(arithOp, resultSlot, currentSlot, rhsSlot, bin->loc.line,
+                         bin->loc.column);
+
+            // byte ⊕ byte → byte: sonucu 8 bite sar (ADR-040 Faz 4).
+            int storeSlot = resultSlot;
+            if (lhsType.isByte())
+                storeSlot = emitByteWrap(resultSlot, bin->loc.line, bin->loc.column);
+
+            emitLValueStore(lv, storeSlot, bin->loc.line, bin->loc.column);
+            return storeSlot;
         }
 
         // Unary prefix: Left = nullptr (ör: -x, !x)
@@ -1055,6 +1109,11 @@ int IRGenerator::generateExpression(ASTNode* node) {
             return generateBinaryArithmetic(Opcode::DIV, bin->Left, bin->Right, L, C, bin);
         case TokenType::PERCENT:
             return generateBinaryArithmetic(Opcode::MOD, bin->Left, bin->Right, L, C, bin);
+        // #237: ** üs alma. generateBinaryArithmetic tip dağıtımını yapar
+        // (POW/LPOW/FPOW/F32POW); decimal üs desteklenmez, tip denetleyici
+        // E003 ile reddeder.
+        case TokenType::STAR_STAR:
+            return generateBinaryArithmetic(Opcode::POW, bin->Left, bin->Right, L, C, bin);
         // Karşılaştırma operatörleri
         case TokenType::LESS:
             return generateBinaryArithmetic(Opcode::LESS, bin->Left, bin->Right, L, C, bin);
@@ -1254,41 +1313,16 @@ int IRGenerator::generateExpression(ASTNode* node) {
         return destSlot;
     }
 
-    // ── Postfix: i++, i-- ────────────────────────────────────────────────
+    // ── Postfix / Prefix: i++, i--, ++i, --i ─────────────────────────────
+    //
+    // #237/#238: dört l-value biçimi de (yerel, global, struct alanı, dizi
+    // elemanı) ve ondalık/longint/byte tipleri generateIncDec içinde tek
+    // yerde ele alınır. Eskiden burada yalnız yerel değişken + int 1 vardı;
+    // global sonradan yamanmış, alan ve eleman ise sessizce kayboluyordu.
     case ASTKind::Postfix: {
         auto* pf = (PostfixNode*) node;
-        // Şu anki değeri döndür, sonra artır/azalt
-        int operandSlot = generateExpression(pf->operand);
-        int resultSlot = freshSlot(); // dönüş değeri (artırmadan önceki)
-        emitLoadSlot(resultSlot, operandSlot);
-
-        int oneSlot = freshSlot();
-        emitLoadConst(oneSlot, 1);
-        int newSlot = freshSlot();
-
-        if (pf->Operator == TokenType::PLUS_PLUS) {
-            emitBinaryOp(Opcode::ADD, newSlot, operandSlot, oneSlot);
-        } else {
-            emitBinaryOp(Opcode::SUB, newSlot, operandSlot, oneSlot);
-        }
-
-        // #??: GLOBAL postfix artırımı — `counter++` operand'ı bir global ise
-        // generateExpression LOAD_GLOBAL ile değeri GEÇİCİ bir slot'a yükler;
-        // emitLoadSlot(operandSlot, ...) o geçici slotu günceller ama global
-        // belleğe GERİ YAZMAZ. Böylece global asla artmaz (VM'de `/5 5 5/`
-        // jambonlu davranış → kullanıcı "global değişken kullanılmaz, state
-        // parametreyle taşınır" diye telafi ediyordu). Basit atama (`=`) ve
-        // birleşik atama (`+=`) case'lerindeki isGlobal kontrolü gibi, global
-        // operand için sonucu emitStoreGlobal ile global'e geri yaz.
-        if (pf->operand && pf->operand->kind == ASTKind::Identifier) {
-            auto* pid = (IdentifierNode*) pf->operand;
-            const std::string& pname =
-                pid->parserToken.token ? pid->parserToken.token->token : "";
-            if (isGlobal(pname))
-                emitStoreGlobal(newSlot, getGlobalIndex(pname));
-        }
-        emitLoadSlot(operandSlot, newSlot); // orijinal değişkeni güncelle
-        return resultSlot; // artırmadan önceki değer
+        return generateIncDec(pf->operand, pf->Operator == TokenType::PLUS_PLUS,
+                              pf->isPrefix, pf->resolvedType, pf->loc);
     }
 
     // ── Üye erişimi okuma: p.x ───────────────────────────────────────────
@@ -1519,6 +1553,176 @@ int IRGenerator::generateExpression(ASTNode* node) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// L-value çözümleme — yazılabilir konum (#237/#238)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Nesne ve indeks ifadeleri BURADA, bir kez hesaplanır. Çağıran taraf
+// sonradan emitLValueLoad/emitLValueStore ile aynı slotları kullanır; böylece
+// `a[i++]++` ya da `f(x)[0]++` gibi yan etkili konumlarda alt ifade iki kez
+// çalışmaz.
+
+IRGenerator::LValue IRGenerator::resolveLValue(ASTNode* node) {
+    LValue lv;
+    if (!node) return lv;
+
+    if (node->kind == ASTKind::Identifier) {
+        auto* id = (IdentifierNode*) node;
+        const std::string& name = id->parserToken.token ? id->parserToken.token->token
+                                                        : std::string{};
+        if (name.empty()) return lv;
+        if (isGlobal(name)) {
+            lv.kind = LValue::Kind::Global;
+            lv.globalIndex = getGlobalIndex(name);
+        } else {
+            lv.kind = LValue::Kind::Local;
+            lv.slot = lookupVariable(name);
+        }
+        return lv;
+    }
+
+    if (node->kind == ASTKind::MemberAccess) {
+        auto* ma = (MemberAccessNode*) node;
+        std::string structName;
+        if (auto* objExpr = dynamic_cast<ExpressionNode*>(ma->object))
+            structName = objExpr->resolvedType.structName;
+        const int idx = getStructFieldIndex(structName, ma->member);
+        if (idx < 0) return lv;           // enum üyesi vb. — yazılabilir değil
+        lv.kind = LValue::Kind::Field;
+        lv.objSlot = generateExpression(ma->object);
+        lv.fieldIndex = idx;
+        return lv;
+    }
+
+    if (node->kind == ASTKind::IndexExpression) {
+        auto* ix = (IndexExpressionNode*) node;
+        lv.kind = LValue::Kind::Element;
+        lv.objSlot = generateExpression(ix->object);
+        lv.indexSlot = generateExpression(ix->index);
+        // Eleman türü KAYNAK DİZİDEN okunur — ARRAY_GET/ARRAY_SET ile aynı
+        // kural (#206/#236: bu alan boş kalırsa JIT elemanı Ref görür ve
+        // doğrudan bellek erişimi devreye girmez).
+        if (auto* objExpr = dynamic_cast<ExpressionNode*>(ix->object))
+            if (objExpr->resolvedType.isArray() && objExpr->resolvedType.elementType)
+                lv.elemKind = arrayElemKindFromType(objExpr->resolvedType);
+        return lv;
+    }
+
+    return lv;   // Invalid — çağıran taraf sessizce geçmemeli
+}
+
+int IRGenerator::emitLValueLoad(const LValue& lv, const Type& t) {
+    const int dest = freshSlot();
+    switch (lv.kind) {
+    case LValue::Kind::Local:
+        emitLoadSlot(dest, lv.slot);
+        break;
+    case LValue::Kind::Global:
+        emitLoadGlobal(dest, lv.globalIndex);
+        break;
+    case LValue::Kind::Field:
+        emitFieldGet(dest, lv.objSlot, lv.fieldIndex, {},
+                     slotTypeFromType(t), t.nullable);
+        break;
+    case LValue::Kind::Element:
+        emitArrayGet(dest, lv.objSlot, lv.indexSlot, 0, 0, slotTypeFromType(t), lv.elemKind);
+        break;
+    case LValue::Kind::Invalid:
+        break;
+    }
+    return dest;
+}
+
+void IRGenerator::emitLValueStore(const LValue& lv, int valueSlot, int line, int col) {
+    switch (lv.kind) {
+    case LValue::Kind::Local:
+        emitLoadSlot(lv.slot, valueSlot);
+        break;
+    case LValue::Kind::Global:
+        emitStoreGlobal(valueSlot, lv.globalIndex);
+        break;
+    case LValue::Kind::Field:
+        emitFieldSet(lv.objSlot, lv.fieldIndex, valueSlot, line, col);
+        break;
+    case LValue::Kind::Element:
+        emitArraySet(lv.objSlot, lv.indexSlot, valueSlot, line, col, lv.elemKind);
+        break;
+    case LValue::Kind::Invalid:
+        break;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// emitOneConstant — tipine uygun `1` (#238)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `++`/`--` her zaman int 1 yüklerse ondalık bir slota int eklenir. VM karışık
+// ADD'den geçip yanlış sonuç verir (1.5++ → 1), JIT ise fmov'a int operand
+// geldiğini bildirip çöker. Sabit, hedefin genişliğinde üretilmelidir.
+
+int IRGenerator::emitOneConstant(const Type& t, const SourceLocation& loc) {
+    const int slot = freshSlot();
+    if (t.isDecimal())
+        emitLoadDecimal(slot, DecimalValue::fromInt(1), loc);
+    else if (t.isPrimitive() && t.prim == PrimitiveKind::Double)
+        emitLoadFloat(slot, 1.0, loc);
+    else if (t.isPrimitive() && t.prim == PrimitiveKind::Float)
+        emitLoadFloat32(slot, 1.0, loc);
+    else if (t.isLongInt())
+        emitLoadLong(slot, 1, loc);
+    else
+        emitLoadConst(slot, 1, loc);   // int, byte
+    return slot;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// generateIncDec — ++/-- ortak gövdesi (önek ve sonek)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Önek ve sonek yalnız DÖNDÜRDÜKLERİ değerde ayrışır; yan etki aynıdır:
+//   x++  → eski değeri döndür, konumu artır
+//   ++x  → konumu artır, yeni değeri döndür
+//
+// Tipe uygun opcode seçimi (FADD/F32ADD/LADD/DADD/ADD) generateBinaryArithmetic
+// ile aynı kurallara uyar; burada slot tabanlı olduğu için tek tek seçilir.
+
+int IRGenerator::generateIncDec(ASTNode* operand, bool isIncrement, bool isPrefix,
+                                const Type& resultType, const SourceLocation& loc) {
+    LValue lv = resolveLValue(operand);
+    if (lv.kind == LValue::Kind::Invalid) {
+        // Tip denetleyici bunu E003 ile bildirmiş olmalı; yine de sessiz
+        // yanlış sonuç üretmemek için değeri olduğu gibi geri ver.
+        return generateExpression(operand);
+    }
+
+    const int oldSlot = emitLValueLoad(lv, resultType);
+    const int oneSlot = emitOneConstant(resultType, loc);
+    const int newSlot = freshSlot();
+
+    Opcode op;
+    if (resultType.isDecimal())
+        op = isIncrement ? Opcode::DADD : Opcode::DSUB;
+    else if (resultType.isPrimitive() && resultType.prim == PrimitiveKind::Double)
+        op = isIncrement ? Opcode::FADD : Opcode::FSUB;
+    else if (resultType.isPrimitive() && resultType.prim == PrimitiveKind::Float)
+        op = isIncrement ? Opcode::F32ADD : Opcode::F32SUB;
+    else if (resultType.isLongInt())
+        op = isIncrement ? Opcode::LADD : Opcode::LSUB;
+    else
+        op = isIncrement ? Opcode::ADD : Opcode::SUB;
+
+    emitBinaryOp(op, newSlot, oldSlot, oneSlot, loc.line, loc.column);
+
+    // byte ⊕ byte → byte: sonucu 8 bite sar (ADR-040 Faz 4), normal
+    // aritmetikle aynı kural.
+    int storeSlot = newSlot;
+    if (resultType.isByte())
+        storeSlot = emitByteWrap(newSlot, loc.line, loc.column);
+
+    emitLValueStore(lv, storeSlot, loc.line, loc.column);
+    return isPrefix ? storeSlot : oldSlot;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // generateBinaryArithmetic — İkili op için sol+sağ üret, talimat ekle
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1642,6 +1846,9 @@ int IRGenerator::generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTN
         case Opcode::SHR:
             lop = Opcode::LSHR;
             break;
+        case Opcode::POW:
+            lop = Opcode::LPOW;
+            break;
         default:
             break;
         }
@@ -1692,6 +1899,8 @@ int IRGenerator::generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTN
                 floatOp = Opcode::FMUL;
             else if (opcode == Opcode::DIV)
                 floatOp = Opcode::FDIV;
+            else if (opcode == Opcode::POW)
+                floatOp = Opcode::FPOW;
         } else {
             if (opcode == Opcode::ADD)
                 floatOp = Opcode::F32ADD;
@@ -1701,6 +1910,8 @@ int IRGenerator::generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTN
                 floatOp = Opcode::F32MUL;
             else if (opcode == Opcode::DIV)
                 floatOp = Opcode::F32DIV;
+            else if (opcode == Opcode::POW)
+                floatOp = Opcode::F32POW;
         }
         emitBinaryOp(floatOp, destSlot, leftSlot, rightSlot, line, col);
     } else {
@@ -1810,7 +2021,14 @@ int IRGenerator::lookupVariable(const std::string& name) {
 
 SlotType IRGenerator::slotTypeFromType(const Type& t) const {
     if (t.isArray() || t.isStruct()) return SlotType::Ref;
-    return slotTypeFromTypeName(t.toString());
+    // #239: nullable'lık slot TÜRÜNÜ değiştirmez — ayrı bir kanalda
+    // (slotNullable) taşınır. toString() nullable tiplere '?' ekler
+    // ("string?"), bu da slotTypeFromTypeName'deki hiçbir adla eşleşmez ve
+    // sessizce Int'e düşerdi: JIT `string?` dönen her host fonksiyonunun
+    // sonucunu tamsayı sanıp ham işaretçi basıyordu (env/osUser/readLine).
+    Type bare = t;
+    bare.nullable = false;
+    return slotTypeFromTypeName(bare.toString());
 }
 
 SlotType IRGenerator::slotTypeFromTypeName(const std::string& t) const {
@@ -1855,6 +2073,23 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
         return (slot >= 0 && slot < fn->slotCount) ? fn->slotTypes[static_cast<size_t>(slot)] :
                                                      SlotType::Int;
     };
+
+    // #239: "yalnız LOAD_NULL ile yazılmış" slotlar. Bu slotlar bir DEĞER
+    // TİPİ taşımaz; LOAD_SLOT ile kopyalandıklarında hedefin tipini
+    // ezmemelidirler (bkz. aşağıdaki LOAD_SLOT case'i). Başka bir opcode
+    // aynı slota yazıyorsa slot artık tip taşıyordur ve maskeden çıkar.
+    std::vector<bool> nullOnlySlots(static_cast<size_t>(fn->slotCount), false);
+    for (const Instruction& ins : fn->instructions) {
+        if (ins.dest < 0 || ins.dest >= fn->slotCount) continue;
+        if (ins.opcode == Opcode::LOAD_NULL)
+            nullOnlySlots[static_cast<size_t>(ins.dest)] = true;
+    }
+    for (const Instruction& ins : fn->instructions) {
+        if (ins.dest < 0 || ins.dest >= fn->slotCount) continue;
+        if (ins.opcode != Opcode::LOAD_NULL)
+            nullOnlySlots[static_cast<size_t>(ins.dest)] = false;
+    }
+
     bool changed = true;
     for (int guard = 0; changed && guard < 8; ++guard) {
         changed = false;
@@ -1869,6 +2104,7 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
             case Opcode::FSUB:
             case Opcode::FMUL:
             case Opcode::FDIV:
+            case Opcode::FPOW:
             case Opcode::FNEG:
             case Opcode::INT_TO_FLOAT:
             case Opcode::FLOAT32_TO_FLOAT:
@@ -1880,6 +2116,7 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
             case Opcode::F32SUB:
             case Opcode::F32MUL:
             case Opcode::F32DIV:
+            case Opcode::F32POW:
             case Opcode::F32NEG:
             case Opcode::INT_TO_FLOAT32:
             case Opcode::FLOAT_TO_FLOAT32:
@@ -1893,6 +2130,7 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
             case Opcode::LMUL:
             case Opcode::LDIV:
             case Opcode::LMOD:
+            case Opcode::LPOW:
             case Opcode::LNEG:
             case Opcode::LBAND:
             case Opcode::LBOR:
@@ -1937,9 +2175,29 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
             case Opcode::CAST_STR_TO_DECIMAL:
                 nk = SlotType::Decimal;
                 break;
-            case Opcode::LOAD_SLOT:
-                nk = kindOf(ins.src);
+            // #239: LOAD_NULL'ın dest'i DEĞER TİPİ taşımaz — null her tipte
+            // olabilir. Buraya düşüp `default:` ile Int işaretlenirse ve o
+            // slot bir LOAD_SLOT ile string/ref bir slota kopyalanırsa,
+            // hedefin gerçek tipi (Str) Int'e EZİLİR. Sonuç: JIT o slotu
+            // tamsayı sanar ve `print(s)` ham işaretçiyi basar (VM etkilenmez,
+            // çünkü tipi Value'nun kendisinde taşır — slotTypes yalnız JIT'in
+            // okuduğu türetilmiş bilgidir).
+            //
+            // Null'luk bilgisi zaten AYRI bir fixpoint'te (slotNullable,
+            // aşağıda madde 3) taşınır ve orada LOAD_NULL'ın case'i vardır.
+            // Burada tipi olduğu gibi bırakmak doğru davranıştır.
+            case Opcode::LOAD_NULL:
                 break;
+            case Opcode::LOAD_SLOT: {
+                // Kaynak tip taşımıyorsa (yalnız LOAD_NULL ile yazılmış bir
+                // slot) hedefin mevcut tipini KORU — null bir değer tipi
+                // dayatmaz, taşıyıcının tipini devralır.
+                const SlotType srcKind = kindOf(ins.src);
+                if (srcKind == SlotType::Int && nullOnlySlots[static_cast<size_t>(ins.src)])
+                    break;                    // tip taşımayan kaynak: dest'e dokunma
+                nk = srcKind;
+                break;
+            }
             case Opcode::CALL: {
                 auto it = funcReturnKind_.find(ins.functionName);
                 if (it != funcReturnKind_.end())
@@ -1983,6 +2241,36 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
                 changed = true;
             }
         }
+    }
+
+    // 2b. #239: null-only slotlara TÜKETİCİ tipini geri yay.
+    //
+    // Yukarıdaki ileri yayılımda null slotu tip taşımadığı için Int kalır.
+    // VM'i etkilemez (tipi Value taşır) ama JIT'te her slot bir REGISTER'dır
+    // ve register tipi sabittir: `LOAD_SLOT <float slot> = <null slot>`
+    // dest'in tipine bakıp FMOV/DMOV yayar, kaynak register I64 olduğu için
+    // MIR "unexpected operand mode ... Got 'int', expected 'float'" ile
+    // reddeder — program hiç çalışmaz (`double? f = 2.5; f = null;`).
+    //
+    // Çözüm: null slotu kopyalandığı hedefin tipini devralsın. Böylece iki
+    // taraf aynı register sınıfındadır. Null'un DEĞERİ zaten taşınmaz —
+    // JIT LOAD_NULL'da register'ı 0'a çeker ve null'luğu yandaş bayrakta
+    // tutar (mir_backend.cpp, LOAD_NULL case'i); burada belirlenen yalnız
+    // register SINIFIDIR.
+    for (int guard = 0; guard < 8; ++guard) {
+        bool back = false;
+        for (const Instruction& ins : fn->instructions) {
+            if (ins.opcode != Opcode::LOAD_SLOT) continue;
+            if (ins.src < 0 || ins.src >= fn->slotCount) continue;
+            if (ins.dest < 0 || ins.dest >= fn->slotCount) continue;
+            if (!nullOnlySlots[static_cast<size_t>(ins.src)]) continue;
+            const SlotType destKind = fn->slotTypes[static_cast<size_t>(ins.dest)];
+            if (destKind != fn->slotTypes[static_cast<size_t>(ins.src)]) {
+                fn->slotTypes[static_cast<size_t>(ins.src)] = destKind;
+                back = true;
+            }
+        }
+        if (!back) break;
     }
 
     // 3. Nullable maskesi (#221). slotTypes'tan AYRI bir fixpoint çünkü farklı

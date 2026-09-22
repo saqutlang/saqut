@@ -563,7 +563,24 @@ ASTNode* Parser::parseNullDenotation() {
         return arr;
     }
 
-    if (ct.is({TokenType::PLUS_PLUS, TokenType::MINUS_MINUS, TokenType::PLUS, TokenType::MINUS,
+    // #237: Önek ++/-- ayrı bir düğümdür. Eskiden unary +/-/!/~ ile aynı
+    // listedeydi ve Left=nullptr'lı BinaryExpression kuruyordu; düşürme
+    // tarafında o biçimin karşılığı olmadığı için `++x` sessizce "x'in
+    // değeri" ifadesine indirgeniyor, hiçbir yan etki üretmiyordu.
+    if (ct.is({TokenType::PLUS_PLUS, TokenType::MINUS_MINUS})) {
+        nextToken();
+        ASTNode* right = parseExpression(ct.getPowerOperator());
+        PostfixNode* pf = new PostfixNode();
+        pf->loc = ct.token ? ct.token->loc : SourceLocation{};
+        pf->operand = right;
+        pf->Operator = ct.type;
+        pf->isPrefix = true;
+        if (right)
+            right->parent = pf;
+        return pf;
+    }
+
+    if (ct.is({TokenType::PLUS, TokenType::MINUS,
                TokenType::BANG, TokenType::TILDE})) {
         nextToken();
         ASTNode* right = parseExpression(ct.getPowerOperator());
@@ -786,6 +803,19 @@ ASTNode* Parser::parseLeftDenotation(ASTNode* left) {
 
     uint16_t prec = ct.getPowerOperator();
     nextToken();
+
+    // #237: sağ-birleşmeli operatörlerde sağ taraf AYNI seviyeyi de yutmalı.
+    // parseExpression(prec) döngüsü `precedence < next` koşuluyla ilerler,
+    // yani eşit seviyede durur → sola birleşir. Bir eksik seviyeyle
+    // çağırmak aynı seviyedeki bir sonraki operatörü sağ tarafa bırakır:
+    //
+    //   2 ** 3 ** 2   sol-birleşmeli: (2 ** 3) ** 2 = 64    ← yanlıştı
+    //                 sağ-birleşmeli: 2 ** (3 ** 2) = 512   ← doğru
+    //
+    // RightAssociative() token.hpp'de tanımlıydı ama HİÇ ÇAĞRILMIYORDU;
+    // bu yüzden `**`, `=` ve birleşik atamaların hepsi sola birleşiyordu.
+    if (prec > 0 && RightAssociative(ct.type))
+        prec = static_cast<uint16_t>(prec - 1);
 
     ASTNode* right = parseExpression(prec);
 

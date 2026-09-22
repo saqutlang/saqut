@@ -970,6 +970,22 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             break;
         }
 
+        // #237: ** üs alma decimal'de desteklenmez. Decimal sabit ölçekli
+        // ondalıktır (ADR-028); üs alma sonucu genel durumda temsil edilemez
+        // (0.1d ** 0.5d irrasyoneldir) ve sessizce float'a düşürmek decimal'in
+        // varlık nedenini —tam ondalık aritmetik— bozar. Açık cast istenir.
+        if (bin->Operator == TokenType::STAR_STAR &&
+            (leftType.isDecimal() || rightType.isDecimal()) &&
+            !leftType.isError() && !rightType.isError()) {
+            diag_.report("E003", bin->loc,
+                         "** is not supported on decimal: " + leftType.toString() + " ** " +
+                             rightType.toString(),
+                         "decimal has fixed scale; the result of exponentiation is not generally "
+                         "representable. Use an explicit cast: `value as double ** exponent`");
+            result = Type::error();
+            break;
+        }
+
         // Arithmetic / bitwise: +, -, *, /, %, &, |, ^, <<, >>
         // ADR-010/#114: bir operand literal, diğeri tipli bir ifadeyse literal
         // diğer operandın tipine göre YENİDEN tiplenir (bağlama-göre tipleme
@@ -1142,9 +1158,29 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
     case ASTKind::Postfix: {
         auto* pf = (PostfixNode*) node;
         Type opType = checkExpr(pf->operand);
-        if (!opType.isNumeric() && !opType.isError())
+        if (!opType.isNumeric() && !opType.isError()) {
             diag_.report("E003", pf->loc, "++ / -- on non-numeric type: " + opType.toString(),
-                         "++ and -- only work on int or float variables");
+                         "++ and -- only work on numeric variables");
+        } else if (!opType.isError()) {
+            // #237/#238: operand YAZILABİLİR bir konum olmalı. Değilse
+            // (`5++`, `f()++`) artırma hiçbir yere yazılamaz; eskiden bu
+            // sessizce göz ardı ediliyordu — ifade sanki çalışmış gibi
+            // değerini döndürüyordu.
+            const bool isLValue = pf->operand &&
+                                  (pf->operand->kind == ASTKind::Identifier ||
+                                   pf->operand->kind == ASTKind::MemberAccess ||
+                                   pf->operand->kind == ASTKind::IndexExpression);
+            if (!isLValue)
+                diag_.report("E003", pf->loc,
+                             "++ / -- requires a writable location (variable, field or "
+                             "array element)",
+                             "assign to a variable first: `int t = <expression>; t++;`");
+            // ADR-021: nullable operand artırılamaz — null'a 1 eklenemez.
+            else if (opType.nullable)
+                diag_.report("E003", pf->loc,
+                             "++ / -- on nullable operand: " + opType.toString(),
+                             "check for null first: `if (variable != null) { ... }`");
+        }
         result = opType;
         break;
     }

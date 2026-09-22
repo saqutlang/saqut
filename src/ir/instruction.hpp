@@ -105,6 +105,12 @@ enum : uint8_t {
     X(MUL, 3, OP_VM | OP_JIT) \
     X(DIV, 3, OP_VM | OP_JIT) /* UYARI: sıfıra bölme → runtime_error */ \
     X(MOD, 3, OP_VM | OP_JIT) \
+    /* #237: ** üs alma. Tamsayı tabanı tamsayı üsle yükseltir (tekrarlı
+       çarpma — libm pow() değil, çünkü pow() büyük değerlerde yuvarlama
+       hatası verir ve VM≡JIT bit-birebirliği bozulur). Negatif üs E_POWNEG
+       ile hata: tamsayı sonucu kesirli olurdu. */ \
+    X(POW,  3, OP_VM | OP_JIT) \
+    X(LPOW, 3, OP_VM | OP_JIT) /* longint taban/üs */ \
     /* --- Bitsel (dest = left OP right) --- */ \
     X(BAND, 3, OP_VM | OP_JIT) /* slots[left] & slots[right] */ \
     X(BOR,  3, OP_VM | OP_JIT) /* slots[left] | slots[right] */ \
@@ -132,6 +138,7 @@ enum : uint8_t {
     X(FSUB, 3, OP_VM | OP_JIT) \
     X(FMUL, 3, OP_VM | OP_JIT) \
     X(FDIV, 3, OP_VM | OP_JIT) /* sıfır → runtime_error */ \
+    X(FPOW, 3, OP_VM | OP_JIT) /* #237: double üs — libm pow() */ \
     X(FNEG, 2, OP_VM | OP_JIT) /* -slots[src] */ \
     X(INT_TO_FLOAT, 2, OP_VM | OP_JIT) /* gizli int→float */ \
     X(FLOAT_TO_INT, 2, OP_VM | OP_JIT) /* açık cast */ \
@@ -141,6 +148,7 @@ enum : uint8_t {
     X(F32SUB, 3, OP_VM | OP_JIT) \
     X(F32MUL, 3, OP_VM | OP_JIT) \
     X(F32DIV, 3, OP_VM | OP_JIT) /* sıfır → runtime_error */ \
+    X(F32POW, 3, OP_VM | OP_JIT) /* #237: float32 üs — powf() */ \
     X(F32NEG, 2, OP_VM | OP_JIT) \
     X(INT_TO_FLOAT32,   2, OP_VM | OP_JIT) /* int → float32 */ \
     X(FLOAT32_TO_INT,   2, OP_VM | OP_JIT) /* float32 → int (checked) */ \

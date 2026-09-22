@@ -137,6 +137,7 @@ private:
         case TokenType::STAR:
         case TokenType::SLASH:
         case TokenType::PERCENT:
+        case TokenType::STAR_STAR:   // #237: üs — negatif üs çağrandan önce elenir
         case TokenType::EQUAL_EQUAL:
         case TokenType::BANG_EQUAL:
         case TokenType::LESS:
@@ -174,6 +175,10 @@ private:
             return saqut::intmath::wrapDivI32(l, r);  // b == 0 çağrandan önce elenir (W002)
         case TokenType::PERCENT:
             return saqut::intmath::wrapModI32(l, r);  // b == 0 çağrandan önce elenir (W002)
+        case TokenType::STAR_STAR:
+            // #237: VM/JIT ile AYNI gövde — tekrarlı çarpma, libm pow() değil.
+            // Negatif üs aşağıdaki guard'da elenir (W003).
+            return saqut::intmath::wrapPowI32(l, r);
         case TokenType::EQUAL_EQUAL:
             return l == r ? 1 : 0;
         case TokenType::BANG_EQUAL:
@@ -269,6 +274,12 @@ private:
             auto* rlit = static_cast<LiteralNode*>(bin->Right);
             int lv = getIntVal(llit);
             int rv = getIntVal(rlit);
+
+            // #237: derleme zamanı negatif üs — katlama atlanır, runtime
+            // hatası (E_POWNEG) VM/JIT'te üretilir. Burada sessizce yanlış
+            // bir sabit üretmek en kötü seçenek olurdu.
+            if (bin->Operator == TokenType::STAR_STAR && rv < 0)
+                return bin; // fold etme
 
             // W002: Derleme zamanı sıfıra bölme
             if ((bin->Operator == TokenType::SLASH || bin->Operator == TokenType::PERCENT) &&

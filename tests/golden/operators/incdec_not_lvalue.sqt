@@ -1,0 +1,6 @@
+// #237: ++/-- yazılabilir bir konum ister. Eskiden `5++` sessizce göz ardı
+// ediliyordu — ifade sanki çalışmış gibi değerini döndürüyordu.
+int main() {
+    5++;
+    return 0;
+}

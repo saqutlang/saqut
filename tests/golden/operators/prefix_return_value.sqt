@@ -1,0 +1,18 @@
+// #237: önek ve sonek DÖNÜŞ DEĞERİ farkı — yan etki aynı, değer farklı.
+// Bu fixture ast_clone'un isPrefix'i kopyalamamasını da yakalar: kopyalanmazsa
+// optimizasyon açıkken ++x sonek gibi davranır ve y 5 çıkar (6 yerine).
+int main() {
+    int x = 5;  int y = ++x;   print(y); print("|"); print(x); print("|");  // 6 6
+    int w = 5;  int v = w++;   print(v); print("|"); print(w); print("|");  // 5 6
+
+    int a = 5;  int b = --a;   print(b); print("|"); print(a); print("|");  // 4 4
+    int c = 5;  int d = c--;   print(d); print("|"); print(c); print("|");  // 5 4
+
+    // İfade içinde kullanım
+    int i = 0;
+    int[] arr = [100, 200, 300];
+    print(arr[i++]); print("|");   // 100, i=1
+    print(arr[++i]); print("|");   // 300 (i=2)
+    print(i);                      // 2
+    return 0;
+}
