@@ -5,6 +5,19 @@ konuların kaydıdır. Issue'lar daha sonra buradan açılacak.
 
 Her madde: ne bulundu, ne ölçüldü, hangi seçenek onaylandı.
 
+## Özet
+
+| # | Konu | Sınıf | Durum |
+|---|---|---|---|
+| I-01 | `bool` gösterimi tutarsız (`print` → `1`, `as string` → `true`); `toJson` tip kaybı | dil kararı | **karar verildi** (1+2) |
+| I-02 | Runtime hata mesajlarında dil karışık (7 EN, 2 TR) | tutarlılık | karar bekliyor |
+| I-03 | Derin rekürsiyonda JIT segfault, VM sınırsız | **VM ≢ JIT** | karar bekliyor |
+| I-04 | `try`/`catch` ikisi de return etse bile E006 | derleyici hatası | karar bekliyor |
+| I-05 | `finally` ayrılmış ama uygulanmamış | eksik özellik | karar bekliyor |
+
+Adım 5'te (gerçek uygulamalar, sürekli çalışan iş yükü) **bulgu çıkmadı**;
+uzun koşuda kararlı ve deterministik.
+
 ---
 
 ## I-01 — `bool` gösterimi tutarsız (`print` → `1`, `as string` → `true`)
