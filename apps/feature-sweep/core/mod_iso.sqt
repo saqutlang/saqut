@@ -1,0 +1,9 @@
+int main() {
+    double a = 10.0; double b = 3.0;
+    print("double%double="); print(a % b); print("\n");
+    float f1 = 10.0; float f2 = 3.0;
+    print("float%float="); print(f1 % f2); print("\n");
+    decimal d1 = 10.0; decimal d2 = 3.0;
+    print("decimal%decimal="); print(d1 % d2); print("\n");
+    return 0;
+}

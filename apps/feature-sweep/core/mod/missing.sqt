@@ -1,0 +1,2 @@
+import { yokBoyleSey } from "lib.sqt";
+int main() { print(yokBoyleSey()); return 0; }

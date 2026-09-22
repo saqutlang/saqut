@@ -1,0 +1,210 @@
+================================================================================
+SaQut 0.9.9 — FFI gerçek-uygulama testi — KANIT (b paketi: fs + process + sys)
+================================================================================
+Binary : /home/saqut/Masaüstü/saqutcompiler/build/saqut
+Backend: VM (yalnız `run`; --jit KULLANILMADI)
+Tarih  : 2025 (oturum; epoch-ms modifiedTime ~1790101706xxx)
+Probe  : apps/feature-sweep/b/probe.sqt (fs + process cwd/pid/chdir + sys)
+Ayrı   : exit_test.sqt, ce_string_to_byte.sqt, ce_two_args.sqt,
+         ce_undefined.sqt, ce_bad_arity.sqt
+Çalışma dizini: /tmp/saqut-sweep-b/
+Not    : Koşum, paylaşılan checkout yazan kilitli olduğundan izole bir git
+         worktree içinden yapıldı (mutlak binary yolu ile). Hiçbir kaynak
+         kod değiştirilmedi, commit yapılmadı. .sqt dosyaları olduğu gibi
+         kopyalandı (md5 eşleşti).
+
+--------------------------------------------------------------------------------
+0) ORTAM ÖN KOŞULU (gerçek davranış notu)
+--------------------------------------------------------------------------------
+$ /usr/bin/.../build/saqut run probe.sqt -- a b      (ilk deneme, /tmp/saqut-sweep-b YOK)
+RC=70
+stderr: runtime error: cannot create directory '/tmp/saqut-sweep-b/probe': No such file or directory
+
+$ mkdir -p /tmp/saqut-sweep-b
+$ (tekrar) build/saqut run probe.sqt -- a b
+RC=0
+=> createDirectory(string) ÜST DİZİNİ OLUŞTURMAZ (std::filesystem::create_directory
+   tek dizin). Belge bunu böyle diyor; gerçek kullanımda üst dizin yoksa rc=70.
+
+--------------------------------------------------------------------------------
+1) PROBE — ANA KOŞUM (args ile: `run probe.sqt -- a b`), rc=0, stderr boş
+--------------------------------------------------------------------------------
+PASS createFile -> existsFile
+PASS isEmpty yeni dosya
+OBS fileSize(bos) = 0
+PASS fileSize(bos)==0
+PASS fileSize(write)==5
+PASS !isEmpty(dolu)
+PASS fileSize(append)==6
+OBS readFile(tek-arg) = [hello!] len=6
+PASS readFile(tek-arg)=="hello!"
+OBS readFile(0,4) = [hell] len=4
+PASS readFile(0,4)=="hell" (4 bayt)
+OBS readFile(2,3) = [llo] len=3
+PASS readFile(2,3)=="llo"
+OBS readFile(null,null) len=6
+PASS readFile(null,null) tam==6
+OBS readFile(100,4) len=0
+PASS readFile(100,4) bos
+OBS readFile(4,99) = [o!]
+PASS readFile(4,99)=="o!"
+PASS isDirectory(dir)
+PASS isFile(f)
+PASS !isFile(dir)
+PASS !isDirectory(f)
+OBS utf8 byte len = 18
+OBS utf8 decode = [çğıöşüÇĞİ]
+PASS utf8 roundtrip
+PASS utf8 fileSize==byte len
+PASS copyFile -> var + boyut
+PASS renameFile eski yok
+PASS renameFile yeni var
+OBS list(sub) = [a.txt ; m.txt ; z.txt] n=3
+PASS list sirali a,m,z
+PASS isEmpty(dolu dizin)==false
+PASS list(yok) -> hata
+OBS walk(root) n=7 -> [/tmp/saqut-sweep-b/probe/a.txt ; /tmp/saqut-sweep-b/probe/renamed.txt ; /tmp/saqut-sweep-b/probe/sub ; /tmp/saqut-sweep-b/probe/sub/a.txt ; /tmp/saqut-sweep-b/probe/sub/m.txt ; /tmp/saqut-sweep-b/probe/sub/z.txt ; /tmp/saqut-sweep-b/probe/utf8.txt]
+PASS walk > 0
+OBS modifiedTime = 1790101706951
+PASS modifiedTime > 0
+PASS fileSize(yok) -> hata
+PASS removeFile(yok) -> hata
+PASS readFile(yok) -> hata
+PASS removeFile ok
+PASS removeDirectory recursive ok
+OBS cwd = /home/saqut/Masaüstü/.codewhale-worktrees/saqutcompiler/codex-agent-ffi-run-b-13aebf6f/apps/feature-sweep/b
+PASS cwd nonempty
+OBS pid = 87172
+PASS pid > 0
+OBS cwd after chdir = /tmp/saqut-sweep-b
+PASS chdir -> cwd==/tmp/saqut-sweep-b
+OBS random = 0.611795
+PASS random in [0,1)
+OBS randomInt(1,6) 300 cekilis: min=1 max=5 saw6=false
+PASS randomInt(5,5) -> hata
+OBS env(PATH) len = 290
+PASS env(PATH) dolu
+PASS env(yok) null
+OBS sleep oncesi
+OBS sleep(200) bitti
+OBS args n=2 [a ; b]
+FAILS=0
+
+--------------------------------------------------------------------------------
+2) PROBE — ARGÜMANSIZ KOŞUM, rc=0, stderr boş
+--------------------------------------------------------------------------------
+(Aynı çıktı; yalnız değişken satırlar:)
+OBS modifiedTime = 1790101709159
+OBS pid = 87233
+OBS random = 0.534765
+OBS args n=0 []
+FAILS=0
+
+--------------------------------------------------------------------------------
+3) exit_test.sqt (process::exit AYRI dosyada), rc=7
+--------------------------------------------------------------------------------
+$ build/saqut run exit_test.sqt ; echo rc=$?
+stdout: "exit oncesi"      (sonrasında "UNREACHABLE" YAZILMADI)
+stderr: (boş)
+rc=7                        => exit(7) süreç çıkış koduna birebir yansıdı.
+
+--------------------------------------------------------------------------------
+4) DERLEME/RUNTIME REDDEDİLEN ÇAĞRILAR (ayrı dosyalar)
+--------------------------------------------------------------------------------
+4a) ce_string_to_byte.sqt — writeFile(path, "metin")  RC=65
+stderr:
+  .../ce_string_to_byte.sqt:5:44: error [E003]: 'argument': cannot assign string to byte[]
+      hint: use explicit cast: `<expression> as byte[]`
+  — 1 error(s), 0 warning(s)
+=> string -> byte[] ÖRTÜK DÖNÜŞÜM YOK; utf8::encode ile açık dönüşüm gerekir.
+
+4b) ce_two_args.sqt — readFile(path, 0) (2 argüman)  RC=70 (DERLENDİ!)
+stderr: runtime error: cannot open file '/tmp/saqut-sweep-b/x.txt'
+=> 2 argümanlı readFile (path, seek) GEÇERLİ; derlenir. Dosya yoktu → runtime hatası.
+
+4c) ce_undefined.sqt — tanımsız readDir  RC=65
+stderr:
+  .../ce_undefined.sqt:2:1: error [E_IMPORT_UNKNOWN]: 'readDir' not found in module 'fs'
+  .../ce_undefined.sqt:5:18: error [E001]: 'readDir' is not defined
+      hint: define it before use: `int readDir = 0;` (set type and value)
+  — 2 error(s), 0 warning(s)
+
+4d) ce_bad_arity.sqt — existsFile(path, "/etc")  RC=65
+stderr:
+  .../ce_bad_arity.sqt:5:24: error [E008]: 1 argument(s) expected, 2 given
+      hint: 1 argument(s) extra — remove extra arguments
+  — 1 error(s), 0 warning(s)
+
+--------------------------------------------------------------------------------
+5) SLEEP — dış ölçüm
+--------------------------------------------------------------------------------
+$ /usr/bin/time -v build/saqut run probe.sqt -- a b
+  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.20
+  Maximum resident set size (kbytes): 5392
+  Exit status: 0
+=> sleep(200) gerçekten ~0.20 s bekliyor (probe çıktısı: "OBS sleep oncesi" ...
+   "OBS sleep(200) bitti" satırları).
+
+--------------------------------------------------------------------------------
+6) ÇIKIŞ KODLARI ÖZETİ
+--------------------------------------------------------------------------------
+probe.sqt -- a b      RC=0
+probe.sqt (argümansız) RC=0
+probe.sqt (üst dizin yok) RC=70
+exit_test.sqt         rc=7
+ce_string_to_byte     RC=65
+ce_two_args           RC=70
+ce_undefined          RC=65
+ce_bad_arity          RC=65
+
+================================================================================
+TÜRKÇE DEĞERLENDİRME (fonksiyon fonksiyon)
+================================================================================
+fs modülü
+- readFile(path[,seek,size])  : ÇALIŞIYOR. Tek argüman tam okuma (6 bayt "hello!").
+  KISMİ okuma GERÇEKTEN ÇALIŞIYOR: readFile(path,0,4)->"hell"(4), readFile(path,2,3)
+  ->"llo"(3), readFile(path,4,99)->"o!". null,null -> tam. seek sınır ötesi (100,4)
+  -> 0 bayt (hata değil). 2 argüman (path,seek) de derlenip çalışıyor.
+- writeFile(path,byte[])      : ÇALIŞIYOR (5 bayt). string geçmek DERLEME HATASI (E003).
+- appendFile(path,byte[])     : ÇALIŞIYOR (6 bayt).
+- existsFile(path)            : ÇALIŞIYOR (var/yok doğru).
+- removeFile(path)            : ÇALIŞIYOR; olmayan dosyada catch edilebilir hata.
+- createFile(path)            : ÇALIŞIYOR (boş dosya).
+- copyFile(src,dst)           : ÇALIŞIYOR (boyut korunuyor).
+- renameFile(from,to)         : ÇALIŞIYOR (eski kayboldu, yeni var).
+- isEmpty(path)               : ÇALIŞIYOR (boş dosya true, dolu dosya/dizin false).
+- isDirectory(path)           : ÇALIŞIYOR.
+- fileSize(path)              : ÇALIŞIYOR (longint); olmayan dosyada catch edilebilir hata.
+- createDirectory(path)       : ÇALIŞIYOR (tek dizin); ŞÜPHELİ/DİKKAT: üst dizini
+  OLUŞTURMAZ — /tmp/saqut-sweep-b yokken rc=70.
+- removeDirectory(path)       : ÇALIŞIYOR, RECURSIVE (içi dolu dizin de silindi).
+- isFile(path)                : ÇALIŞIYOR.
+- list(path)                  : ÇALIŞIYOR; SIRALI (a.txt,m.txt,z.txt). Olmayan dizinde
+  catch edilebilir hata.
+- walk(path)                  : ÇALIŞIYOR, recursive, TAM YOL döndürüyor (7 girdi).
+- modifiedTime(path)          : ÇALIŞIYOR, >0, epoch-ms longint.
+- UTF-8 (encode/decode)       : ÇALIŞIYOR. "çğıöşüÇĞİ" 18 bayt; roundtrip birebir.
+
+process modülü
+- cwd()                       : ÇALIŞIYOR (boş değil).
+- pid()                       : ÇALIŞIYOR (>0).
+- chdir(path)                 : ÇALIŞIYOR (chdir sonrası cwd()==/tmp/saqut-sweep-b).
+- exit(code)                  : ÇALIŞIYOR (exit(7) -> rc=7; sonraki kod çalışmadı).
+
+sys modülü
+- random()                    : ÇALIŞIYOR ([0,1) aralığında).
+- randomInt(lo,hi)            : ÇALIŞIYOR ama ŞÜPHELİ/DOKÜMAN SAPMASI: randomInt(1,6)
+  300 çekilişte min=1, max=5, saw6=false. Yani üst sınır DIŞLAYICI (impl:
+  uniform_int_distribution(lo, hi-1)). randomInt(5,5) hata veriyor (lo>=hi).
+  İmza `randomInt(int lo, int hi)` kapsayıcı hi ima ediyor → belge-gerçek sapması.
+- env(name)                   : ÇALIŞIYOR. env("PATH") null değil (len=290);
+  env("KESINLIKLE_YOK_XYZ") null.
+- sleep(ms)                   : ÇALIŞIYOR. sleep(200) -> dış ölçüm 0.20 s wall.
+- args()                      : ÇALIŞIYOR. `-- a b` ile n=2 [a,b]; argümansız n=0.
+
+SONUÇ: fs (17/17), process (4/4), sys (5/5) gerçek girdiyle çağrıldı ve hepsi
+çalıştı; probe FAILS=0. Gerçek sapmalar:
+  (1) randomInt üst sınırı dışlayıcı (belge kapsayıcı ima ediyor) — şüpheli hata.
+  (2) createDirectory üst dizin oluşturmuyor — beklenen davranış ama tuzak.
+  (3) string->byte[] örtük dönüşümü yok (E003) — belgelenmiş sınır, gerçek.
+================================================================================

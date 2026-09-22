@@ -1,0 +1,7 @@
+// ce_string_to_byte.sqt — writeFile'a string geçmek DERLENİYOR MU?
+import { writeFile } from fs;
+
+int main() {
+    writeFile("/tmp/saqut-sweep-b/ce.txt", "metin");
+    return 0;
+}

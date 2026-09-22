@@ -1,0 +1,207 @@
+// ============================================================================
+// probe.sqt — FFI gerçek-uygulama testi (fs + process + sys)
+// ============================================================================
+// Amaç: her fs/process/sys fonksiyonunu gerçek girdiyle çağır, gözlenen
+// çıktıyı yaz. Kaynak kod DÜZELTİLMEZ. VM backend: `saqut run probe.sqt`.
+// Çıkış: FAILS==0 -> 0, aksi halde 1.
+// ============================================================================
+
+import { readFile, writeFile, appendFile, existsFile, removeFile, createFile,
+         copyFile, renameFile, isEmpty, isDirectory, fileSize, createDirectory,
+         removeDirectory, isFile, list, walk, modifiedTime } from fs;
+import { cwd, pid, chdir } from process;
+import { random, randomInt, env, sleep, args } from sys;
+import { encode, decode } from utf8;
+
+int FAILS = 0;
+
+void check(string label, bool ok) {
+    if (ok) { print("PASS " + label + "\n"); }
+    else { print("FAIL " + label + "\n"); FAILS = FAILS + 1; }
+}
+
+string joinArr(string[] a) {
+    string s = "";
+    int i = 0;
+    while (i < a.length()) { s = s + a[i]; if (i < a.length() - 1) { s = s + " ; "; } i = i + 1; }
+    return s;
+}
+
+int main() {
+    string root = "/tmp/saqut-sweep-b/probe";
+
+    // ── temiz başlangıç ──────────────────────────────────────────────────────
+    if (existsFile(root)) { removeDirectory(root); }
+    createDirectory(root);
+    string f = root + "/a.txt";
+
+    // ── createFile ───────────────────────────────────────────────────────────
+    createFile(f);
+    check("createFile -> existsFile", existsFile(f));
+    check("isEmpty yeni dosya", isEmpty(f));
+    print("OBS fileSize(bos) = " + (fileSize(f) as string) + "\n");
+    check("fileSize(bos)==0", fileSize(f) == (0 as longint));
+
+    // ── writeFile ────────────────────────────────────────────────────────────
+    byte[] data = [104, 101, 108, 108, 111]; // "hello"
+    writeFile(f, data);
+    check("fileSize(write)==5", fileSize(f) == (5 as longint));
+    check("!isEmpty(dolu)", !isEmpty(f));
+
+    // ── appendFile ───────────────────────────────────────────────────────────
+    appendFile(f, [33]); // '!'
+    check("fileSize(append)==6", fileSize(f) == (6 as longint));
+
+    // ── readFile: tam okuma, TEK argüman ─────────────────────────────────────
+    byte[] full = readFile(f);
+    string fullStr = decode(full);
+    print("OBS readFile(tek-arg) = [" + fullStr + "] len=" + (full.length() as string) + "\n");
+    check("readFile(tek-arg)==\"hello!\"", fullStr == "hello!");
+
+    // ── readFile: KISMİ okuma (seek, size) — asıl merak ──────────────────────
+    byte[] part = readFile(f, 0, 4);
+    string partStr = decode(part);
+    print("OBS readFile(0,4) = [" + partStr + "] len=" + (part.length() as string) + "\n");
+    check("readFile(0,4)==\"hell\" (4 bayt)", partStr == "hell");
+
+    byte[] mid = readFile(f, 2, 3);
+    string midStr = decode(mid);
+    print("OBS readFile(2,3) = [" + midStr + "] len=" + (mid.length() as string) + "\n");
+    check("readFile(2,3)==\"llo\"", midStr == "llo");
+
+    byte[] nul = readFile(f, null, null);
+    print("OBS readFile(null,null) len=" + (nul.length() as string) + "\n");
+    check("readFile(null,null) tam==6", nul.length() == 6);
+
+    byte[] beyond = readFile(f, 100, 4);
+    print("OBS readFile(100,4) len=" + (beyond.length() as string) + "\n");
+    check("readFile(100,4) bos", beyond.length() == 0);
+
+    byte[] tail = readFile(f, 4, 99);
+    print("OBS readFile(4,99) = [" + decode(tail) + "]\n");
+    check("readFile(4,99)==\"o!\"", decode(tail) == "o!");
+
+    // ── isDirectory / isFile ─────────────────────────────────────────────────
+    check("isDirectory(dir)", isDirectory(root));
+    check("isFile(f)", isFile(f));
+    check("!isFile(dir)", !isFile(root));
+    check("!isDirectory(f)", !isDirectory(f));
+
+    // ── UTF-8 çok baytlı içerik ──────────────────────────────────────────────
+    string u = "çğıöşüÇĞİ";
+    byte[] ub = encode(u);
+    string uf = root + "/utf8.txt";
+    writeFile(uf, ub);
+    print("OBS utf8 byte len = " + (ub.length() as string) + "\n");
+    string back = decode(readFile(uf));
+    print("OBS utf8 decode = [" + back + "]\n");
+    check("utf8 roundtrip", back == u);
+    check("utf8 fileSize==byte len", fileSize(uf) == (ub.length() as longint));
+
+    // ── copyFile ─────────────────────────────────────────────────────────────
+    string cp = root + "/copy.txt";
+    copyFile(f, cp);
+    check("copyFile -> var + boyut", existsFile(cp) && fileSize(cp) == (6 as longint));
+
+    // ── renameFile ───────────────────────────────────────────────────────────
+    string rn = root + "/renamed.txt";
+    renameFile(cp, rn);
+    check("renameFile eski yok", !existsFile(cp));
+    check("renameFile yeni var", existsFile(rn));
+
+    // ── createDirectory + list (sıralı mı?) ──────────────────────────────────
+    string sub = root + "/sub";
+    createDirectory(sub);
+    createFile(sub + "/z.txt");
+    writeFile(sub + "/m.txt", [109]);   // "m"
+    createFile(sub + "/a.txt");
+    string[] names = list(sub);
+    print("OBS list(sub) = [" + joinArr(names) + "] n=" + (names.length() as string) + "\n");
+    check("list sirali a,m,z", names.length() == 3 && names[0] == "a.txt" && names[1] == "m.txt" && names[2] == "z.txt");
+    check("isEmpty(dolu dizin)==false", !isEmpty(sub));
+
+    // list olmayan dizin -> hata
+    try { string[] x = list(root + "/yok-dizin"); print("FAIL list(yok) hata vermedi n=" + (x.length() as string) + "\n"); FAILS = FAILS + 1; }
+    catch (Error e) { print("PASS list(yok) -> hata\n"); }
+
+    // ── walk (recursive, tam yol) ────────────────────────────────────────────
+    string[] w = walk(root);
+    print("OBS walk(root) n=" + (w.length() as string) + " -> [" + joinArr(w) + "]\n");
+    check("walk > 0", w.length() > 0);
+
+    // ── modifiedTime ─────────────────────────────────────────────────────────
+    longint mt = modifiedTime(f);
+    print("OBS modifiedTime = " + (mt as string) + "\n");
+    check("modifiedTime > 0", mt > (0 as longint));
+
+    // ── hata yolları (try/catch) ─────────────────────────────────────────────
+    try { longint s = fileSize(root + "/yok-xyz"); print("FAIL fileSize(yok) hata vermedi=" + (s as string) + "\n"); FAILS = FAILS + 1; }
+    catch (Error e) { print("PASS fileSize(yok) -> hata\n"); }
+
+    try { removeFile(root + "/yok-xyz"); print("FAIL removeFile(yok) hata vermedi\n"); FAILS = FAILS + 1; }
+    catch (Error e) { print("PASS removeFile(yok) -> hata\n"); }
+
+    try { readFile(root + "/yok-xyz"); print("FAIL readFile(yok) hata vermedi\n"); FAILS = FAILS + 1; }
+    catch (Error e) { print("PASS readFile(yok) -> hata\n"); }
+
+    // ── removeFile / removeDirectory (recursive) ─────────────────────────────
+    removeFile(f);
+    check("removeFile ok", !existsFile(f));
+    removeDirectory(root);
+    check("removeDirectory recursive ok", !isDirectory(root));
+
+    // ── process: cwd / pid / chdir ───────────────────────────────────────────
+    string c0 = cwd();
+    print("OBS cwd = " + c0 + "\n");
+    check("cwd nonempty", c0 != "");
+    int p = pid();
+    print("OBS pid = " + (p as string) + "\n");
+    check("pid > 0", p > 0);
+    chdir("/tmp/saqut-sweep-b");
+    string c1 = cwd();
+    print("OBS cwd after chdir = " + c1 + "\n");
+    check("chdir -> cwd==/tmp/saqut-sweep-b", c1 == "/tmp/saqut-sweep-b");
+
+    // ── sys: random ──────────────────────────────────────────────────────────
+    double r = random();
+    print("OBS random = " + (r as string) + "\n");
+    check("random in [0,1)", r >= 0.0 && r < 1.0);
+
+    // ── sys: randomInt(1,6) — belge: [lo,hi] beklenir ────────────────────────
+    int k = 0;
+    int mn = 999;
+    int mx = -999;
+    bool saw6 = false;
+    while (k < 300) {
+        int v = randomInt(1, 6);
+        if (v < mn) { mn = v; }
+        if (v > mx) { mx = v; }
+        if (v == 6) { saw6 = true; }
+        k = k + 1;
+    }
+    print("OBS randomInt(1,6) 300 cekilis: min=" + (mn as string) + " max=" + (mx as string) + " saw6=" + (saw6 as string) + "\n");
+
+    // ── sys: randomInt geçersiz aralık ───────────────────────────────────────
+    try { int bad = randomInt(5, 5); print("FAIL randomInt(5,5) hata vermedi v=" + (bad as string) + "\n"); FAILS = FAILS + 1; }
+    catch (Error e) { print("PASS randomInt(5,5) -> hata\n"); }
+
+    // ── sys: env ─────────────────────────────────────────────────────────────
+    string? pth = env("PATH");
+    if (pth == null) { print("FAIL env(PATH) null dondu\n"); FAILS = FAILS + 1; }
+    else { print("OBS env(PATH) len = " + (pth.length() as string) + "\n"); check("env(PATH) dolu", pth.length() > 0); }
+    string? miss = env("KESINLIKLE_YOK_XYZ");
+    check("env(yok) null", miss == null);
+
+    // ── sys: sleep (dış `time` ile ölçülür) ──────────────────────────────────
+    print("OBS sleep oncesi\n");
+    sleep(200);
+    print("OBS sleep(200) bitti\n");
+
+    // ── sys: args ────────────────────────────────────────────────────────────
+    string[] av = args();
+    print("OBS args n=" + (av.length() as string) + " [" + joinArr(av) + "]\n");
+
+    print("FAILS=" + (FAILS as string) + "\n");
+    if (FAILS == 0) { return 0; }
+    return 1;
+}

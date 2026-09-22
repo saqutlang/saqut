@@ -1,0 +1,43 @@
+int main() {
+    string s = "  Merhaba Dünya  ";
+    print("len="); print(s.length()); print("\n");
+    print("upper=<"); print(s.upper()); print(">\n");
+    print("lower=<"); print(s.lower()); print(">\n");
+    print("trim=<"); print(s.trim()); print(">\n");
+
+    string csv = "a,b,,c";
+    string[] parts = csv.split(",");
+    print("split len="); print(parts.length()); print(" [");
+    int i = 0;
+    while (i < parts.length()) { print("<"); print(parts[i]); print(">"); i = i + 1; }
+    print("]\n");
+
+    string[] none = "abc".split("z");
+    print("split-no-match len="); print(none.length()); print("\n");
+
+    print("substring(2,3)="); print("abcdef".substring(2, 3)); print("\n");
+    print("replace="); print("a-b-a".replace("a", "X")); print("\n");
+    print("repeat(3)="); print("ab".repeat(3)); print("\n");
+    print("repeat(0)=<"); print("ab".repeat(0)); print(">\n");
+    print("charAt(1)="); print("xyz".charAt(1)); print("\n");
+    print("contains="); print("hello".contains("ell")); print("\n");
+    print("startsWith="); print("hello".startsWith("he")); print("\n");
+    print("endsWith="); print("hello".endsWith("lo")); print("\n");
+
+    // unicode
+    string u = "çğıöşü 日本語";
+    print("unicode len="); print(u.length()); print("\n");
+    print("first char=<"); print(u.charAt(0)); print(">\n");
+    print("toBuffer bytes="); print(u.toBuffer().length()); print("\n");
+    print("toBuffer.toString=<"); print(u.toBuffer().toString()); print(">\n");
+
+    // özel karakterler
+    string esc = "a\tb\nc\\d\"e";
+    print("esc len="); print(esc.length()); print("\n");
+
+    // sınırlar
+    try { print("abcdef".substring(10, 2)); } catch (Error e) { print("substring OOB: "); print(e.code); print("\n"); }
+    try { print("abc".charAt(9)); } catch (Error e) { print("charAt OOB: "); print(e.code); print("\n"); }
+    try { print("abc".repeat(0 - 1)); } catch (Error e) { print("repeat(-1): "); print(e.code); print("\n"); }
+    return 0;
+}

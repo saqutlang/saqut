@@ -1,0 +1,7 @@
+// ce_undefined.sqt — tanımsız fonksiyon çağrısı DERLENİYOR MU?
+import { readDir } from fs;
+
+int main() {
+    string[] a = readDir("/tmp");
+    return a.length();
+}

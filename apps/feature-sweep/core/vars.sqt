@@ -1,0 +1,11 @@
+int g = 100;
+int main() {
+    int a = 1, b = 2, c;
+    c = a + b;
+    print(c); print("\n");
+    { int a = 99; print(a); print("\n"); }
+    print(a); print("\n");
+    g = g + 1;
+    print(g); print("\n");
+    return 0;
+}

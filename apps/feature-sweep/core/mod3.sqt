@@ -1,0 +1,7 @@
+int main() {
+    int x = 10; int y = 3;
+    print("intvar%intvar="); print(x % y); print("\n");
+    double a = 10.0;
+    print("double%int="); print(a % 3); print("\n");
+    return 0;
+}

@@ -1,0 +1,8 @@
+int main() {
+    int y = 5;
+    int a = y++;
+    print("post: a="); print(a); print(" y="); print(y); print("\n");
+    int b = ++y;
+    print("pre: b="); print(b); print(" y="); print(y); print("\n");
+    return 0;
+}

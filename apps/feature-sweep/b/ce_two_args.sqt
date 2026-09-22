@@ -1,0 +1,7 @@
+// ce_two_args.sqt — readFile'a yalnız 2 argüman (path, seek) DERLENİYOR MU?
+import { readFile } from fs;
+
+int main() {
+    byte[] d = readFile("/tmp/saqut-sweep-b/x.txt", 0);
+    return d.length();
+}

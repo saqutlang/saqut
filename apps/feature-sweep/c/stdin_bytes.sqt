@@ -1,0 +1,7 @@
+// feature-sweep/c — stdin::readBytes: ham bayt uzunlugu (cok baytli UTF-8)
+import {readBytes} from stdin;
+
+void main() {
+    byte[] b = readBytes();
+    print("BYTES_LEN="); print(b.length()); print("\n");
+}

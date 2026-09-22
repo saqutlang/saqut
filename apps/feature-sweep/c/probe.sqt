@@ -1,0 +1,64 @@
+// feature-sweep/c — date modulu deterministik FFI probu
+// Amac: her date fonksiyonunu gercek girdiyle cagirmak ve gozlenen ciktiyi kaydetmek.
+// NOT: print newline EKLEMEZ -> her satir kendi "\n" ile kapatilir.
+import {now, fromEpochMillis, toEpochMillis, addDays, addHours, addMinutes, addSeconds, year, month, day, hour, minute, second, diffMillis, parse, format} from date;
+
+void main() {
+    // ── fromEpochMillis(0) = 1970-01-01 00:00:00 UTC ──
+    date e0 = fromEpochMillis(0);
+    print("EPOCH0=");
+    print(year(e0)); print("-"); print(month(e0)); print("-"); print(day(e0)); print(" ");
+    print(hour(e0)); print(":"); print(minute(e0)); print(":"); print(second(e0)); print("\n");
+    print("EPOCH0_FMT="); print(format(e0, "yyyy-MM-dd HH:mm:ss")); print("\n");
+
+    longint m0 = toEpochMillis(e0);
+    print("EPOCH0_MS="); print(m0); print("\n");
+
+    // ── fromEpochMillis(86400000) = 1970-01-02 ──
+    date e1 = fromEpochMillis(86400000);
+    print("EPOCH1_FMT="); print(format(e1, "yyyy-MM-dd")); print("\n");
+
+    // ── addDays(epoch0,1) -> 86400000 ──
+    date a1 = addDays(e0, 1);
+    print("ADD1D_MS="); print(toEpochMillis(a1)); print("\n");
+
+    // ── diffMillis(addDays(d,2), d) == 172800000 ──
+    date a2 = addDays(e0, 2);
+    print("DIFF2D="); print(diffMillis(a2, e0)); print("\n");
+
+    print("ADDH="); print(diffMillis(addHours(e0, 1), e0)); print("\n");
+    print("ADDM="); print(diffMillis(addMinutes(e0, 1), e0)); print("\n");
+    print("ADDS="); print(diffMillis(addSeconds(e0, 1), e0)); print("\n");
+
+    // ── parse gecerli ──
+    date? p = parse("2020-01-02T03:04:05Z");
+    if (p == null) {
+        print("PARSE_OK=null\n");
+    } else {
+        print("PARSE_OK=");
+        print(year(p)); print("-"); print(month(p)); print("-"); print(day(p)); print(" ");
+        print(hour(p)); print(":"); print(minute(p)); print(":"); print(second(p)); print("\n");
+        print("PARSE_MS="); print(toEpochMillis(p)); print("\n");
+        print("FMT_ymd=");  print(format(p, "yyyy-MM-dd")); print("\n");
+        print("FMT_hms=");  print(format(p, "HH:mm:ss")); print("\n");
+        print("FMT_dmy=");  print(format(p, "dd/MM/yyyy")); print("\n");
+        print("FMT_T=");    print(format(p, "yyyy-MM-dd'T'HH:mm:ss")); print("\n");
+        print("FMT_SSS=");  print(format(p, "yyyy-MM-dd HH:mm:ss.SSS")); print("\n");
+    }
+
+    // ── parse gecersiz -> null ──
+    date? bad = parse("gecersiz");
+    if (bad == null) { print("PARSE_BAD=null\n"); } else { print("PARSE_BAD=notnull\n"); }
+
+    // ── parse sinir durumlari ──
+    date? shortIso = parse("2020-01-02T03:04:05");   // Z yok (19 karakter)
+    if (shortIso == null) { print("PARSE_NOZ=null\n"); } else { print("PARSE_NOZ=notnull\n"); }
+    date? badMonth = parse("2020-13-02T03:04:05Z");
+    if (badMonth == null) { print("PARSE_BADMONTH=null\n"); } else { print("PARSE_BADMONTH=notnull\n"); }
+
+    // ── now() + date-date karsilastirma ──
+    date n = now();
+    print("NOW_YEAR="); print(year(n)); print("\n");
+    print("NOW_GT_EPOCH0="); if (n > e0) { print("1\n"); } else { print("0\n"); }
+    print("NOW_MS="); print(toEpochMillis(n)); print("\n");
+}

@@ -1,0 +1,9 @@
+// exit_test.sqt — process::exit ayrı dosyada (rc ölçümü için)
+import { exit } from process;
+
+int main() {
+    print("exit oncesi\n");
+    exit(7);
+    print("UNREACHABLE\n");
+    return 0;
+}

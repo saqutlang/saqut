@@ -1,0 +1,11 @@
+import { kareArtiBir, etiketli } from "lib2.sqt";
+import { Nokta, Birim, kare } from "lib.sqt";
+int main() {
+    Nokta p; p.x = 3; p.y = 4;
+    Birim b = Birim.CM;
+    print("kare(5)="); print(kare(5)); print("\n");
+    print("kareArtiBir(5)="); print(kareArtiBir(5)); print("\n");
+    print("etiketli="); print(etiketli("x")); print("\n");
+    print("nokta="); print(p.x as string); print(","); print(p.y as string); print(" birim="); print(b); print("\n");
+    return 0;
+}

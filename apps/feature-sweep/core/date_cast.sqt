@@ -1,0 +1,9 @@
+import { fromEpochMillis, toEpochMillis } from date;
+int main() {
+    date d = fromEpochMillis(1790092890942);
+    longint a = d as longint;
+    longint b = toEpochMillis(d);
+    print("a="); print(a as string); print(" a>0="); print(a > 0); print(" a<0="); print(a < 0); print("\n");
+    print("b="); print(b as string); print(" b>0="); print(b > 0); print("\n");
+    return 0;
+}

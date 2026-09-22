@@ -1,0 +1,14 @@
+struct P { int x; string s; }
+enum E { A, B }
+int main() {
+    print(42); print(" | "); print("str"); print(" | ");
+    print(true); print(" | "); print(false); print(" | ");
+    print(3.5); print(" | "); print(2.25); print(" | ");
+    decimal d = 1.5; print(d); print(" | ");
+    print(E.B); print(" | ");
+    P p; p.x = 1; p.s = "z";
+    print(p.toJson()); print("\n");
+    int[] a = [1,2,3];
+    print("arr.print denemesi: "); print(a); print("\n");
+    return 0;
+}

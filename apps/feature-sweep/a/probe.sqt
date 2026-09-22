@@ -1,0 +1,71 @@
+// SaQut 0.9.9 FFI probe — run with VM only:
+//   ./build/saqut run apps/feature-sweep/a/probe.sqt
+// NOTE: module-scope statements are illegal (E013); all statements live in main().
+// NOTE: print() appends NO newline, so output is one concatenated stream.
+// NOTE: <expr>.length() is a METHOD, not a field.
+
+import { version } from core;
+import { abs, absf, min, max, minf, maxf, sqrt, pow, floor, ceil, round, PI, E } from math;
+import { join, normalize, dirname, basename, extension, isAbsolute, separator } from path;
+import { encode, decode } from utf8;
+import { osName, osArch, osHostname, osUser, osCpuCount } from os;
+import { isTTY } from terminal;
+
+int main() {
+  print("== core ==");
+  print("version()"); print(version());
+
+  print("== math ==");
+  print("abs(-5)"); print(abs(-5));
+  print("absf(-2.5)"); print(absf(-2.5));
+  print("min(3,7)"); print(min(3, 7));
+  print("max(3,7)"); print(max(3, 7));
+  print("minf(1.5,2.5)"); print(minf(1.5, 2.5));
+  print("maxf(1.5,2.5)"); print(maxf(1.5, 2.5));
+  print("sqrt(9.0)"); print(sqrt(9.0));
+  print("sqrt(-1.0)"); print(sqrt(-1.0));
+  print("pow(2.0,10.0)"); print(pow(2.0, 10.0));
+  print("floor(2.7)"); print(floor(2.7));
+  print("ceil(2.1)"); print(ceil(2.1));
+  print("round(2.5)"); print(round(2.5));
+  print("round(-2.5)"); print(round(-2.5));
+  print("PI()"); print(PI());
+  print("E()"); print(E());
+  print("abs(-2147483648)"); print(abs(-2147483648));
+
+  print("== path ==");
+  print("join([/tmp,a,b.txt])"); print(join(["/tmp", "a", "b.txt"]));
+  print("join([a,b])"); print(join(["a", "b"]));
+  print("normalize(/tmp/./a/../b)"); print(normalize("/tmp/./a/../b"));
+  print("normalize(/tmp/a/)"); print(normalize("/tmp/a/"));
+  print("dirname(/a/b/c.txt)"); print(dirname("/a/b/c.txt"));
+  print("dirname(c.txt)"); print(dirname("c.txt"));
+  print("basename(/a/b/c.txt)"); print(basename("/a/b/c.txt"));
+  print("extension(/a/b/c.txt)"); print(extension("/a/b/c.txt"));
+  print("extension(/a/b/noext)"); print(extension("/a/b/noext"));
+  print("isAbsolute(/x)"); print(isAbsolute("/x"));
+  print("isAbsolute(x)"); print(isAbsolute("x"));
+  print("isAbsolute(C:/x)"); print(isAbsolute("C:/x"));
+  print("separator()"); print(separator());
+
+  print("== utf8 ==");
+  byte[] bytes = encode("çğıöşü 日本語");
+  print("encode length bytes"); print(bytes.length());
+  print("decode roundtrip eq");
+  string dec = decode(bytes);
+  if (dec == "çğıöşü 日本語") { print("roundtrip OK"); } else { print("roundtrip FAIL"); }
+
+  print("== os ==");
+  print("osName()"); print(osName());
+  print("osArch()"); print(osArch());
+  print("osHostname()"); print(osHostname());
+  print("osUser()");
+  string? u = osUser();
+  if (u == null) { print("osUser=null"); } else { print(u); }
+  print("osCpuCount()"); print(osCpuCount());
+
+  print("== terminal ==");
+  print("isTTY()"); print(isTTY());
+
+  return 0;
+}

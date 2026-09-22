@@ -1,0 +1,32 @@
+// feature-sweep/c — date -> longint "as" cast riski (VM vs JIT)
+// Bilinen risk: `longint x = d as longint; x > 0` VM'de yanlis sonuc verebiliyor.
+import {fromEpochMillis, now, toEpochMillis} from date;
+
+void main() {
+    // Kucuk deger (alt 32 bit pozitif)
+    date d = fromEpochMillis(1000);
+    longint x = d as longint;
+    print("CAST_SMALL="); print(x); print(" GT0=");
+    if (x > 0) { print("1\n"); } else { print("0\n"); }
+
+    // 86400000 (1 gun)
+    date d1 = fromEpochMillis(86400000);
+    longint y = d1 as longint;
+    print("CAST_DAY="); print(y); print(" GT0=");
+    if (y > 0) { print("1\n"); } else { print("0\n"); }
+
+    // 2^32: alt 32 bit 0 -> VM truncate bug'i deterministik tetiklenmeli
+    longint big = 4294967296;
+    date d2 = fromEpochMillis(big);
+    longint w = d2 as longint;
+    print("CAST_2P32="); print(w); print(" GT0=");
+    if (w > 0) { print("1\n"); } else { print("0\n"); }
+    print("CAST_2P32_TOEPOCH="); print(toEpochMillis(d2)); print("\n");
+
+    // now() gibi buyuk bir epoch-ms
+    date n = now();
+    longint z = n as longint;
+    print("CAST_NOW="); print(z); print(" GT0=");
+    if (z > 0) { print("1\n"); } else { print("0\n"); }
+    print("CAST_NOW_TOEPOCH="); print(toEpochMillis(n)); print("\n");
+}

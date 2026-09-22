@@ -1,0 +1,19 @@
+enum Renk { Kirmizi, Yesil, Mavi = 10, Sari }
+string ad(Renk r) {
+    switch (r) {
+        case Renk.Kirmizi: return "kirmizi";
+        case Renk.Yesil: return "yesil";
+        case Renk.Mavi: return "mavi";
+        case Renk.Sari: return "sari";
+    }
+    return "?";
+}
+int main() {
+    Renk r = Renk.Mavi;
+    print("ad="); print(ad(r)); print(" print="); print(r); print("\n");
+    print("eq Yesil? "); print(r == Renk.Yesil); print("\n");
+    Renk[] dizi = [Renk.Sari, Renk.Kirmizi];
+    print("dizi len="); print(dizi.length()); print(" ilk ad="); print(ad(dizi[0])); print("\n");
+    print("Sari print="); print(Renk.Sari); print("\n");
+    return 0;
+}

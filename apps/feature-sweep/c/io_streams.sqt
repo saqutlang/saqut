@@ -1,0 +1,12 @@
+// feature-sweep/c — stdout / stderr ayri akis mi? write + writeBytes
+import {write as out, writeBytes as outBytes} from stdout;
+import {write as errw, writeBytes as errBytes} from stderr;
+
+void main() {
+    out("OUT_S|");
+    outBytes([79, 85, 84, 66]);   // OUTB
+    out("\n");
+    errw("ERR_S|");
+    errBytes([69, 82, 82, 66]);   // ERRB
+    errw("\n");
+}

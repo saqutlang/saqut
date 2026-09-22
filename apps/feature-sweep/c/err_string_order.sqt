@@ -1,0 +1,6 @@
+// feature-sweep/c — derlenmeyen cagri: string siralama (<) yok
+void main() {
+    string a = "b";
+    string c = "a";
+    if (a < c) { print("lt\n"); }
+}

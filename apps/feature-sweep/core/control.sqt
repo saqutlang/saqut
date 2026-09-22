@@ -1,0 +1,54 @@
+enum K { A, B, C }
+int main() {
+    int s = 0; int i = 0;
+    while (i < 5) { s += i; i++; }
+    print("while sum="); print(s); print("\n");
+
+    int s2 = 0;
+    for (int j = 0; j < 5; j++) { s2 += j; }
+    print("for sum="); print(s2); print("\n");
+
+    int k = 0;
+    do { k++; } while (k < 3);
+    print("do-while k="); print(k); print("\n");
+
+    int brk = 0;
+    for (int m = 0; m < 10; m++) {
+        if (m == 3) { continue; }
+        if (m == 6) { break; }
+        brk += m;
+    }
+    print("break/continue brk="); print(brk); print("\n");
+
+    string sw = "";
+    int n = 2;
+    switch (n) {
+        case 1: sw = "bir"; break;
+        case 2: sw = "iki"; break;
+        default: sw = "baska"; break;
+    }
+    print("switch int="); print(sw); print("\n");
+
+    K e = K.B;
+    string es = "";
+    switch (e) {
+        case K.A: es = "A"; break;
+        case K.B: es = "B"; break;
+        default: es = "?"; break;
+    }
+    print("switch enum="); print(es); print("\n");
+
+    try {
+        throw "ozel";
+    } catch (Error err) {
+        print("throw/catch message="); print(err.message); print("\n");
+    }
+
+    try {
+        int[] a = [1];
+        print(a[5]);
+    } catch (Error err) {
+        print("catch OOB code="); print(err.code); print("\n");
+    }
+    return 0;
+}

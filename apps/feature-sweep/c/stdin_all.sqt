@@ -1,0 +1,8 @@
+// feature-sweep/c — stdin::readAll: tum girdi
+import {readAll} from stdin;
+
+void main() {
+    print("[");
+    print(readAll());
+    print("]\n");
+}

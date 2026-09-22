@@ -1,0 +1,18 @@
+int main() {
+    print("2+3*4="); print(2 + 3 * 4); print("\n");
+    print("10/3="); print(10 / 3); print(" 10%3="); print(10 % 3); print("\n");
+    print("-10/3="); print((0 - 10) / 3); print(" -10%3="); print((0 - 10) % 3); print("\n");
+    print("7&3="); print(7 & 3); print(" 7|8="); print(7 | 8); print(" 7^3="); print(7 ^ 3); print(" ~0="); print(~0); print("\n");
+    print("1<<4="); print(1 << 4); print(" 256>>2="); print(256 >> 2); print("\n");
+    int x = 5;
+    x += 3; print("x+=3 -> "); print(x); print("\n");
+    x -= 1; x *= 2; x /= 4; x %= 3;
+    print("sonra x="); print(x); print("\n");
+    print("1<2="); print(1 < 2); print(" 1==1="); print(1 == 1); print(" 1!=2="); print(1 != 2); print("\n");
+    print("true&&false="); print(true && false); print(" !true="); print(!true); print(" true||false="); print(true || false); print("\n");
+    print("1+2==3 -> "); print(1 + 2 == 3); print("\n");
+    print("float 1.0/3.0="); print(1.0 / 3.0); print("\n");
+    double dd = 2.0; print("double 2.0*3.0="); print(dd * 3.0); print("\n");
+    decimal dm = 1.25; print("decimal 1.25+0.50="); print(dm + 0.50); print("\n");
+    return 0;
+}

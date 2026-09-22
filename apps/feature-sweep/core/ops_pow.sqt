@@ -1,0 +1,6 @@
+int main() {
+    print("2**10="); print(2 ** 10); print("\n");
+    print("2**3**2="); print(2 ** 3 ** 2); print("\n");
+    print("2.0**0.5="); print(2.0 ** 0.5); print("\n");
+    return 0;
+}

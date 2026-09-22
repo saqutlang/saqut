@@ -1,0 +1,148 @@
+================================================================================
+SaQut 0.9.9 — FFI gerçek-uygulama testi — HAM KANIT
+Repo kökü: /home/saqut/Masaüstü/saqutcompiler
+Binary   : ./build/saqut  (ELF 64-bit LSB executable, x86-64, statically linked)
+Koşum    : SADECE VM  ->  "$SAQUT" run <dosya>   (--jit KULLANILMADI)
+Yöntem   : Ortak checkout peer yazımlarıyla kilitli olduğu için koşumlar izole
+           git worktree'lerde yapıldı (iki bağımsız worker, aynı sonuçlar).
+Dosyalar : apps/feature-sweep/a/probe.sqt (derlenebilir ana probe)
+================================================================================
+
+--------------------------------------------------------------------------------
+0) BINARY DOĞRULAMA
+--------------------------------------------------------------------------------
+$ ls -la /home/saqut/Masaüstü/saqutcompiler/build/saqut
+-rwxr-xr-x 1 saqut saqut 6139240 Eyl 22 18:40 /home/saqut/Masaüstü/saqutcompiler/build/saqut
+
+$ file /home/saqut/Masaüstü/saqutcompiler/build/saqut
+ELF 64-bit LSB executable, x86-64, version 1 (GNU/Linux), statically linked,
+BuildID[sha1]=04c9017b6cc6cf7cedccac25b74efa0fcad5d16f, for GNU/Linux 4.4.0, not stripped
+
+--------------------------------------------------------------------------------
+1) ÖNEMLİ DİL BULGULARI (probe.sqt ilk hali)
+--------------------------------------------------------------------------------
+A) Modül-seviyesi ifadelere izin YOK. print(...) vb. doğrudan dosya kökünde
+   derlenmez; her şey `int main() { ... }` içinde olmalı:
+   $ "$SAQUT" run apps/feature-sweep/a/probe.sqt   (ilk hali)
+   RC=65
+   stderr (82 satır, hepsi aynı desen; ilk/son):
+     .../probe.sqt:8:1: error [E013]: statements are not allowed at module scope
+     .../probe.sqt:105:1: error [E013]: statements are not allowed at module scope
+     — 82 error(s), 0 warning(s)
+   => ÇÖZÜM: probe.sqt `int main()` ile sarmalandı (bu dosyadaki sürüm).
+
+B) `.length` bir ALAN değil, METHOD:
+   bytes.length  -> error [E001]: 'length' is a method, not a field — it must be called
+                   hint: write <expression>.length()
+   bytes.length() -> OK
+
+C) print() SATIR SONU EKLEMEZ. Tüm çıktı tek satır/tek akıştır (aşağıda 714 bayt, 0 \n).
+
+D) try/catch catch söz dizimi METHOD değil ALAN erişimi ister:
+   catch (Error e) { e.code; e.message; }   -> OK
+   catch (Error e) { e.code(); }            -> error [E905]: ... beklenmedik
+
+--------------------------------------------------------------------------------
+2) ANA PROBE — derlenebilir sürüm (int main + bytes.length())
+--------------------------------------------------------------------------------
+$ "$SAQUT" run apps/feature-sweep/a/probe.sqt > po.txt 2> pe.txt; echo "RC=$?"
+RC=0
+--STDOUT-- (714 bayt, TEK satır, 0 yeni satır; son bayt 0x30)
+== core ==version()0.9.9== math ==abs(-5)5absf(-2.5)2.5min(3,7)3max(3,7)7minf(1.5,2.5)1.5maxf(1.5,2.5)2.5sqrt(9.0)3.0sqrt(-1.0)-nan.0pow(2.0,10.0)1024.0floor(2.7)2.0ceil(2.1)3.0round(2.5)3.0round(-2.5)-3.0PI()3.141592654E()2.718281828abs(-2147483648)-2147483648== path ==join([/tmp,a,b.txt])/tmp/a/b.txtjoin([a,b])a/bnormalize(/tmp/./a/../b)/tmp/bnormalize(/tmp/a/)/tmp/a/dirname(/a/b/c.txt)/a/bdirname(c.txt).basename(/a/b/c.txt)c.txtextension(/a/b/c.txt).txtextension(/a/b/noext)isAbsolute(/x)1isAbsolute(x)0isAbsolute(C:/x)0separator()/== utf8 ==encode length bytes22decode roundtrip eqroundtrip OK== os ==osName()linuxosArch()x86_64osHostname()ManjaroMonsterAbraosUser()saqutosCpuCount()8== terminal ==isTTY()0
+--STDERR-- (boş)
+--SAYIM-- 714 bayt; wc -l = 0
+
+NOT: "extension(/a/b/noext)" etiketinin ardından HİÇBİR değer görünmüyor; boş string
+     döndüğü için ardından "isAbsolute(/x)1" gelir. Yani extension -> "" (boş).
+
+--------------------------------------------------------------------------------
+3) ÇAĞRI BAŞINA GÖZLENEN DEĞER (ana probe)
+--------------------------------------------------------------------------------
+IMPORT                       ÇAĞRI                          GÖZLENEN
+core    version()                                          0.9.9
+math    abs(-5)                                             5
+math    absf(-2.5)                                          2.5
+math    min(3,7)                                            3
+math    max(3,7)                                            7
+math    minf(1.5,2.5)                                       1.5
+math    maxf(1.5,2.5)                                       2.5
+math    sqrt(9.0)                                           3.0
+math    sqrt(-1.0)                                          -nan.0
+math    pow(2.0,10.0)                                       1024.0
+math    floor(2.7)                                          2.0
+math    ceil(2.1)                                           3.0
+math    round(2.5)                                          3.0
+math    round(-2.5)                                         -3.0
+math    PI()                                                3.141592654
+math    E()                                                 2.718281828
+math    abs(-2147483648)                                    -2147483648
+path    join(["/tmp","a","b.txt"])                          /tmp/a/b.txt
+path    join(["a","b"])                                     a/b
+path    normalize("/tmp/./a/../b")                          /tmp/b
+path    normalize("/tmp/a/")                                /tmp/a/
+path    dirname("/a/b/c.txt")                               /a/b
+path    dirname("c.txt")                                    .
+path    basename("/a/b/c.txt")                              c.txt
+path    extension("/a/b/c.txt")                             .txt
+path    extension("/a/b/noext")                             (boş string)
+path    isAbsolute("/x")                                    1
+path    isAbsolute("x")                                     0
+path    isAbsolute("C:/x")                                  0
+path    separator()                                         /
+utf8    encode("çğıöşü 日本語").length()                     22
+utf8    decode(bytes) == "çğıöşü 日本語"                     roundtrip OK
+os      osName()                                            linux
+os      osArch()                                            x86_64
+os      osHostname()                                        ManjaroMonsterAbra
+os      osUser() (else/null olmayan dal)                    saqut
+os      osCpuCount()                                        8
+terminal isTTY() (boru/pipeline)                            0
+
+--------------------------------------------------------------------------------
+4) terminal.isTTY() — boru vs pty
+--------------------------------------------------------------------------------
+Boru (pipeline):
+$ "$SAQUT" run apps/feature-sweep/a/tty.sqt > t1o.txt 2> t1e.txt < /dev/null; echo "RC=$?"
+RC=0
+--STDOUT-- 0
+--STDERR-- (boş)
+
+pty (script):
+$ script -qec "'$SAQUT' run tty.sqt" /dev/null > t3o.txt 2> t3e.txt; echo "RC=$?"
+RC=0
+--HEX-- 00000000: 31   ("1")
+--STDERR-- (boş)
+
+--------------------------------------------------------------------------------
+5) MATH UÇ DEĞERLER (try/catch ile ayrı küçük dosya)
+--------------------------------------------------------------------------------
+$ "$SAQUT" run apps/feature-sweep/a/edge.sqt > e2o.txt 2> e2e.txt; echo "RC=$?"
+RC=0
+--STDOUT--
+sqrt(-1.0)=-nan.0
+abs(-2147483648)=-2147483648
+round(2.5)=3.0
+round(-2.5)=-3.0
+
+--STDERR-- (boş)
+--BAYT-- 79
+=> Hiçbir çağrı istisna (exception) fırlatmadı.
+
+--------------------------------------------------------------------------------
+6) MODÜL BAŞINA AYRI DOSYALAR (hepsi int main ile) — HEPSİ RC=0, stderr boş
+--------------------------------------------------------------------------------
+core.sqt      RC=0  version()0.9.9
+math.sqt      RC=0  abs(-5)5 absf(-2.5)2.5 min(3,7)3 max(3,7)7 minf(1.5,2.5)1.5 ... (tam liste yukarıda)
+path.sqt      RC=0  join/normalize/dirname/basename/extension/isAbsolute/separator — tam liste yukarıda
+utf8.sqt      RC=0  encode length 22; roundtrip OK
+os.sqt        RC=0  linux / x86_64 / ManjaroMonsterAbra / saqut / 8
+terminal.sqt  RC=0  isTTY 0 (boru)
+Derleme hatası veren tek durum: giriş noktasız (main'siz) ana dosya (madde 1A) ve
+bytes.length (madde 1B).
+
+================================================================================
+ORTAM NOTU: Koşumlar, ortak checkout peer'lar tarafından yazıldığı için izole
+worktree'lerde çalıştırıldı. İki bağımsız worker özdeş sonuç verdi. Ana checkout
+içindeki ./build/saqut doğrudan (shell ile) çalıştırılamadı; kanıt worktree'den
+mutlak binary yolu üzerinden alındı.
+================================================================================

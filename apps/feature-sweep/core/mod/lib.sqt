@@ -1,0 +1,6 @@
+export struct Nokta { int x; int y; }
+export enum Birim { M, CM }
+export int kare(int n) { return n * n; }
+export string etiket(string s) { return "[" + s + "]"; }
+int gizli(int n) { return n + 1; }
+export int disari(int n) { return gizli(n); }

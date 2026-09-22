@@ -1,0 +1,40 @@
+void dump(string label, int[] a) {
+    print(label); print(" = [");
+    int i = 0;
+    while (i < a.length()) { print(a[i]); if (i + 1 < a.length()) { print(","); } i = i + 1; }
+    print("] len="); print(a.length()); print("\n");
+}
+int main() {
+    int[] a = [];
+    print("empty length = "); print(a.length()); print("\n");
+    a.push(3); a.push(1); a.push(2);
+    dump("push x3", a);
+    int p = a.pop();
+    print("pop = "); print(p); print("\n");
+    a.insert(0, 9);
+    dump("insert(0,9)", a);
+    int r = a.remove(1);
+    print("remove(1) = "); print(r); print("\n");
+    dump("after remove", a);
+    dump("slice(0,1)", a.slice(0, 1));
+    int[] b = [7, 8];
+    dump("concat", a.concat(b));
+    print("contains(8) = "); print(a.concat(b).contains(8)); print("\n");
+    int? idx = a.concat(b).indexOf(1);
+    if (idx == null) { print("indexOf(1) = null\n"); } else { print("indexOf(1) = "); print(idx); print("\n"); }
+    int? idx2 = a.indexOf(999);
+    if (idx2 == null) { print("indexOf(999) = null\n"); } else { print("indexOf(999) = "); print(idx2); print("\n"); }
+    int[] c = [1,2,3]; c.reverse(); dump("reverse", c);
+    print("int toString denemesi atlandi (E003)\n");
+    c.clear(); dump("clear", c);
+
+    // string[] ve struct[]
+    string[] s = ["b","a"];
+    print("string[] len="); print(s.length()); print(" contains a="); print(s.contains("a")); print("\n");
+    print("string[] toString denemesi atlandi (E003)\n");
+
+    // sınırlar
+    try { int x = a[99]; print(x); } catch (Error e) { print("OOB: "); print(e.code); print("\n"); }
+    try { int y = a[0 - 1]; print(y); } catch (Error e) { print("neg index: "); print(e.code); print("\n"); }
+    return 0;
+}

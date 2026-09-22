@@ -1,0 +1,3 @@
+import { fromB } from "cyc_b.sqt";
+export int fromA() { return 1; }
+int main() { print(fromB()); return 0; }

@@ -1,0 +1,2 @@
+import { kare as sq } from "lib.sqt";
+int main() { print(sq(6)); print("\n"); return 0; }

@@ -1,0 +1,19 @@
+int main() {
+    int big = 2147483647;
+    print("INT_MAX+1="); print((big + 1) as string); print("\n");
+    print("1<<31="); print((1 << 31) as string); print("\n");
+    print("1<<32="); print((1 << 32) as string); print("\n");
+    print("1<<33="); print((1 << 33) as string); print("\n");
+    print("256>>8="); print((256 >> 8) as string); print("\n");
+    print("256>>9="); print((256 >> 9) as string); print("\n");
+
+    int sw = 0;
+    switch (1) {
+        case 1: sw += 1;
+        case 2: sw += 2; break;
+    }
+    print("switch no-break sw="); print(sw); print("\n");
+
+    try { throw 42; } catch (Error e) { print("throw int message=<"); print(e.message); print("> code=<"); print(e.code); print(">\n"); }
+    return 0;
+}

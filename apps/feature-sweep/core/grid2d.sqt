@@ -1,0 +1,10 @@
+int main() {
+    int[][] g = [[1,2],[3,4]];
+    print("g len="); print(g.length()); print(" g[1][0]="); print(g[1][0]); print("\n");
+    g[0][1] = 9;
+    print("g[0][1]="); print(g[0][1]); print("\n");
+    int[] row = [5,6,7];
+    g.push(row);
+    print("after push len="); print(g.length()); print("\n");
+    return 0;
+}

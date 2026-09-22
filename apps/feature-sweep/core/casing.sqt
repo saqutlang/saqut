@@ -1,0 +1,12 @@
+int main() {
+    print("\"i\".upper = <"); print("i".upper()); print(">\n");
+    print("\"ı\".upper = <"); print("ı".upper()); print(">\n");
+    print("\"I\".lower = <"); print("I".lower()); print(">\n");
+    print("\"İ\".lower = <"); print("İ".lower()); print(">\n");
+    print("split(\"\") = ");
+    string[] cs = "abç".split("");
+    int i = 0;
+    while (i < cs.length()) { print("<"); print(cs[i]); print(">"); i = i + 1; }
+    print("\n");
+    return 0;
+}

@@ -1,0 +1,11 @@
+// feature-sweep/c — readLine sonrasi readBytes kalan baytlari okur
+import {readLine, readBytes} from stdin;
+
+void main() {
+    string? l1 = readLine();
+    if (l1 == null) { print("L1=null\n"); } else { print("L1="); print(l1); print("\n"); }
+    string? l2 = readLine();
+    if (l2 == null) { print("L2=null\n"); } else { print("L2="); print(l2); print("\n"); }
+    byte[] rest = readBytes();
+    print("REST_BYTES="); print(rest.length()); print("\n");
+}

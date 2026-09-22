@@ -1,0 +1,5 @@
+int main() {
+    string?[] names = ["a", null];
+    print("len="); print(names.length()); print("\n");
+    return 0;
+}

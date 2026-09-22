@@ -1,0 +1,3 @@
+import { kare, etiket } from "lib.sqt";
+export int kareArtiBir(int n) { return kare(n) + 1; }
+export string etiketli(string s) { return etiket(s); }

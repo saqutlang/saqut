@@ -1,0 +1,27 @@
+struct Adres { string sehir; string ilce; }
+struct Kisi { string ad; int yas; Adres adres; string[] etiketler; }
+int main() {
+    Kisi k;
+    k.ad = "Ayşe";
+    k.yas = 30;
+    k.adres.sehir = "İstanbul";
+    k.adres.ilce = "Kadıköy";
+    k.etiketler = ["a", "b"];
+    print("kisi: "); print(k.ad); print(" / "); print(k.yas as string); print(" / ");
+    print(k.adres.sehir); print(" / "); print(k.adres.ilce); print("\n");
+    print("etiket len="); print(k.etiketler.length()); print("\n");
+    print("toJson="); print(k.toJson()); print("\n");
+    print("dump="); print(k.dump()); print("\n");
+
+    Kisi[] liste = [];
+    liste.push(k);
+    Kisi k2;
+    k2.ad = "Mehmet";
+    k2.yas = 25;
+    k2.adres.sehir = "Ankara";
+    k2.adres.ilce = "Çankaya";
+    k2.etiketler = [];
+    liste.push(k2);
+    print("liste len="); print(liste.length()); print(" ilk="); print(liste[0].ad); print("\n");
+    return 0;
+}

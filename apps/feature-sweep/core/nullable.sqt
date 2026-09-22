@@ -1,0 +1,22 @@
+int? maybeInt(bool give) {
+    if (give) { return 7; }
+    return null;
+}
+int main() {
+    int? a = maybeInt(true);
+    int? b = maybeInt(false);
+    if (a == null) { print("a null\n"); } else { print("a="); print(a); print("\n"); }
+    if (b == null) { print("b null\n"); } else { print("b="); print(b); print("\n"); }
+
+    string? s = null;
+    print("s null? "); print(s == null); print("\n");
+
+    // null birleştirme/ternary yok; daraltma
+    int[]? arr = null;
+    if (arr == null) { print("arr null ok\n"); }
+
+    // nullable dizi
+    int?[] xs = [1, null, 3];
+    print("nullable dizi len="); print(xs.length()); print("\n");
+    return 0;
+}

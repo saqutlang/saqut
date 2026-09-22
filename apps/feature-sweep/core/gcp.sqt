@@ -1,0 +1,11 @@
+int main() {
+    int total = 0;
+    for (int i = 0; i < 2000; i++) {
+        int[] a = [];
+        for (int j = 0; j < 20; j++) { a.push(j); }
+        string s = "abc".repeat(5);
+        total += a.length() + s.length();
+    }
+    print("total="); print(total); print("\n");
+    return 0;
+}

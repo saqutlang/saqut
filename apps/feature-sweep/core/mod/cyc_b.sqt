@@ -1,0 +1,2 @@
+import { fromA } from "cyc_a.sqt";
+export int fromB() { return fromA() + 1; }

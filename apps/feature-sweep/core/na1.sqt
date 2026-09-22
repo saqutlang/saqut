@@ -1,0 +1,5 @@
+int main() {
+    int[]? xs = [1, 2, 3];
+    if (xs == null) { print("null\n"); } else { print("nullable-array len="); print(xs.length()); print("\n"); }
+    return 0;
+}

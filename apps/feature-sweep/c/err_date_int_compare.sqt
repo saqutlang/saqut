@@ -1,0 +1,7 @@
+// feature-sweep/c — derlenmeyen cagri: date ile int karsilastirma
+import {fromEpochMillis} from date;
+
+void main() {
+    date d = fromEpochMillis(0);
+    if (d == 0) { print("eq\n"); }
+}

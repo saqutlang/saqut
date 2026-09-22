@@ -1,0 +1,2 @@
+int? sum3(int?[] xs) { return 0; }
+int main() { print("ok\n"); return 0; }

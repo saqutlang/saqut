@@ -1,0 +1,8 @@
+// ce_bad_arity.sqt — fs::existsFile'a fazla argüman DERLENİYOR MU?
+import { existsFile } from fs;
+
+int main() {
+    bool b = existsFile("/tmp", "/etc");
+    if (b) { return 0; }
+    return 1;
+}

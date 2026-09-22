@@ -1,0 +1,16 @@
+struct S { int n; double d; }
+int main() {
+    double dd = 1.5;
+    dd++;
+    print("double++ = "); print(dd); print("\n");
+    float ff = 1.5;
+    ff++;
+    print("float++ = "); print(ff); print("\n");
+    int[] arr = [10, 20];
+    arr[0]++;
+    print("arr[0]++ = "); print(arr[0]); print("\n");
+    S s; s.n = 5; s.d = 2.5;
+    s.n++;
+    print("struct field++ = "); print(s.n); print("\n");
+    return 0;
+}

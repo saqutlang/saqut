@@ -1,0 +1,4 @@
+int main() {
+    try { print("try\n"); } catch (Error e) { print("catch\n"); } finally { print("finally\n"); }
+    return 0;
+}

@@ -1,0 +1,22 @@
+struct P { int x; }
+P make(int v) { P p; p.x = v; return p; }
+int main() {
+    // while(true)+break
+    int i = 0;
+    while (true) { if (i >= 3) { break; } i++; }
+    print("while-true i="); print(i); print("\n");
+    // struct dönüşü
+    P p = make(7);
+    print("make="); print(p.x); print("\n");
+    // hassasiyet
+    double d = 1.0 / 3.0;
+    print("double 1/3="); print(d); print("\n");
+    float f = 1.0 / 3.0;
+    print("float 1/3="); print(f); print("\n");
+    // yorumlar
+    // satır yorumu
+    /* blok
+       yorumu */
+    print("yorumlar ok\n");
+    return 0;
+}

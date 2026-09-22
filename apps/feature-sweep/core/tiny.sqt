@@ -1,0 +1,7 @@
+int fib(int n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }
+int main() {
+    int s = 0;
+    for (int i = 0; i < 200; i++) { string x = "abc".repeat(i % 3 + 1); s += x.length(); }
+    print("fib="); print(fib(10)); print(" s="); print(s); print("\n");
+    return 0;
+}

@@ -1,0 +1,6 @@
+// feature-sweep/c — longint literal aritmetik ifade icinde
+void main() {
+    longint a = 100;
+    longint b = 4294967296;
+    print(a + b);
+}
