@@ -69,3 +69,7 @@ systemcalls/*
 systemcalls/**
 # geçici çalışma alanı (GC turu) — izlenmez
 temp/
+
+# apps/ ölçek test verisi (üretilir: apps/xml-tool/testdata/gen.py)
+apps/xml-tool/testdata/derin.xml
+apps/xml-tool/testdata/genis.xml

@@ -1,0 +1,82 @@
+// ============================================================================
+// xml-tool — terminal arayüzü (main.sqt)
+// ============================================================================
+//
+// Kullanım:
+//   saqut run apps/xml-tool/main.sqt -- check  <dosya>
+//   saqut run apps/xml-tool/main.sqt -- pretty <dosya>
+//   saqut run apps/xml-tool/main.sqt -- query  <dosya> <yol>
+//   saqut run apps/xml-tool/main.sqt -- stats  <dosya>
+//
+// Çıkış kodları:
+//   0  başarılı
+//   64 kullanım hatası
+//   65 iyi-biçimlilik (parse) hatası — konumlar stderr yerine stdout'a yazılır
+//   66 girdi dosyası okunamadı
+// ============================================================================
+
+import { args } from sys;
+import { readFile, existsFile } from fs;
+import { decode } from utf8;
+import { Parser, newParser, parseDocument } from "xml_parser.sqt";
+import { XmlNode, XmlError } from "xml_types.sqt";
+import { prettyPrint, queryPath, printStats, printErrors } from "xml_ops.sqt";
+
+int usage() {
+    print("kullanim: xml-tool <komut> <dosya> [yol]\n");
+    print("\n");
+    print("komutlar:\n");
+    print("  check  <dosya>         iyi-biçimlilik denetimi\n");
+    print("  pretty <dosya>         girintili XML çıktısı\n");
+    print("  query  <dosya> <yol>   yol sorgusu (a/b, a/*/c, a/b/@attr)\n");
+    print("  stats  <dosya>         düğüm istatistikleri\n");
+    return 64;
+}
+
+int main() {
+    string[] argv = args();
+    if (argv.length() < 2) { return usage(); }
+
+    string cmd = argv[0];
+    string path = argv[1];
+
+    if (cmd != "check" && cmd != "pretty" && cmd != "query" && cmd != "stats") {
+        print("bilinmeyen komut: " + cmd + "\n");
+        return usage();
+    }
+    if (cmd == "query" && argv.length() < 3) {
+        print("query için yol gerekli\n");
+        return usage();
+    }
+    if (!existsFile(path)) {
+        print("hata: dosya bulunamadi: " + path + "\n");
+        return 66;
+    }
+
+    byte[] raw = readFile(path);
+    string src = decode(raw);
+    Parser p = newParser(src);
+    XmlNode doc = parseDocument(p);
+
+    XmlError[] errs = p.errors;
+    if (errs.length() > 0) {
+        printErrors(errs);
+        return 65;
+    }
+
+    if (cmd == "check") {
+        print(path + ": iyi bicimli (well-formed)\n");
+        return 0;
+    }
+    if (cmd == "pretty") {
+        prettyPrint(doc);
+        return 0;
+    }
+    if (cmd == "query") {
+        queryPath(doc, argv[2]);
+        return 0;
+    }
+    // stats
+    printStats(doc);
+    return 0;
+}

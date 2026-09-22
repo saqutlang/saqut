@@ -1,0 +1,582 @@
+// ============================================================================
+// xml-tool — XML 1.0 alt kümesi ayrıştırıcı (xml_parser.sqt)
+// ============================================================================
+//
+// Elle yazılmış, kod-noktası indeksli, özyinelemeli iniş ayrıştırıcı.
+// Kapsam (bilinçli sınırlar):
+//   - öğeler, öznitelikler, metin, yorum, CDATA, işleme talimatı, DOCTYPE atlama
+//   - varlık çözümü: &amp; &lt; &gt; &quot; &apos; &#NNN; &#xHH;
+//   - iyi-biçimlilik denetimleri: kök tekilliği, etiket eşleşmesi, tırnak
+//     kapanışı, '--' yasağı (yorum), '<' yasağı (metin/öznitelik)
+//   - DTD iç modeli, ad-alanı çözümü, şema doğrulaması YOKTUR (kapsam dışı)
+//
+// Durum yönetimi: Parser struct'ı referans semantiğiyle taşınır; `pos`,
+// `line`, `col` alanları yardımcı fonksiyonlarda güncellenir ve çağırana
+// görünür (struct değerleri VM'de referanstır).
+// ============================================================================
+
+import { NodeKind, XmlAttr, XmlNode, XmlError, newNode } from "xml_types.sqt";
+import { decode } from utf8;
+
+export struct Parser {
+    string src;
+    int pos;
+    int line;
+    int col;
+    XmlError[] errors;
+}
+
+export Parser newParser(string src) {
+    Parser p;
+    p.src = src;
+    p.pos = 0;
+    p.line = 1;
+    p.col = 1;
+    p.errors = [];
+    return p;
+}
+
+// ── karakter sınıfları ───────────────────────────────────────────────────────
+// NOT: string karşılaştırmasında sıralama (<, >) dil tarafından reddediliyor;
+// bu yüzden karakter sınıfları `contains` ile kurulur.
+
+bool isDigit(string c) {
+    if (c.length() != 1) { return false; }
+    return "0123456789".contains(c);
+}
+
+bool isAlpha(string c) {
+    if (c.length() != 1) { return false; }
+    return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".contains(c);
+}
+
+bool isNameStart(string c) {
+    if (c.length() != 1) { return false; }
+    return isAlpha(c) || c == "_" || c == ":";
+}
+
+bool isNameChar(string c) {
+    if (c.length() != 1) { return false; }
+    return isNameStart(c) || isDigit(c) || c == "-" || c == ".";
+}
+
+bool isWs(string c) {
+    return c == " " || c == "\t" || c == "\n" || c == "\r";
+}
+
+// ── imleç ilkelleri ──────────────────────────────────────────────────────────
+
+bool pEnd(Parser p) {
+    return p.pos >= p.src.length();
+}
+
+string pPeek(Parser p) {
+    if (pEnd(p)) { return ""; }
+    return p.src.charAt(p.pos);
+}
+
+string pPeekAt(Parser p, int off) {
+    int i = p.pos + off;
+    if (i < 0 || i >= p.src.length()) { return ""; }
+    return p.src.charAt(i);
+}
+
+void pAdvance(Parser p) {
+    if (pEnd(p)) { return; }
+    string c = p.src.charAt(p.pos);
+    p.pos = p.pos + 1;
+    if (c == "\n") {
+        p.line = p.line + 1;
+        p.col = 1;
+    } else {
+        p.col = p.col + 1;
+    }
+}
+
+void skipWs(Parser p) {
+    while (!pEnd(p) && isWs(pPeek(p))) {
+        pAdvance(p);
+    }
+}
+
+// ── hata toplama ─────────────────────────────────────────────────────────────
+
+void failAt(Parser p, string code, string message, int line, int col) {
+    XmlError e;
+    e.code = code;
+    e.message = message;
+    e.line = line;
+    e.col = col;
+    XmlError[] errs = p.errors;
+    errs.push(e);
+    p.errors = errs;
+}
+
+// Hata birikmişse ayrıştırmayı kes: ilk hatadan sonrası kaskad üretir.
+bool hasErrors(Parser p) {
+    XmlError[] errs = p.errors;
+    return errs.length() > 0;
+}
+
+void fail(Parser p, string code, string message) {
+    failAt(p, code, message, p.line, p.col);
+}
+
+// ── isim okuma ───────────────────────────────────────────────────────────────
+
+string pReadName(Parser p) {
+    string out = "";
+    if (!isNameStart(pPeek(p))) { return out; }
+    while (!pEnd(p)) {
+        string c = pPeek(p);
+        if (!isNameChar(c)) { break; }
+        out = out + c;
+        pAdvance(p);
+    }
+    return out;
+}
+
+// ── varlık çözümü ────────────────────────────────────────────────────────────
+
+int hexVal(string c) {
+    if (c == "0") { return 0; }
+    if (c == "1") { return 1; }
+    if (c == "2") { return 2; }
+    if (c == "3") { return 3; }
+    if (c == "4") { return 4; }
+    if (c == "5") { return 5; }
+    if (c == "6") { return 6; }
+    if (c == "7") { return 7; }
+    if (c == "8") { return 8; }
+    if (c == "9") { return 9; }
+    if (c == "a" || c == "A") { return 10; }
+    if (c == "b" || c == "B") { return 11; }
+    if (c == "c" || c == "C") { return 12; }
+    if (c == "d" || c == "D") { return 13; }
+    if (c == "e" || c == "E") { return 14; }
+    if (c == "f" || c == "F") { return 15; }
+    return -1;
+}
+
+// UTF-8 kod noktası -> string. RFC 3629 kodlama kuralları elle uygulanır;
+// byte[] + utf8::decode üzerinden gidilir (char literal yolu yok).
+string cpToString(int cp) {
+    if (cp < 0 || cp > 1114111) { return ""; }
+    byte[] out = [];
+    if (cp < 128) {
+        out.push(cp as byte);
+    } else if (cp < 2048) {
+        out.push((192 + cp / 64) as byte);
+        out.push((128 + cp % 64) as byte);
+    } else if (cp < 65536) {
+        out.push((224 + cp / 4096) as byte);
+        out.push((128 + (cp / 64) % 64) as byte);
+        out.push((128 + cp % 64) as byte);
+    } else {
+        out.push((240 + cp / 262144) as byte);
+        out.push((128 + (cp / 4096) % 64) as byte);
+        out.push((128 + (cp / 64) % 64) as byte);
+        out.push((128 + cp % 64) as byte);
+    }
+    return decode(out);
+}
+
+// "&#NNN;" / "&#xHH;" gövdesini (baştaki '#' hariç) kod noktasına çevirir.
+int parseCharRef(Parser p, string body, int line, int col) {
+    if (body.length() == 0) {
+        failAt(p, "E_XML_CHARREF", "boş karakter referansı (&#;)", line, col);
+        return -1;
+    }
+    bool hex = false;
+    string digits = body;
+    if (body.startsWith("x") || body.startsWith("X")) {
+        hex = true;
+        digits = body.substring(1, body.length() - 1);
+    }
+    if (digits.length() == 0) {
+        failAt(p, "E_XML_CHARREF", "karakter referansında rakam yok", line, col);
+        return -1;
+    }
+    int value = 0;
+    int i = 0;
+    while (i < digits.length()) {
+        string c = digits.charAt(i);
+        int d = hexVal(c);
+        if (!hex && !isDigit(c)) { d = -1; }
+        if (d < 0) {
+            string base = "10";
+            if (hex) { base = "16"; }
+            failAt(p, "E_XML_CHARREF",
+                   "geçersiz karakter referansı hanesi: '" + c + "' (taban " + base + ")",
+                   line, col);
+            return -1;
+        }
+        int base = 10;
+        if (hex) { base = 16; }
+        value = value * base + d;
+        if (value > 1114111) {
+            failAt(p, "E_XML_CHARREF", "karakter referansı aralık dışı (> U+10FFFF)", line, col);
+            return -1;
+        }
+        i = i + 1;
+    }
+    return value;
+}
+
+string entityValue(Parser p, string name, int line, int col) {
+    if (name == "amp")  { return "&"; }
+    if (name == "lt")   { return "<"; }
+    if (name == "gt")   { return ">"; }
+    if (name == "quot") { return "\""; }
+    if (name == "apos") { return "'"; }
+    if (name.startsWith("#")) {
+        string body = name.substring(1, name.length() - 1);
+        int cp = parseCharRef(p, body, line, col);
+        if (cp < 0) { return ""; }
+        return cpToString(cp);
+    }
+    failAt(p, "E_XML_ENTITY", "tanınmayan varlık: &" + name + ";", line, col);
+    return "";
+}
+
+// Ham metindeki varlık referanslarını çözer; çözülemeyeni hata olarak toplar
+// ve olduğu gibi bırakır (çıktı kaybı olmasın).
+string decodeEntities(Parser p, string raw, int bline, int bcol) {
+    string out = "";
+    int i = 0;
+    while (i < raw.length()) {
+        string c = raw.charAt(i);
+        if (c != "&") {
+            out = out + c;
+            i = i + 1;
+            continue;
+        }
+        int j = i + 1;
+        bool found = false;
+        while (j < raw.length()) {
+            if (raw.charAt(j) == ";") { found = true; break; }
+            if (j - i > 32) { break; }
+            j = j + 1;
+        }
+        if (!found) {
+            failAt(p, "E_XML_ENTITY", "'&' ile başlayan varlık ';' ile bitmiyor", bline, bcol);
+            out = out + c;
+            i = i + 1;
+            continue;
+        }
+        string name = raw.substring(i + 1, j - i - 1);
+        string rep = entityValue(p, name, bline, bcol);
+        out = out + rep;
+        i = j + 1;
+    }
+    return out;
+}
+
+// ── yapılar ──────────────────────────────────────────────────────────────────
+
+XmlNode parseElement(Parser p) {
+    XmlNode node = newNode(NodeKind.Element, p.line, p.col);
+    pAdvance(p); // '<'
+    node.name = pReadName(p);
+    if (node.name == "") {
+        fail(p, "E_XML_TAG", "'<' sonrası öğe adı bekleniyordu");
+    }
+
+    // Öznitelikler
+    while (true) {
+        skipWs(p);
+        string c = pPeek(p);
+        if (c == "") {
+            fail(p, "E_XML_EOF", "<" + node.name + "> içinde beklenmedik dosya sonu");
+            return node;
+        }
+        if (c == "/") {
+            pAdvance(p);
+            if (pPeek(p) == ">") {
+                pAdvance(p);
+                return node; // <a/> — boş öğe
+            }
+            fail(p, "E_XML_TAG", "'/' sonrası '>' bekleniyordu");
+            return node;
+        }
+        if (c == ">") {
+            pAdvance(p);
+            break;
+        }
+        // öznitelik
+        int aline = p.line;
+        int acol = p.col;
+        XmlAttr a;
+        a.name = pReadName(p);
+        a.value = "";
+        if (a.name == "") {
+            fail(p, "E_XML_ATTR", "öznitelik adı bekleniyordu (bulunan: '" + c + "')");
+            return node;
+        }
+        skipWs(p);
+        if (pPeek(p) != "=") {
+            fail(p, "E_XML_ATTR", "öznitelik '" + a.name + "' için '=' bekleniyordu");
+            return node;
+        }
+        pAdvance(p);
+        skipWs(p);
+        string q = pPeek(p);
+        if (q != "\"" && q != "'") {
+            fail(p, "E_XML_ATTR", "öznitelik '" + a.name + "' değeri tırnak içinde olmalı");
+            return node;
+        }
+        pAdvance(p);
+        string val = "";
+        while (!pEnd(p) && pPeek(p) != q) {
+            string ch = pPeek(p);
+            if (ch == "<") {
+                fail(p, "E_XML_ATTR", "öznitelik değerinde '<' olamaz (kaçış gerekli)");
+                break;
+            }
+            val = val + ch;
+            pAdvance(p);
+        }
+        if (pEnd(p)) {
+            failAt(p, "E_XML_ATTR", "öznitelik '" + a.name + "' tırnağı kapanmadı", aline, acol);
+            return node;
+        }
+        pAdvance(p); // kapanış tırnağı
+        a.value = decodeEntities(p, val, aline, acol);
+        node.attrs.push(a);
+    }
+
+    // İçerik
+    while (!pEnd(p)) {
+        if (hasErrors(p)) { return node; }
+        string c = pPeek(p);
+        if (c == "<") {
+            string c2 = pPeekAt(p, 1);
+            if (c2 == "/") {
+                pAdvance(p);
+                pAdvance(p);
+                int eline = p.line;
+                int ecol = p.col;
+                string endName = pReadName(p);
+                skipWs(p);
+                if (pPeek(p) != ">") {
+                    failAt(p, "E_XML_TAG", "</" + node.name + "> kapanışında '>' bekleniyordu", eline, ecol);
+                    return node;
+                }
+                pAdvance(p);
+                if (endName != node.name) {
+                    failAt(p, "E_XML_TAG",
+                           "kapanış etiketi uyuşmuyor: </" + endName + ">, açılış <" + node.name + ">",
+                           eline, ecol);
+                }
+                return node;
+            }
+            if (c2 == "!") {
+                string c3 = pPeekAt(p, 2);
+                if (c3 == "-") {
+                    node.children.push(parseComment(p));
+                    continue;
+                }
+                if (c3 == "[") {
+                    node.children.push(parseCdata(p));
+                    continue;
+                }
+                fail(p, "E_XML_MARKUP", "öğe içinde desteklenmeyen '<!' yapısı");
+                return node;
+            }
+            if (c2 == "?") {
+                node.children.push(parsePi(p));
+                continue;
+            }
+            node.children.push(parseElement(p));
+            continue;
+        }
+        // metin
+        int tline = p.line;
+        int tcol = p.col;
+        string raw = "";
+        while (!pEnd(p) && pPeek(p) != "<") {
+            raw = raw + pPeek(p);
+            pAdvance(p);
+        }
+        string decoded = decodeEntities(p, raw, tline, tcol);
+        if (decoded.length() > 0) {
+            XmlNode t = newNode(NodeKind.Text, tline, tcol);
+            t.text = decoded;
+            node.children.push(t);
+        }
+    }
+    fail(p, "E_XML_UNCLOSED", "<" + node.name + "> hiç kapanmadı");
+    return node;
+}
+
+XmlNode parseComment(Parser p) {
+    XmlNode node = newNode(NodeKind.Comment, p.line, p.col);
+    pAdvance(p); // <
+    pAdvance(p); // !
+    pAdvance(p); // -
+    pAdvance(p); // -
+    string body = "";
+    while (!pEnd(p)) {
+        if (pPeek(p) == "-" && pPeekAt(p, 1) == "-") {
+            if (pPeekAt(p, 2) == ">") {
+                pAdvance(p);
+                pAdvance(p);
+                pAdvance(p);
+                node.text = body;
+                return node;
+            }
+            fail(p, "E_XML_COMMENT", "yorum içinde '--' bulunamaz");
+            node.text = body;
+            return node;
+        }
+        body = body + pPeek(p);
+        pAdvance(p);
+    }
+    fail(p, "E_XML_COMMENT", "yorum kapanmadı ('-->' bekleniyordu)");
+    node.text = body;
+    return node;
+}
+
+XmlNode parseCdata(Parser p) {
+    XmlNode node = newNode(NodeKind.Cdata, p.line, p.col);
+    // "<![CDATA[" — 9 karakter
+    int i = 0;
+    while (i < 9 && !pEnd(p)) {
+        pAdvance(p);
+        i = i + 1;
+    }
+    string body = "";
+    while (!pEnd(p)) {
+        if (pPeek(p) == "]" && pPeekAt(p, 1) == "]" && pPeekAt(p, 2) == ">") {
+            pAdvance(p);
+            pAdvance(p);
+            pAdvance(p);
+            node.text = body;
+            return node;
+        }
+        body = body + pPeek(p);
+        pAdvance(p);
+    }
+    fail(p, "E_XML_CDATA", "CDATA bölümü kapanmadı (']]>' bekleniyordu)");
+    node.text = body;
+    return node;
+}
+
+XmlNode parsePi(Parser p) {
+    XmlNode node = newNode(NodeKind.Pi, p.line, p.col);
+    pAdvance(p); // <
+    pAdvance(p); // ?
+    node.name = pReadName(p);
+    string body = "";
+    while (!pEnd(p)) {
+        if (pPeek(p) == "?" && pPeekAt(p, 1) == ">") {
+            pAdvance(p);
+            pAdvance(p);
+            node.text = body;
+            return node;
+        }
+        body = body + pPeek(p);
+        pAdvance(p);
+    }
+    fail(p, "E_XML_PI", "işleme talimatı kapanmadı ('?>' bekleniyordu)");
+    node.text = body;
+    return node;
+}
+
+// DOCTYPE: iç model ([...]) hesaba katılarak '>' karakterine kadar atlanır.
+void skipDoctype(Parser p) {
+    int depth = 0;
+    while (!pEnd(p)) {
+        string c = pPeek(p);
+        if (c == "[") { depth = depth + 1; }
+        if (c == "]") { depth = depth - 1; }
+        if (c == ">" && depth <= 0) {
+            pAdvance(p);
+            return;
+        }
+        pAdvance(p);
+    }
+    fail(p, "E_XML_DOCTYPE", "DOCTYPE bildirimi kapanmadı");
+}
+
+// ── belge ────────────────────────────────────────────────────────────────────
+
+export XmlNode parseDocument(Parser p) {
+    XmlNode doc = newNode(NodeKind.Document, 1, 1);
+    XmlNode root = newNode(NodeKind.Element, 1, 1);
+    bool haveRoot = false;
+    bool xmlDeclSeen = false;
+    bool contentSeen = false;
+
+    while (!pEnd(p)) {
+        if (hasErrors(p)) { return doc; }
+        if (isWs(pPeek(p))) {
+            pAdvance(p);
+            continue;
+        }
+        string c = pPeek(p);
+        if (c != "<") {
+            fail(p, "E_XML_MISC", "kök öğe dışında metin olamaz");
+            pAdvance(p);
+            continue;
+        }
+        string c2 = pPeekAt(p, 1);
+        if (c2 == "?") {
+            XmlNode pi = parsePi(p);
+            if (pi.name == "xml") {
+                if (xmlDeclSeen || haveRoot || contentSeen) {
+                    fail(p, "E_XML_DECL", "XML bildirimi yalnız belgenin başında olabilir");
+                }
+                xmlDeclSeen = true;
+            }
+            doc.children.push(pi);
+            contentSeen = true;
+            continue;
+        }
+        if (c2 == "!") {
+            string c3 = pPeekAt(p, 2);
+            if (c3 == "-") {
+                doc.children.push(parseComment(p));
+                contentSeen = true;
+                continue;
+            }
+            if (c3 == "D") {
+                if (haveRoot) {
+                    fail(p, "E_XML_DOCTYPE", "DOCTYPE kök öğeden sonra gelemez");
+                }
+                skipDoctype(p);
+                contentSeen = true;
+                continue;
+            }
+            fail(p, "E_XML_MARKUP", "belge düzeyinde desteklenmeyen '<!' yapısı");
+            return doc;
+        }
+        // öğe
+        if (haveRoot) {
+            fail(p, "E_XML_ROOT", "belgede ikinci bir kök öğe var: <" + pPeekAt(p, 1) + "...>");
+            XmlNode extra = parseElement(p);
+            doc.children.push(extra);
+            continue;
+        }
+        root = parseElement(p);
+        haveRoot = true;
+        doc.children.push(root);
+    }
+
+    if (!haveRoot) {
+        failAt(p, "E_XML_ROOT", "belgede kök öğe yok", 1, 1);
+    }
+    return doc;
+}
+
+// Belgenin ilk Element çocuğu (kök öğe). Yoksa name == "" olan boş düğüm
+// döner; çağıran `p.errors` üzerinden hata durumunu bilir.
+export XmlNode documentRoot(XmlNode doc) {
+    int i = 0;
+    while (i < doc.children.length()) {
+        XmlNode c = doc.children[i];
+        if (c.kind == NodeKind.Element) { return c; }
+        i = i + 1;
+    }
+    return newNode(NodeKind.Element, 0, 0);
+}

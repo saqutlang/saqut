@@ -1,0 +1,280 @@
+// ============================================================================
+// xml-tool — sorgu, biçimlendirme ve istatistik (xml_ops.sqt)
+// ============================================================================
+//
+// Ağaç üzerinde yapılan okuma işlemleri. Hepsi saf hesaptır: girdi ağacı
+// değiştirilmez, çıktı yalnız stdout'a yazılır (print).
+//
+// Pretty-print sözleşmesi:
+//   - 2 boşluk girinti, her öğe kendi satırında
+//   - yalnız-boşluk metin düğümleri atılır (biçim normalizasyonu)
+//   - metin/öznitelikler XML kaçışlarıyla geri yazılır (& < > ")
+// ============================================================================
+
+import { NodeKind, XmlAttr, XmlNode, XmlError } from "xml_types.sqt";
+import { documentRoot } from "xml_parser.sqt";
+
+// ── kaçışlar ─────────────────────────────────────────────────────────────────
+
+export string escapeText(string s) {
+    string out = s.replace("&", "&amp;");
+    out = out.replace("<", "&lt;");
+    out = out.replace(">", "&gt;");
+    return out;
+}
+
+export string escapeAttr(string s) {
+    string out = s.replace("&", "&amp;");
+    out = out.replace("<", "&lt;");
+    out = out.replace("\"", "&quot;");
+    return out;
+}
+
+// ── hata yazdırma ────────────────────────────────────────────────────────────
+
+export void printErrors(XmlError[] errs) {
+    int i = 0;
+    while (i < errs.length()) {
+        XmlError e = errs[i];
+        print("error [" + e.code + "] " + (e.line as string) + ":" + (e.col as string) +
+              ": " + e.message + "\n");
+        i = i + 1;
+    }
+    print((errs.length() as string) + " hata\n");
+}
+
+// ── pretty-print ─────────────────────────────────────────────────────────────
+
+void printNode(XmlNode n, int level) {
+    string pad = "  ".repeat(level);
+
+    if (n.kind == NodeKind.Document) {
+        int i = 0;
+        while (i < n.children.length()) {
+            printNode(n.children[i], level);
+            i = i + 1;
+        }
+        return;
+    }
+
+    if (n.kind == NodeKind.Element) {
+        string head = pad + "<" + n.name;
+        int i = 0;
+        while (i < n.attrs.length()) {
+            XmlAttr a = n.attrs[i];
+            head = head + " " + a.name + "=\"" + escapeAttr(a.value) + "\"";
+            i = i + 1;
+        }
+        if (n.children.length() == 0) {
+            print(head + "/>\n");
+            return;
+        }
+        // tek metin çocuğu varsa satır içi yaz
+        if (n.children.length() == 1) {
+            XmlNode only = n.children[0];
+            if (only.kind == NodeKind.Text || only.kind == NodeKind.Cdata) {
+                if (only.text.trim().length() > 0) {
+                    print(head + ">" + escapeText(only.text) + "</" + n.name + ">\n");
+                    return;
+                }
+            }
+        }
+        print(head + ">\n");
+        i = 0;
+        while (i < n.children.length()) {
+            printNode(n.children[i], level + 1);
+            i = i + 1;
+        }
+        print(pad + "</" + n.name + ">\n");
+        return;
+    }
+
+    if (n.kind == NodeKind.Text) {
+        string t = n.text.trim();
+        if (t.length() > 0) {
+            print(pad + escapeText(t) + "\n");
+        }
+        return;
+    }
+
+    if (n.kind == NodeKind.Comment) {
+        print(pad + "<!--" + n.text + "-->\n");
+        return;
+    }
+
+    if (n.kind == NodeKind.Cdata) {
+        print(pad + "<![CDATA[" + n.text + "]]>\n");
+        return;
+    }
+
+    if (n.kind == NodeKind.Pi) {
+        print(pad + "<?" + n.name + n.text + "?>\n");
+        return;
+    }
+}
+
+export void prettyPrint(XmlNode doc) {
+    printNode(doc, 0);
+}
+
+// ── metin içeriği ────────────────────────────────────────────────────────────
+
+export string textContent(XmlNode n) {
+    if (n.kind == NodeKind.Text || n.kind == NodeKind.Cdata) {
+        return n.text;
+    }
+    string out = "";
+    int i = 0;
+    while (i < n.children.length()) {
+        out = out + textContent(n.children[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// ── yol sorgusu ──────────────────────────────────────────────────────────────
+
+string? attrValue(XmlNode n, string name) {
+    int i = 0;
+    while (i < n.attrs.length()) {
+        XmlAttr a = n.attrs[i];
+        if (a.name == name) { return a.value; }
+        i = i + 1;
+    }
+    return null;
+}
+
+// Yol sözdizimi:  a/b/c        → eşleşen öğelerin metin içeriği
+//                 a/*/c        → '*' herhangi bir öğe adıyla eşleşir
+//                 a/b/@id      → eşleşen öğelerin 'id' özniteliği
+//                 a/b/#text    → eşleşen öğelerin metin içeriği (varsayılanla aynı)
+export void queryPath(XmlNode doc, string path) {
+    string[] segs = path.split("/");
+    string[] cleaned = [];
+    int i = 0;
+    while (i < segs.length()) {
+        if (segs[i].length() > 0) { cleaned.push(segs[i]); }
+        i = i + 1;
+    }
+
+    bool attrSel = false;
+    bool textSel = false;
+    int upto = cleaned.length();
+    string last = "";
+    if (cleaned.length() > 0) {
+        last = cleaned[cleaned.length() - 1];
+        if (last.startsWith("@")) { attrSel = true; }
+        if (last == "#text") { textSel = true; }
+        if (attrSel || textSel) { upto = cleaned.length() - 1; }
+    }
+
+    // Belge düğümünden başla; her segment o düğümün Element çocuklarından
+    // eşleşenleri seçer. Böylece 'a/b' yolunda 'a' kök öğeyi bulur.
+    XmlNode[] current = [];
+    current.push(doc);
+
+    int s = 0;
+    while (s < upto) {
+        string seg = cleaned[s];
+        XmlNode[] next = [];
+        int k = 0;
+        while (k < current.length()) {
+            XmlNode node = current[k];
+            int j = 0;
+            while (j < node.children.length()) {
+                XmlNode ch = node.children[j];
+                if (ch.kind == NodeKind.Element) {
+                    if (seg == "*" || ch.name == seg) { next.push(ch); }
+                }
+                j = j + 1;
+            }
+            k = k + 1;
+        }
+        current = next;
+        s = s + 1;
+    }
+
+    int m = 0;
+    while (m < current.length()) {
+        XmlNode node = current[m];
+        if (attrSel) {
+            string an = last.substring(1, last.length() - 1);
+            string? v = attrValue(node, an);
+            if (v == null) {
+                print("(yok)\n");
+            } else {
+                print(v + "\n");
+            }
+        } else {
+            print(textContent(node).trim() + "\n");
+        }
+        m = m + 1;
+    }
+    if (current.length() == 0) {
+        print("(eşleşme yok)\n");
+    }
+}
+
+// ── istatistik ───────────────────────────────────────────────────────────────
+
+export struct XmlStats {
+    int elements;
+    int attrs;
+    int texts;
+    int comments;
+    int cdatas;
+    int pis;
+    int maxDepth;
+    int textChars;
+    string[] tagNames;
+}
+
+void collect(XmlNode n, XmlStats st, int depth) {
+    if (n.kind == NodeKind.Element) {
+        st.elements = st.elements + 1;
+        if (depth > st.maxDepth) { st.maxDepth = depth; }
+        string[] names = st.tagNames;
+        if (!names.contains(n.name)) {
+            names.push(n.name);
+            st.tagNames = names;
+        }
+    }
+    if (n.kind == NodeKind.Text) {
+        st.texts = st.texts + 1;
+        st.textChars = st.textChars + n.text.length();
+    }
+    if (n.kind == NodeKind.Comment) { st.comments = st.comments + 1; }
+    if (n.kind == NodeKind.Cdata) { st.cdatas = st.cdatas + 1; }
+    if (n.kind == NodeKind.Pi) { st.pis = st.pis + 1; }
+    st.attrs = st.attrs + n.attrs.length();
+
+    int i = 0;
+    while (i < n.children.length()) {
+        collect(n.children[i], st, depth + 1);
+        i = i + 1;
+    }
+}
+
+export void printStats(XmlNode doc) {
+    XmlStats st;
+    st.elements = 0;
+    st.attrs = 0;
+    st.texts = 0;
+    st.comments = 0;
+    st.cdatas = 0;
+    st.pis = 0;
+    st.maxDepth = 0;
+    st.textChars = 0;
+    st.tagNames = [];
+
+    collect(doc, st, 0);
+
+    print("element   : " + (st.elements as string) + "\n");
+    print("attr      : " + (st.attrs as string) + "\n");
+    print("text node : " + (st.texts as string) + " (" + (st.textChars as string) + " karakter)\n");
+    print("comment   : " + (st.comments as string) + "\n");
+    print("cdata     : " + (st.cdatas as string) + "\n");
+    print("pi        : " + (st.pis as string) + "\n");
+    print("max derinlik: " + (st.maxDepth as string) + "\n");
+    print("farklı etiket: " + (st.tagNames.length() as string) + "\n");
+}

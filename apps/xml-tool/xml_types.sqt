@@ -1,0 +1,66 @@
+// ============================================================================
+// xml-tool — veri modeli (xml_types.sqt)
+// ============================================================================
+//
+// XML belgesini düğüm ağacı olarak taşıyan tipler. Her düğüm türünü
+// (element, metin, yorum, CDATA, işleme talimatı) ve kaynak satır/sütununu
+// taşır; ayrıştırma hataları konumla raporlanabilsin diye.
+//
+// Sözleşme:
+//   - Bir XmlNode'un `children` alanı belge sırasını korur (deterministik
+//     çıktı bu sıraya bağlıdır).
+//   - `text` yalnız Text/Cdata/Comment/Pi düğümlerinde doludur; Element
+//     düğümünde metin çocukları ayrı Text düğümleridir.
+// ============================================================================
+
+export enum NodeKind { Document, Element, Text, Comment, Cdata, Pi }
+
+export struct XmlAttr {
+    string name;
+    string value;
+}
+
+export struct XmlNode {
+    NodeKind kind;
+    string name;
+    string text;
+    XmlAttr[] attrs;
+    XmlNode[] children;
+    int line;
+    int col;
+}
+
+export struct XmlError {
+    string code;
+    string message;
+    int line;
+    int col;
+}
+
+// NodeKind -> okunabilir ad. `enum as string` yasak olduğu için switch ile
+// eşleme yapılır (dil kuralı: enum yalnız kendi tipinde karşılaştırılır).
+export string kindName(NodeKind k) {
+    switch (k) {
+        case NodeKind.Document: return "document";
+        case NodeKind.Element:  return "element";
+        case NodeKind.Text:     return "text";
+        case NodeKind.Comment:  return "comment";
+        case NodeKind.Cdata:    return "cdata";
+        case NodeKind.Pi:       return "pi";
+    }
+    return "?";
+}
+
+// Yeni bir düğümü güvenli varsayılanlarla başlatır: diziler boş, konum
+// çağıranın vereceği değerlerle doldurulmalı.
+export XmlNode newNode(NodeKind kind, int line, int col) {
+    XmlNode n;
+    n.kind = kind;
+    n.name = "";
+    n.text = "";
+    n.attrs = [];
+    n.children = [];
+    n.line = line;
+    n.col = col;
+    return n;
+}

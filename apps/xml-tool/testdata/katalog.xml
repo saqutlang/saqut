@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ornek katalog: iyi bicimli belge -->
+<!DOCTYPE katalog>
+<katalog surum="1.0" dil="tr">
+  <kitap id="k1">
+    <ad>Sefiller &amp; Ötekiler</ad>
+    <yazar>Victor Hugo</yazar>
+    <yil>1862</yil>
+    <ozet><![CDATA[<b>tarihi</b> roman & dönem anlatısı]]></ozet>
+  </kitap>
+  <kitap id="k2">
+    <ad>Kürk Mantolu Madonna</ad>
+    <yazar>Sabahattin &#214;mer</yazar>
+    <yil>1943</yil>
+  </kitap>
+  <etiketler>
+    <etiket>klasik</etiket>
+    <etiket>roman</etiket>
+    <etiket>&#x59;eni</etiket>
+  </etiketler>
+</katalog>
