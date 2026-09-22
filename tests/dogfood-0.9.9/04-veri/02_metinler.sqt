@@ -1,0 +1,32 @@
+// Adım 4b: string metodları ve UTF-8.
+int main() {
+    string s = "Merhaba Dunya";
+    print(s.length()); print(" ");         // 13
+    print(s.upper()); print(" ");
+    print(s.lower()); print("\n");
+
+    print(s.substring(0, 7)); print("|");  // Merhaba
+    print(s.indexOf("Dunya")); print("|"); // 8
+    print(s.contains("haba")); print("|"); // 1
+    print(s.replace("Dunya", "saQut")); print("\n");
+
+    string bosluklu = "   kenar   ";
+    print("["); print(bosluklu.trim()); print("]"); print("\n");
+
+    string[] parcalar = "a,b,c".split(",");
+    print(parcalar.length()); print(" ");  // 3
+    print(parcalar[1]); print("\n");       // b
+
+    print("ab".repeat(3)); print(" ");     // ababab
+    print(s.charAt(0)); print("\n");       // M
+
+    // birleştirme
+    string t = "sayi: " + (42 as string);
+    print(t); print("\n");
+
+    // UTF-8: Türkçe karakterler
+    string tr = "çğıöşü";
+    print(tr.length()); print(" ");        // 6 code point
+    print(tr.upper()); print("\n");
+    return 0;
+}
