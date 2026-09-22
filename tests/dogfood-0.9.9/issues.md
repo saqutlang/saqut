@@ -147,3 +147,50 @@ Doğrulanmayan: `throw` ile kullanıcı tarafından fırlatılan mesajlar (onlar
 kullanıcının yazdığı metin, konvansiyon dışı) sayılmadı.
 
 ---
+## I-03 — Derin rekürsiyonda JIT segfault, VM sınırsız (VM ≢ JIT)
+
+**Durum:** karar bekliyor
+**Bulgu dosyası:** `03-akis/BULGU-03-rekursiyon-derinligi.md`
+**Ölçüm:** `0.9.9`, commit `031cc2a`, Release, `ulimit -s` = 8192
+
+### Sorun
+
+```c
+int derin(int n) { if (n <= 0) { return 0; } return 1 + derin(n - 1); }
+print(derin(1000000));
+```
+
+```
+VM  → 1000000          (5M'de bile çalışıyor)
+JIT → Segmentation fault (core dumped), rc=139
+```
+
+Eşik ~250k–270k. `ulimit -s 16384` ile eşik kalkıyor → **JIT native C
+yığınını kullanıyor**, VM kendi heap'teki `callStack_`'ini.
+
+### İki ayrı sorun
+
+1. **JIT sessizce ölüyor.** SIGSEGV yakalanamaz, tanı üretmez, `try/catch`
+   ile tutulamaz. Kullanıcı yalnız "Segmentation fault" görür.
+2. **VM'in hiç sınırı yok.** `interpreter.cpp`'de derinlik kontrolü yok;
+   sonsuz rekürsiyon OOM'a kadar gider.
+
+Üçüncüsü: bu ikisi birlikte **VM ≡ JIT sözleşmesini bozuyor** — aynı program
+bir backend'de çalışıp diğerinde çöküyor.
+
+### Sorular
+
+1. Tanımlı bir derinlik sınırı olacak mı? Kaç, ve aşılınca yakalanabilir
+   hata mı yoksa ölümcül mü?
+2. VM ve JIT aynı sınırı mı paylaşacak? (Determinizm sözleşmesi bunu
+   gerektiriyor gibi.)
+3. JIT'in native yığın kullanımı tasarım gereği mi, yoksa kendi yığınına mı
+   taşınacak? Sınırın nereye konabileceğini bu belirliyor.
+
+### İlgili
+
+#213 ("rekürsif fonksiyonlar stack/return/GC ve determinism sınırlarını
+ölçsün") tam olarak bunu istiyor, hâlâ açık. Bu bulgu o issue'nun somut
+kanıtı olabilir.
+
+---

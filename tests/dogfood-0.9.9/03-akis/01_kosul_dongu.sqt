@@ -1,0 +1,52 @@
+// Adım 3: if/else, while, for, do-while, switch, break/continue.
+int main() {
+    // if / else if / else
+    int n = 7;
+    if (n < 5)       { print("kucuk"); }
+    else if (n < 10) { print("orta");  }
+    else             { print("buyuk"); }
+    print("\n");
+
+    // while + toplam
+    int i = 1; int toplam = 0;
+    while (i <= 10) { toplam = toplam + i; i++; }
+    print(toplam); print("\n");          // 55
+
+    // for
+    int carpim = 1;
+    for (int j = 1; j <= 5; j++) { carpim = carpim * j; }
+    print(carpim); print("\n");          // 120
+
+    // do-while: koşul false olsa bile bir kez çalışmalı
+    int k = 100;
+    do { print("birkez "); k++; } while (k < 0);
+    print(k); print("\n");               // 101
+
+    // break / continue
+    string cift = "";
+    for (int m = 1; m <= 10; m++) {
+        if (m % 2 == 1) { continue; }
+        if (m > 8) { break; }
+        cift = cift + (m as string) + ",";
+    }
+    print(cift); print("\n");            // 2,4,6,8,
+
+    // switch
+    for (int s = 1; s <= 4; s++) {
+        switch (s) {
+            case 1: print("bir ");  break;
+            case 2: print("iki ");  break;
+            case 3: print("uc ");   break;
+            default: print("diger ");
+        }
+    }
+    print("\n");
+
+    // iç içe döngü
+    int sayac = 0;
+    for (int a = 0; a < 3; a++) {
+        for (int b = 0; b < 3; b++) { sayac++; }
+    }
+    print(sayac); print("\n");           // 9
+    return 0;
+}
