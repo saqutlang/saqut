@@ -28,6 +28,7 @@ scripts/bench/*.class
 # AI asistan önbellek ve çalışma dizinleri
 .deepseek/
 .zcode/
+.codewhale/
 
 # AI görev artifact'ları global/ignore edilen dosyalarda tutulmaz.
 # Yeni görevler tasks/<TASK-ID>/ altında görünür ve denetlenebilir olmalıdır.
