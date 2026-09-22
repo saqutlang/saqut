@@ -324,6 +324,163 @@ Aşağıdakiler bu oturumda koşulup **beklendiği gibi** çalıştı (ayrıntı
 
 ---
 
+## 9. İkinci tur — ek tuhaflıklar (sessiz yutma ve belge sapmaları)
+
+### P-31 — Derleyici, parse hatalarını SESSİZCE yutuyor (`check` ve `run`)
+
+**Belirti:** bazı sözdizimi hataları ne hata veriyor ne reddediliyor; program
+çalışıyor ve rc=0. `check` de `errors:0` diyor.
+
+```
+$ ./build/saqut run bad.sqt      # int main(){ int x = ; return 0; }
+$ echo $?                        # 0   <- hata yok
+$ ./build/saqut check bad.sqt
+{"record":"check.end","errors":0,"warnings":0}
+rc=0
+```
+
+Sessizce kabul edilenler (rc=0): `int x = ;`, `int x = 1 print(x);` (eksik
+`;`), `for (int i=0 i<3; i++)` (for başlığında eksik `;`), `return 0 }`.
+Doğru reddedilenler (rc=65): kapanmayan parantez/blok, geçersiz token `@`,
+tanımsız tip `Foo`. Yani bazı üretimler tanı üretiyor, bazıları hiç
+üretmiyor — **kayıp hata sınıfı**.
+
+**Kök neden (hipotez):** parser panic-mode toparlanmasında `ErrorNode`
+üretiyor ama bu üretimler için `DiagnosticEngine` beslenmiyor; hata kanalına
+hiç düşmüyor. AGENTS §8 ve #219 ("sessiz kaçış taraması") tam olarak bu sınıfı
+hedefliyor. **Tooling için ağır sonuç:** `check` temiz der, `LSP` tanı
+yayınlamaz, ama aynı kaynak sessizce yanlış çalışır.
+
+---
+
+### P-32 — Eksik operand sessizce YANLIŞ DEĞER üretiyor
+
+```
+print(5 +)      -> 10     # 5 + 5  (eksik sağ operand sol tarafı tekrarlıyor)
+print(5 * 2 +)  -> 20     # 10 + 10
+print(1 +)      -> 2
+```
+Hata yok, rc=0. **Kök neden (hipotez):** eksik ifade toparlanınca RHS, LHS'e
+yeniden bağlanıyor (sol taraf iki kez kullanılıyor). Sessiz yanlış sonuç — en
+tehlikeli sınıf (P-31'in değer üreten yüzü).
+
+---
+
+### P-33 — `>>>` operatörü yok; sessizce YANLIŞ sonuç veriyor
+
+```
+int a = 8;
+print(a >>> 1);   // 0     (beklenen: mantıksal kaydırma / ya da syntax hatası)
+print(a >> 1);    // 4     (doğru)
+print(8 >>> 2);   // 0
+print(16 >>> 2);  // 0
+```
+`saqut ast --json` gösteriyor ki `8 >>> 1`, `>>` ve `>` token'larına ayrılıp
+`BinaryExpression(">")` içinde `BinaryExpression(">>")` olarak ayrışıyor.
+Yani `>>>` diye bir operatör YOK; `>>` + `>` olarak sessizce yanlış ayrışıyor
+ve 0 üretiyor. Mantıksal sağ kaydırma operatörü dilde bulunmuyor (kullanıcı
+maskelemek zorunda; bkz. P-20, `>>` aritmetik).
+
+---
+
+### P-34 — CLI çıktı biçimi belge sapması (tokens/ast/symbols)
+
+`cli-reference.md` üçü için de "Print ... as JSON" diyor. Gerçek:
+
+```
+$ saqut tokens  f.sqt       -> "Tokenler (114 adet):" ...   (düz metin)
+$ saqut tokens --json f.sqt -> aynı düz metin (--json YOK SAYILIYOR, hata yok)
+$ saqut ast     f.sqt       -> "Program" ...                (düz metin)
+$ saqut ast --json f.sqt    -> { ... }                       (JSON)
+$ saqut symbols f.sqt       -> düz metin
+$ saqut symbols --json f.sqt-> error: --json is removed for symbols; use --jsonl
+$ saqut symbols --jsonl     -> {"record":"symbols.header",...}   (JSONL)
+```
+Yani `tokens` hiç JSON vermiyor (`--json` sessizce yutuluyor), `ast` yalnız
+`--json` ile JSON, `symbols` makine çıktısı için `--jsonl` istiyor. Belge üçü
+için de yanlış.
+
+---
+
+### P-35 — Çıkış kodu belge sapması ve gözlenen matris
+
+`cli-reference.md`: "Most usage, compilation, and runtime failures return 1."
+Gözlenen (sysexits tarzı):
+
+```
+kullanım hatası      -> 64
+derleme/parse hatası -> 65
+okunamayan modül     -> 65 (E_MODULE_NOT_FOUND)
+runtime hatası       -> 70 (division by zero, OOB, cast, double% ...)
+main dönüşü          -> programın döndürdüğü değer (return 3 -> rc=3)
+başarı                -> 0
+```
+Belge "1" diyor; gerçek matris yukarıdaki gibi. (Ayrıca `run -` stdin modu →
+rc=64 "no input file".)
+
+---
+
+### P-36 — Varsayılan parametre ve fonksiyon aşırı yüklemesi YOK
+
+```c
+int f(int a, int b = 2) { return a + b; }   // E905 + E901
+int f(int a) {...} int f(int a,int b) {...} // E002: 'f' already defined
+```
+FFI fonksiyonlarında isteğe bağlı argüman var (`readFile(path, seek?, size?)`)
+ama kullanıcı fonksiyonlarında yok. Dil kısıtı; belgeye göre teyit edilecek.
+
+---
+
+### P-37 — Yerleşik `Error.toJson()` alan adlarını kaybediyor
+
+```c
+catch (Error e) { print(e.toJson()); }
+// {"field0":3,"field1":20,"field2":"division by zero","field3":"...\n","field4":"E_DIVZERO"}
+```
+Kullanıcı struct'ları `toJson()`'da adları koruyor (`{"x":1,"y":2}`); yerleşik
+`Error` `field0..4` üretiyor. (B-06'nın problems.md'ye eksik kalan kısmı.)
+
+---
+
+### P-38 — `normalize` sondaki `/`'i koruyor
+
+```
+normalize("/tmp/a/") -> "/tmp/a/"
+```
+std::filesystem davranışıyla uyumlu olabilir; belirsiz, kayda değer.
+
+---
+
+### P-39 — Başlatılmamış değişkenler sessizce sıfır-benzeri
+
+```
+int x;      -> 0
+string s;   -> ""
+bool b;     -> 0
+P p; p.x;   -> 0
+try { throw 42; } catch (Error e) { e.code == "" }
+```
+Bu **doğru olabilir** (tasarım: güvenli varsayılanlar, #184 ile uyumlu);
+kayda değer çünkü dilde `uninitialized` uyarısı yok ve hata da yok.
+
+---
+
+### Eksik gördüğüm özellikler ("bu neden yok?" listesi)
+
+- **Mantıksal sağ kaydırma operatörü** (`>>>`) yok; `>>` aritmetik (P-33/P-20).
+- **Dizi yazdırma/serileştirme** yok: `print(a)`→`<ref>`, `a.toString()` E003 (P-4).
+- **Nullable elemanlı dizi** `T?[]` ifade edilemiyor (P-5).
+- **Import takma adı** `import { X as Y }` çalışmıyor (P-6).
+- **`finally`** uygulanmamış (P-7).
+- **`int↔bool` cast** yok (P-9); **`char` literali** yok (P-17); **`auto`** yok (P-18).
+- **String sıralaması** yok → sıralı konteynerler için elle karşılaştırma (P-16).
+- **Varsayılan parametre / aşırı yükleme** yok (P-36).
+- **Dizi/sözlük (map) / küme (set) / tuple / generic / closure** — dilde yok
+  (tasarım; ADR kapsamı dışı olduğu ayrıca belgeli).
+- **Formatter (`saqut fmt`) ve paket yöneticisi** yok (KB "planned" diyor).
+
+---
+
 ## 8. Doğrulanmayanlar / kapsam dışı
 
 - P-1, P-2 için VM `Value`/opcode kaynağı okunmadı; kök neden **hipotezdir**
