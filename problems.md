@@ -130,22 +130,40 @@ nullable-değerli harita gibi yaygın modeller yazılamıyor.
 
 ---
 
-### P-6 — `import { X as Y }` takma adı çalışmıyor
+### P-6 — `import { X as Y }` takma adı YALNIZ FFI modüllerinde çalışıyor; kaynak-dosya importunda bozuk
 
+**Düzeltme (kullanıcı geri bildirimi üzerine kaynak okundu):** takma ad
+özelliği vardır; ama iki import yolu farklı davranıyor.
+
+**Çalışan — FFI (gömülü) modül importu:**
+```c
+import { existsFile as ef, readFile as rf } from fs;
+import { sqrt as kok } from math;
+// ef("/etc")=1   kok(16)=4.0   (orijinal ad 'existsFile' doğru şekilde görünmez)
+```
+
+**Bozuk — kaynak-dosya importu:**
 ```c
 import { kare as sq } from "lib.sqt";
-print(kare(6));   // error [E_SYMBOL_NOT_IMPORTED]: 'kare' ...
-// 'sq' da tanımsız -> E001
+print(sq(6));    // error [E001]: 'sq' is not defined
+print(kare(6));  // error [E_SYMBOL_NOT_IMPORTED]
 ```
-**Kök neden:** parser import listesindeki `as` biçimini kabul ediyor ama
-bağlama yapmıyor; ne orijinal adı ne takma adı bağlanıyor. Ayrıca
-`src/internal/ffi.sqt` başlık yorumu bu biçimi **öneriyor** ("Çarpışma isteyen
-`import {readFile as fileRead} from fs` ile kendi takma adını verir") — yani
-yorumla gerçek çelişiyor.
+
+**Kök neden (kaynak okundu — hipotez değil):**
+- FFI yolu `SymbolCollector::resolveFfiImport` yerel adı
+  `table_.define(local, ...)` ile tanımlıyor → takma ad çalışır.
+- Kaynak-dosya yolu (`src/symbol/symbol_collector.cpp`, kaynak-modül import
+  döngüsü) yalnız `moduleImports_[moduleId].insert(localName)` yapıyor;
+  sembolü yerel adla **yeniden bağlamıyor**. Sembol orijinal adla kaldığı,
+  erişim listesi ise takma adı içerdiği için ne takma ad ne orijinal ad
+  kullanılabiliyor.
+
+**Kanıt:** `apps/feature-sweep/core/mod/ffi_alias.sqt` (çalışır),
+`alias4.sqt`/`alias5.sqt` (bozuk). Sınıf: FFI↔kaynak import yolu tutarsızlığı.
 
 ---
 
-### P-7 — `finally` ayrılmış ama uygulanmamış
+### P-7 — `finally` ayrılmış ama uygulanmamış (v3'te planlı)
 
 ```c
 try { ... } catch (Error e) { ... } finally { ... }
@@ -153,8 +171,9 @@ try { ... } catch (Error e) { ... } finally { ... }
 // + E013 cascade
 ```
 **Kök neden:** `finally` tokenizer'da anahtar kelime, parser/AST'de karşılığı
-yok (dogfood I-05 ile aynı). Kullanıcıya görünen sonuç: `finally` değişken adı
-olarak da kullanılamıyor ama iş de yapmıyor.
+yok. **Ürün bilgisi:** `finally` v3'te planlanıyor — yani eksik, hata değil;
+bugünkü durum belgeye "ayrılmış, henüz yok" diye yazılmalı ki kullanıcı
+denemesin.
 
 ---
 
@@ -168,7 +187,7 @@ C alışkanlığıyla yazan biri için sessiz tuzak.
 
 ## 2. Doküman-gerçek sapmaları (docs "böyle olur" diyor, olmuyor)
 
-### P-9 — `int ↔ bool` cast'i dokümanda var, derleyici reddediyor
+### P-9 — `int ↔ bool` cast'i dokümanda var, derleyici reddediyor (şu anda ekleniyor)
 
 `saqutwebside/src/content/docs/type-casting.md` tablosu: `int → bool` (0→false)
 ve `bool → int`
@@ -180,6 +199,8 @@ int  i = (true as int); // error [E003]: bool can only be cast to string
 ```
 **Kök neden:** type-casting dokümanı ile `TypeChecker` cast matrisi
 ayrışmış; checker `bool` hedefini ve `bool` kaynağını (string hariç) reddediyor.
+**Ürün bilgisi:** `int → bool` dönüşümü **şu anda ekleniyor** — yani bu madde
+geçiş dönemi sapmasıdır; ekleme landığında belgeyle uyumlu olacak.
 
 ### P-10 — "Any type can become `string`" yanlış
 
@@ -226,9 +247,10 @@ karmaşıklığa itiyor.
   (`err_string_order.sqt`). Sıralı yapı (B-tree/harita) için elle
   UTF-8 karşılaştırma yazmak gerekiyor; `apps/btree-kv` bunu her
   karşılaştırmada `utf8::encode` ile yapıyor (tahsisli, O(len)).
-- **P-17 — `char` pratikte yok.** `char c;` tip olarak var ama `'A'` literalı
-  parse edilmiyor; `c = 65` "cannot assign int to char" diyor. KB "partial"
-  diyor, gerçek: kullanılamaz.
+- **P-17 — `char` pratikte yok (tasarım: string).** `char c;` tip olarak var
+  ama `'A'` literalı parse edilmiyor. **Ürün bilgisi:** karakterler için
+  `string` düşünülmüş; `char` bu nedenle minimal/bilinçli. Belgeye "karakter =
+  1 uzunluklu string" diye yazılmalı ki `char` aranmasın.
 - **P-18 — `auto` yok.** `auto x = 5;` → `error [E901]: unexpected token
   'auto'`. KB "Partially Implemented" diyor; gerçekte parser reddediyor.
 - **P-19 — `date` ile `int` karşılaştırma tutarsız.** `d > 0` derleme hatası
@@ -242,8 +264,10 @@ karmaşıklığa itiyor.
   (float32); `double d = 1.0/3.0;` **W004 "float → double implicit widening"**
   uyarısı veriyor. Yani `1.0` double değil float.
 - **P-22 — `print` biçim tuhaflıkları.** `sqrt(-1.0)` → `-nan.0`; `PI()` →
-  `3.141592654` (10 basamak), `E()` → `2.718281828`. `print` bool'u `1/0`
-  basıyor (dogfood I-01; karar bekliyor).
+  `3.141592654` (10 basamak), `E()` → `2.718281828`. **Ürün bilgisi:** `print`
+  başlangıçta yalnız string gösteriyordu; int/longint/float gösterecek şekilde
+  **yeni genişletildi**. `print(bool)` → `1/0` (dogfood I-01; karar bekliyor).
+  Yani buradaki notlar gelişmekte olan bir yüzeyin gözlemidir.
 - **P-23 — `throw` ile fırlatılan `Error.code` boş.** `throw "ozel"` →
   `e.message="ozel"`, `e.code=""`. `throw 42` → message `"42"`.
 
@@ -467,17 +491,20 @@ kayda değer çünkü dilde `uninitialized` uyarısı yok ve hata da yok.
 
 ### Eksik gördüğüm özellikler ("bu neden yok?" listesi)
 
+**Kabul edilen kısıtlar (ürün kararı — hata değil):**
+- `map`/`set`/`tuple`/generic/closure → **v1'den sonra** planlı.
+- `finally` → **v3'te** planlı (P-7).
+- `char` → string tabanlı karakter modeli (P-17).
+- Dizi `toJson` yok, dizi `toString`/`print` çalışmıyor (P-4) — bilinen boşluk.
+
+**Gerçek boşluklar (kayda değer):**
 - **Mantıksal sağ kaydırma operatörü** (`>>>`) yok; `>>` aritmetik (P-33/P-20).
-- **Dizi yazdırma/serileştirme** yok: `print(a)`→`<ref>`, `a.toString()` E003 (P-4).
 - **Nullable elemanlı dizi** `T?[]` ifade edilemiyor (P-5).
-- **Import takma adı** `import { X as Y }` çalışmıyor (P-6).
-- **`finally`** uygulanmamış (P-7).
-- **`int↔bool` cast** yok (P-9); **`char` literali** yok (P-17); **`auto`** yok (P-18).
+- **`import { X as Y }` kaynak-dosya importunda bozuk** (FFI'de çalışıyor — P-6).
 - **String sıralaması** yok → sıralı konteynerler için elle karşılaştırma (P-16).
 - **Varsayılan parametre / aşırı yükleme** yok (P-36).
-- **Dizi/sözlük (map) / küme (set) / tuple / generic / closure** — dilde yok
-  (tasarım; ADR kapsamı dışı olduğu ayrıca belgeli).
-- **Formatter (`saqut fmt`) ve paket yöneticisi** yok (KB "planned" diyor).
+- **`auto`** yok (P-18).
+- **Formatter (`saqut fmt`) ve paket yöneticisi** yok (KB "planned").
 
 ---
 

@@ -1,0 +1,7 @@
+// FFI import takma adı ÇALIŞIR (P-6 kanıtı: FFI vs kaynak-dosya ayrımı).
+import { existsFile as ef } from fs;
+import { sqrt as kok } from math;
+int main() {
+    print("ef(/etc)="); print(ef("/etc")); print(" kok(16)="); print(kok(16.0)); print("\n");
+    return 0;
+}
