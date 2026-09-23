@@ -2,7 +2,7 @@
   "name": "saqut",
   "displayName": "saQut Language",
   "description": "saQut dil desteği: sözdizimi renklendirme, LSP ve DAP entegrasyonu",
-  "version": "0.9.4",
+  "version": "1.0.0",
   "publisher": "saqut",
   "engines": {
     "vscode": "^1.75.0"
@@ -73,8 +73,6 @@
         "languages": [
           "sqt"
         ],
-        "program": "./extension.js",
-        "runtime": "node",
         "configurationAttributes": {
           "launch": {
             "required": [
@@ -126,7 +124,20 @@
           ]
         }
       }
-    ]
+    ],
+    "snippets": [
+      {
+        "language": "sqt",
+        "path": "./snippets/sqt.json"
+      }
+    ],
+    "configurationDefaults": {
+      "[sqt]": {
+        "editor.suggest.snippetsPreventQuickSuggestions": false,
+        "editor.tabCompletion": "onlySnippets",
+        "editor.snippetSuggestions": "top"
+      }
+    }
   },
   "main": "./out/extension.js",
   "scripts": {

@@ -5,9 +5,8 @@
 {"body": {"reason": "entry", "threadId": 1}, "event": "stopped", "seq": 104, "type": "event"}
 {"body": null, "command": "next", "request_seq": 4, "seq": 105, "success": true, "type": "response"}
 {"body": {"reason": "step", "threadId": 1}, "event": "stopped", "seq": 106, "type": "event"}
-{"body": {"stackFrames": [{"column": 0, "id": 0, "line": 11, "name": "main", "source": {"path": "%FIXDIR%/fib.sqt"}}], "totalFrames": 1}, "command": "stackTrace", "request_seq": 5, "seq": 107, "success": true, "type": "response"}
+{"body": {"stackFrames": [{"column": 0, "id": 0, "line": 10, "name": "main", "source": {"path": "%FIXDIR%/fib.sqt"}}], "totalFrames": 1}, "command": "stackTrace", "request_seq": 5, "seq": 107, "success": true, "type": "response"}
 {"body": null, "command": "next", "request_seq": 6, "seq": 108, "success": true, "type": "response"}
-{"body": {"category": "stdout", "output": "55"}, "event": "output", "seq": 109, "type": "event"}
-{"body": {"reason": "step", "threadId": 1}, "event": "stopped", "seq": 110, "type": "event"}
-{"body": {"stackFrames": [{"column": 0, "id": 0, "line": 12, "name": "main", "source": {"path": "%FIXDIR%/fib.sqt"}}], "totalFrames": 1}, "command": "stackTrace", "request_seq": 7, "seq": 111, "success": true, "type": "response"}
-{"body": null, "command": "disconnect", "request_seq": 10, "seq": 112, "success": true, "type": "response"}
+{"body": {"reason": "step", "threadId": 1}, "event": "stopped", "seq": 109, "type": "event"}
+{"body": {"stackFrames": [{"column": 0, "id": 0, "line": 11, "name": "main", "source": {"path": "%FIXDIR%/fib.sqt"}}], "totalFrames": 1}, "command": "stackTrace", "request_seq": 7, "seq": 110, "success": true, "type": "response"}
+{"body": null, "command": "disconnect", "request_seq": 10, "seq": 111, "success": true, "type": "response"}

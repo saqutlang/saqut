@@ -50,6 +50,7 @@ private:
 
     // ── Deyim (statement) üretimi — talimat listesine yazar ──────────────
     void generateStatement(ASTNode* node);
+    void generateStatementImpl(ASTNode* node);
 
     // ── İfade (expression) üretimi — sonucun slotunu döndürür ────────────
     // Sonuç her zaman bir slotta bulunur. Identifier zaten bir slotta,

@@ -339,6 +339,11 @@ struct Instruction {
     int         sourceLine = 0;
     int         sourceCol  = 0;
     std::string sourceFile;
+    // Hata ayıklayıcı bu komutta durmaz ve adımlamada onu satır sınırı
+    // saymaz: `main`'in başına enjekte edilen global başlatıcılar. Satır
+    // bilgisi hata mesajları için korunur (D-1: eskiden stopOnEntry `main`
+    // yerine global başlatıcının satırında duruyordu).
+    bool        debugHidden = false;
 
     explicit Instruction(Opcode op) : opcode(op) {}
 };

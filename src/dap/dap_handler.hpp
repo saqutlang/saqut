@@ -14,6 +14,7 @@
 #include "vm/value.hpp"
 #include <deque>
 #include <ostream>
+#include <map>
 #include <memory>
 #include <unordered_map>
 
@@ -48,6 +49,13 @@ private:
     // Faz 7 (#105): launch argümanından; false = configurationDone sonrası
     // entry'de durmadan koşuya başla (DAP varsayılanı).
     bool  stopOnEntry_    = false;
+    // D-7: exited/terminated oturumda yalnız bir kez gönderilir.
+    bool  terminationSent_ = false;
+    // D-4: (dosya, satır) → breakpoint id; stopped olayında hitBreakpointIds.
+    std::map<std::pair<std::string, int>, int> bpIds_;
+    void sendTermination(bool withExit);
+    // Program bittiyse ya da durduysa uygun olayı gönderir (adım işleyicileri).
+    void reportStepResult();
 
     // ── Handler'lar ──────────────────────────────────────────────────────────
     nlohmann::json handleInitialize(const nlohmann::json& req);

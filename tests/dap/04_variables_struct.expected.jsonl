@@ -5,7 +5,7 @@
 {"body": null, "command": "configurationDone", "request_seq": 4, "seq": 104, "success": true, "type": "response"}
 {"body": {"reason": "entry", "threadId": 1}, "event": "stopped", "seq": 105, "type": "event"}
 {"body": {"allThreadsContinued": true}, "command": "continue", "request_seq": 5, "seq": 106, "success": true, "type": "response"}
-{"body": {"reason": "breakpoint", "threadId": 1}, "event": "stopped", "seq": 107, "type": "event"}
+{"body": {"hitBreakpointIds": [1], "reason": "breakpoint", "threadId": 1}, "event": "stopped", "seq": 107, "type": "event"}
 {"body": {"variables": [{"name": "vecs", "type": "", "value": "[{…}, {…}]", "variablesReference": 100000}, {"name": "a", "type": "", "value": "{x: 1, y: 2, z: 3}", "variablesReference": 100001}, {"name": "b", "type": "", "value": "{x: 4, y: 5, z: 6}", "variablesReference": 100002}, {"name": "i", "type": "", "value": "0", "variablesReference": 0}, {"name": "sum", "type": "", "value": "0", "variablesReference": 0}]}, "command": "variables", "request_seq": 6, "seq": 108, "success": true, "type": "response"}
 {"body": {"variables": [{"name": "x", "type": "", "value": "1", "variablesReference": 0}, {"name": "y", "type": "", "value": "2", "variablesReference": 0}, {"name": "z", "type": "", "value": "3", "variablesReference": 0}]}, "command": "variables", "request_seq": 7, "seq": 109, "success": true, "type": "response"}
 {"body": {"result": "1", "type": "", "variablesReference": 0}, "command": "evaluate", "request_seq": 8, "seq": 110, "success": true, "type": "response"}

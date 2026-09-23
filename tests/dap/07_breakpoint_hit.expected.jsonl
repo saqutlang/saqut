@@ -3,7 +3,7 @@
 {"body": null, "command": "launch", "request_seq": 2, "seq": 102, "success": true, "type": "response"}
 {"body": {"breakpoints": [{"id": 1, "line": 3, "source": {"path": "%FIXDIR%/simple.sqt"}, "verified": true}]}, "command": "setBreakpoints", "request_seq": 3, "seq": 103, "success": true, "type": "response"}
 {"body": null, "command": "configurationDone", "request_seq": 4, "seq": 104, "success": true, "type": "response"}
-{"body": {"reason": "breakpoint", "threadId": 1}, "event": "stopped", "seq": 105, "type": "event"}
+{"body": {"hitBreakpointIds": [1], "reason": "breakpoint", "threadId": 1}, "event": "stopped", "seq": 105, "type": "event"}
 {"body": {"allThreadsContinued": true}, "command": "continue", "request_seq": 5, "seq": 106, "success": true, "type": "response"}
 {"body": {"category": "stdout", "output": "3"}, "event": "output", "seq": 107, "type": "event"}
 {"body": {"exitCode": 0}, "event": "exited", "seq": 108, "type": "event"}

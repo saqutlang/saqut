@@ -215,6 +215,21 @@ nlohmann::json DapHandler::buildChildVariables(const Value& v) {
 // diğer istekler kuyruklanır ve koşu durunca işlenir. Böylece sonsuz döngülü
 // program DAP sunucusunu kilitlemez.
 
+void DapHandler::sendTermination(bool withExit) {
+    if (terminationSent_) return;
+    terminationSent_ = true;
+    if (withExit) sendEvent("exited", {{"exitCode", 0}});
+    sendEvent("terminated", {});
+}
+
+void DapHandler::reportStepResult() {
+    if (!vm_) return;
+    if (vm_->state() == Interpreter::RunState::Paused)
+        sendEvent("stopped", {{"reason","step"}, {"threadId",1}});
+    else if (vm_->state() == Interpreter::RunState::Finished)
+        sendTermination(true);
+}
+
 void DapHandler::runWithBudget() {
     if (!vm_) return;
     invalidateVarRefs(); // koşu devam ediyor → eski variablesReference'lar öldü
@@ -223,17 +238,20 @@ void DapHandler::runWithBudget() {
         Interpreter::RunReason reason = vm_->runUntilEvent(kRunBudgetChunk, -1);
 
         switch (reason) {
-            case Interpreter::RunReason::Breakpoint:
-                sendEvent("stopped", {{"reason","breakpoint"}, {"threadId",1}});
+            case Interpreter::RunReason::Breakpoint: {
+                nlohmann::json body = {{"reason","breakpoint"}, {"threadId",1}};
+                auto hit = bpIds_.find(vm_->currentLocation());
+                if (hit != bpIds_.end()) body["hitBreakpointIds"] = {hit->second};
+                sendEvent("stopped", body);
                 drainPendingRequests();
                 return;
+            }
             case Interpreter::RunReason::StepDone:
                 sendEvent("stopped", {{"reason","step"}, {"threadId",1}});
                 drainPendingRequests();
                 return;
             case Interpreter::RunReason::Finished:
-                sendEvent("exited", {{"exitCode", 0}});
-                sendEvent("terminated", {});
+                sendTermination(true);
                 drainPendingRequests();
                 return;
             case Interpreter::RunReason::Error:
@@ -261,7 +279,7 @@ void DapHandler::runWithBudget() {
                     }
                 } else if (reader_.eof()) {
                     // İstemci gitti (EOF) — sonsuz döngüde busy-hang kalma
-                    sendEvent("terminated", {});
+                    sendTermination(false);
                     return;
                 }
                 continue; // koşuya devam
@@ -357,7 +375,7 @@ nlohmann::json DapHandler::handleLaunch(const nlohmann::json& req) {
     if (program.empty()) {
         sendEvent("output", {{"category","stderr"},
                              {"output","No program specified\n"}});
-        sendEvent("terminated", {});
+        sendTermination(false);
         return makeResponse(seq, "launch", {}, false);
     }
 
@@ -377,7 +395,7 @@ nlohmann::json DapHandler::handleLaunch(const nlohmann::json& req) {
 
     if (diag.hasErrors()) {
         sendEvent("output", {{"category","stderr"}, {"output","Build failed\n"}});
-        sendEvent("terminated", {});
+        sendTermination(false);
         return makeResponse(seq, "launch", {});
     }
 
@@ -407,7 +425,6 @@ nlohmann::json DapHandler::handleSetBreakpoints(const nlohmann::json& req) {
     int seq = req.value("seq", 0);
     nlohmann::json args = req.value("arguments", nlohmann::json::object());
 
-    if (vm_) vm_->clearAllBreakpoints();
 
     std::string sourceFile;
     if (args.contains("source") && args["source"].contains("path"))
@@ -419,22 +436,33 @@ nlohmann::json DapHandler::handleSetBreakpoints(const nlohmann::json& req) {
     if (!sourceFile.empty())
         sourceFile = std::filesystem::weakly_canonical(sourceFile).string();
 
+    // D-8: setBreakpoints dosya başına gelir — yalnız bu dosyanınkiler silinir.
+    if (vm_) vm_->clearBreakpointsInFile(sourceFile);
+    for (auto it = bpIds_.begin(); it != bpIds_.end();)
+        it = (it->first.first == sourceFile) ? bpIds_.erase(it) : std::next(it);
+
     nlohmann::json bps = nlohmann::json::array();
     if (args.contains("breakpoints")) {
         for (const auto& bp : args["breakpoints"]) {
             int line = bp.value("line", 0);
             bool verified = false;
 
+            int id = nextBpId_++;
             if (vm_) {
-                // Faz 7 (#105): gerçek doğrulama — Faz 5'in lineToFirstIP
-                // indeksinde (dosya, satır) var mı? Yorum/boş satır →
-                // verified:false (VS Code içi boş daire gösterir).
-                verified = vm_->isExecutableLine(sourceFile, line);
-                if (verified) vm_->setBreakpoint(sourceFile, line);
+                // D-3: çalıştırılabilir değilse (yorum, `}`, fonksiyon başlığı)
+                // aynı dosyada sonraki çalıştırılabilir satıra kaydırılır ve
+                // yanıt kaydırılmış satırı bildirir; editör noktayı taşır.
+                int actual = vm_->nextExecutableLine(sourceFile, line);
+                verified = actual > 0;
+                if (verified) {
+                    line = actual;
+                    vm_->setBreakpoint(sourceFile, line);
+                    bpIds_[{sourceFile, line}] = id;
+                }
             }
 
             bps.push_back({
-                {"id",       nextBpId_++},
+                {"id",       id},
                 {"verified", verified},
                 {"line",     line},
                 {"source",   {{"path", sourceFile}}}
@@ -459,8 +487,13 @@ nlohmann::json DapHandler::handleConfigurationDone(const nlohmann::json& req) {
     // Faz 7 (#105): stopOnEntry'ye saygı — true ise entry'de dur, false ise
     // doğrudan koşuya başla (breakpoint'e çarpar ya da biter).
     if (stopOnEntry_) {
-        vm_->stepInstruction();
-        sendEvent("stopped", {{"reason","entry"}, {"threadId",1}});
+        // D-1: tek komut çalıştırmak yerine `main`'in ilk görünür satırına
+        // kadar ilerle (global başlatıcı prelude'u gizli çalışır).
+        vm_->stepToFirstLine();
+        if (vm_->state() == Interpreter::RunState::Finished)
+            sendTermination(true);
+        else
+            sendEvent("stopped", {{"reason","entry"}, {"threadId",1}});
     } else {
         runWithBudget();
     }
@@ -491,12 +524,11 @@ nlohmann::json DapHandler::handleNext(const nlohmann::json& req) {
 
     if (vm_) {
         invalidateVarRefs();
-        vm_->stepOver();
-        if (vm_->state() == Interpreter::RunState::Paused) {
-            sendEvent("stopped", {{"reason","step"}, {"threadId",1}});
-        } else if (vm_->state() == Interpreter::RunState::Finished) {
-            sendEvent("exited", {{"exitCode", 0}});
-            sendEvent("terminated", {});
+        if (vm_->state() == Interpreter::RunState::Finished) {
+            sendTermination(true);   // bitmiş programa adım: yalnız bir kez bildir
+        } else {
+            vm_->stepOver();
+            reportStepResult();
         }
     }
 
@@ -512,12 +544,11 @@ nlohmann::json DapHandler::handleStepIn(const nlohmann::json& req) {
 
     if (vm_) {
         invalidateVarRefs();
-        vm_->stepInstruction();
-        if (vm_->state() == Interpreter::RunState::Paused) {
-            sendEvent("stopped", {{"reason","step"}, {"threadId",1}});
-        } else if (vm_->state() == Interpreter::RunState::Finished) {
-            sendEvent("exited", {{"exitCode", 0}});
-            sendEvent("terminated", {});
+        if (vm_->state() == Interpreter::RunState::Finished) {
+            sendTermination(true);   // bitmiş programa adım: yalnız bir kez bildir
+        } else {
+            vm_->stepInto();
+            reportStepResult();
         }
     }
 
@@ -533,12 +564,11 @@ nlohmann::json DapHandler::handleStepOut(const nlohmann::json& req) {
 
     if (vm_) {
         invalidateVarRefs();
-        vm_->stepOut();
-        if (vm_->state() == Interpreter::RunState::Paused) {
-            sendEvent("stopped", {{"reason","step"}, {"threadId",1}});
-        } else if (vm_->state() == Interpreter::RunState::Finished) {
-            sendEvent("exited", {{"exitCode", 0}});
-            sendEvent("terminated", {});
+        if (vm_->state() == Interpreter::RunState::Finished) {
+            sendTermination(true);   // bitmiş programa adım: yalnız bir kez bildir
+        } else {
+            vm_->stepOut();
+            reportStepResult();
         }
     }
 
@@ -655,7 +685,7 @@ nlohmann::json DapHandler::handleTerminate(const nlohmann::json& req) {
     invalidateVarRefs();
     vm_.reset();
     irProgram_.reset();
-    sendEvent("terminated", {});
+    sendTermination(false);
     return nullptr;
 }
 

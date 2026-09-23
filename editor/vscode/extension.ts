@@ -24,11 +24,11 @@ function getSaqutVersion(bin: string): Promise<string | null> {
     });
 }
 
-// LSP/DAP için gereken minimum derleyici sürümü (0.9.x öncesi LSP yüzeyi eksikti).
+// LSP/DAP için gereken minimum derleyici sürümü: 1.0.0 (LSP/DAP düzeltmeleri).
 function versionAtLeast(ver: string | null): boolean {
     if (!ver) return false;
     const [major, minor] = ver.split('.').map(Number);
-    return major > 0 || (major === 0 && minor >= 9);
+    return major >= 1;
 }
 
 async function checkSaqutVersion(bin: string): Promise<void> {
@@ -41,7 +41,7 @@ async function checkSaqutVersion(bin: string): Promise<void> {
     }
     if (!versionAtLeast(ver)) {
         vscode.window.showWarningMessage(
-            `saQut: bulunan derleyici ${ver} — bu uzantı 0.9.x+ gerektirir. ` +
+            `saQut: bulunan derleyici ${ver} — bu uzantı 1.0.0+ gerektirir. ` +
             `'saqut.path' ile başka bir binary seçin.`);
     }
 }

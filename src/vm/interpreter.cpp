@@ -12,6 +12,7 @@
 // ============================================================================
 
 #include "core/config.hpp"
+#include <limits>
 #include "vm/interpreter.hpp"
 #include "core/int_arithmetic.hpp"
 #include "gc/gc_object.hpp"
@@ -117,7 +118,10 @@ bool Interpreter::isBreakpoint() const {
     int ip = frame.instructionPointer;
     if (ip < 0 || ip >= (int)frame.function->instructions.size()) return false;
     const Instruction& ins = frame.function->instructions[ip];
-    if (ins.sourceLine <= 0) return false;
+    if (ins.sourceLine <= 0 || ins.debugHidden) return false;
+    // Satıra girişte tetiklen: aynı satırın sonraki komutlarında (ve çağrıdan
+    // aynı satıra dönüşte) değil.
+    if (frame.lastLine == ins.sourceLine) return false;
     const std::string& file = ins.sourceFile.empty()
         ? program_.moduleRegistry.filePath(frame.function->moduleId)
         : ins.sourceFile;
@@ -139,6 +143,40 @@ void Interpreter::stepInstruction() {
     if (callStack_.empty()) { state_ = RunState::Finished; return; }
     // Faz 5: tek talimat çalıştır
     runUntilEvent(1, -1);
+}
+
+void Interpreter::stepInto() {
+    if (callStack_.empty()) { state_ = RunState::Finished; return; }
+    runUntilEvent(-1, std::numeric_limits<int>::max());
+}
+
+void Interpreter::stepToFirstLine() {
+    if (callStack_.empty()) { state_ = RunState::Finished; return; }
+    forcedStartLine_ = -1;   // hiçbir gerçek satıra eşit değil: ilk görünür satırda dur
+    runUntilEvent(-1, std::numeric_limits<int>::max());
+}
+
+void Interpreter::clearBreakpointsInFile(const std::string& file) {
+    for (auto it = breakpoints_.begin(); it != breakpoints_.end();)
+        it = (it->first == file) ? breakpoints_.erase(it) : std::next(it);
+}
+
+int Interpreter::nextExecutableLine(const std::string& file, int line, int maxAhead) const {
+    for (int l = line; l <= line + maxAhead; ++l)
+        if (isExecutableLine(file, l)) return l;
+    return 0;
+}
+
+std::pair<std::string, int> Interpreter::currentLocation() const {
+    if (callStack_.empty()) return {"", 0};
+    const CallFrame& f = callStack_.back();
+    if (!f.function || f.instructionPointer < 0 ||
+        f.instructionPointer >= (int)f.function->instructions.size())
+        return {"", currentSourceLine()};
+    const Instruction& ins = f.function->instructions[f.instructionPointer];
+    std::string file = ins.sourceFile.empty()
+        ? program_.moduleRegistry.filePath(f.function->moduleId) : ins.sourceFile;
+    return {file, ins.sourceLine};
 }
 
 void Interpreter::stepOver() {
@@ -337,7 +375,9 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
     state_          = RunState::Running;
     runBudget_      = maxInstructions;
     stepStartDepth_ = startCallDepth;
-    stepStartLine_  = (startCallDepth >= 0) ? currentSourceLine() : 0;
+    stepStartLine_  = forcedStartLine_ != 0 ? forcedStartLine_
+                    : (startCallDepth >= 0) ? currentSourceLine() : 0;
+    forcedStartLine_ = 0;
 
     // Faz 7 (#105): breakpoint ÜSTÜNDE dururken devam edilirse aynı satıra
     // yeniden takılma — bir kaynak satırı birden çok instruction ürettiğinden
@@ -428,8 +468,10 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
         // eski konum (fetch SONRASI) satır sınırındaki ilk instruction'ı
         // yutuyordu — print gibi tek-instruction'lık satırlar adımlamada
         // hiç çalışmıyordu.
-        if (stepStartLine_ > 0 && stepStartDepth_ >= 0) {
-            int nextLine = frame.function->instructions[frame.instructionPointer].sourceLine;
+        if (stepStartLine_ != 0 && stepStartDepth_ >= 0) {
+            const Instruction& nextIns = frame.function->instructions[frame.instructionPointer];
+            // Gizli komutlar (global başlatıcı prelude'u) satır sınırı sayılmaz.
+            int nextLine = nextIns.debugHidden ? 0 : nextIns.sourceLine;
             int curDepth = (int)callStack_.size();
             if (nextLine > 0 && nextLine != stepStartLine_ && curDepth <= stepStartDepth_) {
                 state_ = RunState::Paused;
@@ -439,6 +481,8 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
 
         const Instruction& instr = frame.function->instructions[frame.instructionPointer];
         frame.instructionPointer++;
+        if (!breakpoints_.empty() && !instr.debugHidden && instr.sourceLine > 0) [[unlikely]]
+            frame.lastLine = instr.sourceLine;
         if (runBudget_ > 0) runBudget_--;
 
         // Profil hook

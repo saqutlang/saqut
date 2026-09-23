@@ -34,6 +34,11 @@ struct CallFrame {
     // SONRA ip'yi artırır. CALL/RETURN ip'ye dokunmaz.
     int instructionPointer = 0;
 
+    // Hata ayıklama: bu frame'de en son çalışan komutun satırı. Breakpoint
+    // yalnız satıra GİRİŞTE tetiklenir; çağrıdan aynı satıra dönüşte
+    // (`y = add(x, 2);`) yeniden tetiklenmez.
+    int lastLine = 0;
+
     // Bu frame'in değer depoları: parametreler + lokaller + geçiciler.
     // Boyut = function->slotCount (frame oluşturulurken ayarlanır).
     std::vector<Value> slots;

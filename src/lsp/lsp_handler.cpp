@@ -6,6 +6,10 @@
 #include "lsp/uri.hpp"
 #include "lsp/position.hpp"
 #include "data/data_registry.hpp"
+#include "parser/nodes/binary_expr.hpp"
+#include "parser/nodes/declarations.hpp"
+#include "parser/nodes/expressions.hpp"
+#include "parser/nodes/statements.hpp"
 #include <algorithm>
 #include <cctype>
 #include <map>
@@ -276,10 +280,15 @@ void LspHandler::publishDiagnosticsGrouped(DocumentState& state) {
             ? byteOffsetToUtf16(lineText, static_cast<int>(lineText.size()))
             : static_cast<int>(lineText.size());
 
+        // Aralık tanının işaret ettiği token'dır: başlangıç + tokenLength
+        // (satır sonuna kırpılır). Eskiden bütün satır vurgulanıyordu; editör
+        // hatanın yerini göstermiyor, golden'lar da bu yüzden kırmızıydı.
+        const int startChar = std::min(std::max(0, pos.character), lineCharacterEnd);
+        const int endChar = std::min(lineCharacterEnd, startChar + std::max(1, d.tokenLength));
         nlohmann::json item;
         item["range"] = {
-            {"start", {{"line", pos.line}, {"character", 0}}},
-            {"end",   {{"line", pos.line}, {"character", lineCharacterEnd}}}
+            {"start", {{"line", pos.line}, {"character", startChar}}},
+            {"end",   {{"line", pos.line}, {"character", std::max(endChar, startChar)}}}
         };
         item["severity"] = (d.level == DiagLevel::Error) ? 1 : 2;
         item["code"]     = d.code;
@@ -951,6 +960,11 @@ static nlohmann::json builtinMethodsForType(const Type& receiverType, const std:
         switch (m->category) {
             case DataMethodCategory::Array:
                 include = isReceiverArray;
+                // `toString` yalnız byte[]'da geçerli (UTF-8 çözme); tip
+                // denetleyici diğer dizilerde reddeder. Önermek, seçildiğinde
+                // hata veren kod üretmek demekti.
+                if (include && std::string(m->name) == "toString")
+                    include = receiverType.elementType && receiverType.elementType->isByte();
                 break;
             case DataMethodCategory::StringVal:
                 include = isString;
@@ -1136,6 +1150,63 @@ static bool isValidIdentifier(const std::string& name) {
     return true;
 }
 
+// Rename yardımcıları: struct alanları sembol tablosunda yaşamaz
+// (structLayouts), bu yüzden AST'den toplanır. Ziyaretçi yalnız alan
+// yeniden adlandırması için gereken iki düğüm türünü biriktirir.
+namespace {
+struct FieldSites {
+    std::vector<MemberAccessNode*> accesses;
+    std::vector<StructDeclNode*>   structs;
+};
+
+void collectFieldSites(ASTNode* n, FieldSites& out) {
+    if (!n) return;
+    if (auto* st = dynamic_cast<StructDeclNode*>(n)) { out.structs.push_back(st); return; }
+    if (auto* ma = dynamic_cast<MemberAccessNode*>(n)) {
+        out.accesses.push_back(ma);
+        collectFieldSites(ma->object, out);
+        return;
+    }
+    if (auto* fn = dynamic_cast<FunctionDeclNode*>(n)) {
+        for (ASTNode* c : fn->getChildren()) collectFieldSites(c, out);
+        return;
+    }
+    if (auto* vd = dynamic_cast<VariableDeclNode*>(n)) {
+        collectFieldSites(vd->initExpr, out);
+        for (ASTNode* c : vd->getChildren()) collectFieldSites(c, out);
+        return;
+    }
+    if (auto* b = dynamic_cast<BinaryExpressionNode*>(n)) { collectFieldSites(b->Left, out); collectFieldSites(b->Right, out); return; }
+    if (auto* p = dynamic_cast<PostfixNode*>(n)) { collectFieldSites(p->operand, out); return; }
+    if (auto* c = dynamic_cast<CallExpressionNode*>(n)) { collectFieldSites(c->callee, out); for (auto* a : c->arguments) collectFieldSites(a, out); return; }
+    if (auto* ix = dynamic_cast<IndexExpressionNode*>(n)) { collectFieldSites(ix->object, out); collectFieldSites(ix->index, out); return; }
+    if (auto* al = dynamic_cast<ArrayLiteralNode*>(n)) { for (auto* e : al->elements) collectFieldSites(e, out); return; }
+    if (auto* sc = dynamic_cast<ScopeCallNode*>(n)) { for (auto* a : sc->arguments) collectFieldSites(a, out); return; }
+    if (auto* ce = dynamic_cast<CastExpressionNode*>(n)) { collectFieldSites(ce->operand, out); return; }
+    if (auto* i = dynamic_cast<IfStatementNode*>(n)) { collectFieldSites(i->condition, out); collectFieldSites(i->thenBranch, out); collectFieldSites(i->elseBranch, out); return; }
+    if (auto* w = dynamic_cast<WhileStatementNode*>(n)) { collectFieldSites(w->condition, out); collectFieldSites(w->body, out); return; }
+    if (auto* d = dynamic_cast<DoWhileStatementNode*>(n)) { collectFieldSites(d->body, out); collectFieldSites(d->condition, out); return; }
+    if (auto* f = dynamic_cast<ForStatementNode*>(n)) { collectFieldSites(f->init, out); collectFieldSites(f->condition, out); collectFieldSites(f->update, out); collectFieldSites(f->body, out); return; }
+    if (auto* r = dynamic_cast<ReturnStatementNode*>(n)) { collectFieldSites(r->value, out); return; }
+    if (auto* t = dynamic_cast<ThrowStatementNode*>(n)) { collectFieldSites(t->value, out); return; }
+    if (auto* es = dynamic_cast<ExpressionStatementNode*>(n)) { collectFieldSites(es->expression, out); return; }
+    if (auto* tr = dynamic_cast<TryStatementNode*>(n)) { collectFieldSites(tr->body, out); collectFieldSites(tr->handler, out); return; }
+    if (auto* sw = dynamic_cast<SwitchStatementNode*>(n)) {
+        collectFieldSites(sw->subject, out);
+        for (auto& cc : sw->cases) { for (auto* v : cc.values) collectFieldSites(v, out); for (auto* b2 : cc.body) collectFieldSites(b2, out); }
+        return;
+    }
+    for (ASTNode* c : n->getChildren()) collectFieldSites(c, out);   // Program, Block
+}
+
+// Nesne ifadesinin struct adı (nullable ise tabanı); struct değilse boş.
+std::string structNameOf(ASTNode* obj) {
+    auto* e = dynamic_cast<ExpressionNode*>(obj);
+    if (!e || !e->resolvedType.isStruct()) return "";
+    return e->resolvedType.structName;
+}
+} // namespace
+
 nlohmann::json LspHandler::handleRename(const nlohmann::json& id,
                                          const nlohmann::json& params) {
     std::string uri     = params["textDocument"]["uri"].get<std::string>();
@@ -1147,7 +1218,67 @@ nlohmann::json LspHandler::handleRename(const nlohmann::json& id,
     if (!state) return JsonRpc::makeResponse(id, nullptr);
 
     Symbol* sym = findSymbolAt(*state, line, ch);
-    if (!sym) return JsonRpc::makeResponse(id, nullptr);
+
+    if (!isValidIdentifier(newName))
+        return JsonRpc::makeError(id, -32602,
+            "invalid identifier: '" + newName + "'");
+
+    // Struct alanı: sembol değildir; AST'den bildirim + tüm `x.alan`
+    // erişimleri toplanır (bu belge içinde). Eskiden sonuç boş dönüyordu.
+    if (!sym) {
+        Token* tok = identifierTokenAt(*state, line, ch);
+        if (!tok || !state->ast) return JsonRpc::makeResponse(id, nullptr);
+        const std::string field = tok->token;
+        FieldSites sites;
+        collectFieldSites(state->ast, sites);
+        auto memberTokenOffset = [&](MemberAccessNode* ma) -> int {
+            auto it = std::upper_bound(state->tokens.begin(), state->tokens.end(),
+                ma->loc.offset, [](int off, Token* t) { return off < t->start; });
+            return it == state->tokens.end() ? -1 : (*it)->start;
+        };
+        std::string owner;
+        for (auto* ma : sites.accesses)
+            if (ma->member == field && memberTokenOffset(ma) == tok->start)
+                owner = structNameOf(ma->object);
+        for (auto* st : sites.structs)
+            for (ASTNode* c : st->getChildren())
+                if (auto* vd = dynamic_cast<VariableDeclNode*>(c))
+                    if (vd->name == field &&
+                        identOffsetFromDecl(state->content, vd->loc.offset, field) == tok->start)
+                        owner = st->name;
+        if (owner.empty()) return JsonRpc::makeResponse(id, nullptr);
+
+        std::vector<int> offsets;
+        for (auto* st : sites.structs)
+            if (st->name == owner)
+                for (ASTNode* c : st->getChildren())
+                    if (auto* vd = dynamic_cast<VariableDeclNode*>(c))
+                        if (vd->name == field)
+                            offsets.push_back(identOffsetFromDecl(state->content, vd->loc.offset, field));
+        for (auto* ma : sites.accesses)
+            if (ma->member == field && structNameOf(ma->object) == owner)
+                offsets.push_back(memberTokenOffset(ma));
+        std::sort(offsets.begin(), offsets.end());
+        offsets.erase(std::unique(offsets.begin(), offsets.end()), offsets.end());
+        nlohmann::json edits = nlohmann::json::array();
+        for (int off : offsets) {
+            if (off < 0) continue;
+            auto it = std::upper_bound(state->lineStarts.begin(), state->lineStarts.end(), off);
+            int li = static_cast<int>(std::distance(state->lineStarts.begin(), it)) - 1;
+            SourceLocation l;
+            l.setFilePath(state->filePath);
+            l.line = li + 1;
+            l.column = off - state->lineStarts[static_cast<size_t>(li)] + 1;
+            l.offset = off;
+            LspPosition pos = toLspPos(state->content, state->lineStarts, l);
+            edits.push_back({{"range", {{"start", {{"line", pos.line}, {"character", pos.character}}},
+                                        {"end", {{"line", pos.line}, {"character", pos.character + (int)field.size()}}}}},
+                             {"newText", newName}});
+        }
+        nlohmann::json changes = nlohmann::json::object();
+        changes[state->uri] = edits;
+        return JsonRpc::makeResponse(id, {{"changes", changes}});
+    }
 
     // Builtin (print, Error, ...) yeniden adlandırılamaz — tanımı kullanıcı
     // kodunda değil.
@@ -1155,9 +1286,15 @@ nlohmann::json LspHandler::handleRename(const nlohmann::json& id,
         return JsonRpc::makeError(id, -32602,
             "cannot rename builtin symbol: " + sym->name);
 
-    if (!isValidIdentifier(newName))
+    // Standart kütüphane (FFI) fonksiyonu: tanımı gömülü root.sqt'tedir.
+    // Eskiden var olmayan `<builtin:root.sqt>` belgesine düzenleme
+    // gönderiliyor, editör WorkspaceEdit'i uygulayamayıp rename'i tümden
+    // bozuyordu; import satırı da geçersiz hale geliyordu.
+    if (sym->hostFnId >= 0)
         return JsonRpc::makeError(id, -32602,
-            "invalid identifier: '" + newName + "'");
+            "cannot rename standard library function '" + sym->name +
+            "'; import it under another name: `import { " + sym->name + " as newName } from " +
+            sym->ffiModule + ";`");
 
     // Tanım + tüm referanslar; (dosya, offset) ile tekilleştir — aynı konum
     // hem definitionLoc hem references'ta görünürse çifte edit üretme.
@@ -1180,6 +1317,35 @@ nlohmann::json LspHandler::handleRename(const nlohmann::json& id,
     }
     for (const auto& ref : sym->references)
         if (ref.isValid()) locs.push_back(ref);
+
+    // Struct/enum: tip konumundaki kullanımlar (`Point p;`, `Point f(...)`,
+    // `Color.Red`) sembol referansı olarak kaydedilmiyor; rename yalnız
+    // bildirimi değiştirip kodu derlenmez halde bırakıyordu. Bu belgenin
+    // token'larından, başka bir sembole bağlı olmayan ve `.` ile başlamayan
+    // aynı adlı tanımlayıcılar eklenir.
+    if (sym->kind == SymbolKind::Struct || sym->kind == SymbolKind::Enum) {
+        const auto& toks = state->tokens;
+        for (size_t ti = 0; ti < toks.size(); ++ti) {
+            Token* t = toks[ti];
+            if (t->gettype() != "identifier" || t->token != sym->name) continue;
+            if (ti > 0 && toks[ti - 1]->token == ".") continue;
+            // definitionLoc bildirim başını (tip token'ını) gösterir: `P p;`
+            // içindeki `P`, `p` değişkenine bağlı görünür. Adı farklı bir
+            // sembole bağlıysa bu token o sembolün tip kısmıdır, sayılır.
+            auto bound = state->symbolByOffset.find(t->start);
+            if (bound != state->symbolByOffset.end() && bound->second != sym &&
+                bound->second->name == t->token)
+                continue;
+            auto it = std::upper_bound(state->lineStarts.begin(), state->lineStarts.end(), t->start);
+            int li = static_cast<int>(std::distance(state->lineStarts.begin(), it)) - 1;
+            SourceLocation l;
+            l.setFilePath(state->filePath);
+            l.line = li + 1;
+            l.column = t->start - state->lineStarts[static_cast<size_t>(li)] + 1;
+            l.offset = t->start;
+            locs.push_back(l);
+        }
+    }
     // Dosya başına içerik + satır indeksi bir kez kurulur (handleReferences
     // ile aynı desen) — import taraması ve edit üretimi ortak kullanır.
     std::map<std::string, std::pair<std::string, std::vector<int>>> fileCache;

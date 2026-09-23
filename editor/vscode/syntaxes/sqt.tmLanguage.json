@@ -2,17 +2,43 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "saQut",
   "scopeName": "source.sqt",
-  "fileTypes": ["sqt"],
+  "fileTypes": [
+    "sqt"
+  ],
   "patterns": [
-    { "include": "#comments" },
-    { "include": "#strings" },
-    { "include": "#keywords_control" },
-    { "include": "#keywords_type" },
-    { "include": "#keywords_module" },
-    { "include": "#keywords_other" },
-    { "include": "#constants" },
-    { "include": "#numbers" },
-    { "include": "#operators" }
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#types_user"
+    },
+    {
+      "include": "#keywords_control"
+    },
+    {
+      "include": "#keywords_type"
+    },
+    {
+      "include": "#keywords_module"
+    },
+    {
+      "include": "#keywords_other"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#operators"
+    }
   ],
   "repository": {
     "comments": {
@@ -33,7 +59,14 @@
       "begin": "\"",
       "end": "\"",
       "patterns": [
-        { "name": "constant.character.escape.sqt", "match": "\\\\." }
+        {
+          "name": "constant.character.escape.sqt",
+          "match": "\\\\[ntrb\\\\\"]"
+        },
+        {
+          "name": "invalid.illegal.escape.sqt",
+          "match": "\\\\."
+        }
       ]
     },
     "keywords_control": {
@@ -62,7 +95,7 @@
     },
     "keywords_other": {
       "name": "keyword.other.sqt",
-      "match": "\\b(new|class|interface|extends|implements|const|extern|static|final)\\b"
+      "match": "\\b(ffi)\\b"
     },
     "constants": {
       "name": "constant.language.sqt",
@@ -83,6 +116,10 @@
           "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
         },
         {
+          "name": "constant.numeric.float.sqt",
+          "match": "\\b[0-9]+[eE][+-]?[0-9]+\\b"
+        },
+        {
           "name": "constant.numeric.integer.sqt",
           "match": "\\b[0-9]+\\b"
         }
@@ -90,7 +127,30 @@
     },
     "operators": {
       "name": "keyword.operator.sqt",
-      "match": "(\\+\\+|--|\\+=|-=|\\*=|/=|%=|==|!=|<=|>=|&&|\\|\\||[+\\-*/%<>=!&|^~])"
+      "match": "(\\*\\*|<<=|>>=|<<|>>|\\+\\+|--|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|==|!=|<=|>=|&&|\\|\\||[+\\-*/%<>=!&|^~])"
+    },
+    "functions": {
+      "patterns": [
+        {
+          "match": "\\b([A-Za-z_$][A-Za-z0-9_$]*)\\s*(?=\\()",
+          "captures": {
+            "1": {
+              "name": "entity.name.function.sqt"
+            }
+          }
+        }
+      ]
+    },
+    "types_user": {
+      "match": "\\b(struct|enum)\\s+([A-Za-z_$][A-Za-z0-9_$]*)",
+      "captures": {
+        "1": {
+          "name": "keyword.other.sqt"
+        },
+        "2": {
+          "name": "entity.name.type.sqt"
+        }
+      }
     }
   }
 }

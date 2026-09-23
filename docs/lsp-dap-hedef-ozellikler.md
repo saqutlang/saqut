@@ -9,7 +9,11 @@ kırıldığını madde madde listelemek.
 
 ---
 
-## Ölçülmüş bulgular (2026-09-23, `saqut 1.0.0`, gerçek sunucu çalıştırılarak)
+## Ölçülmüş bulgular ve durumu (2026-09-23, `saqut 1.0.0`, gerçek sunucu çalıştırılarak)
+
+> **Durum:** L-1..L-4 ve D-1..D-8 düzeltildi (1.0.0 dalı). LSP (24) ve DAP (10)
+> golden senaryolarının tamamı geçiyor. Aşağıdaki metin ölçüm anındaki hatayı
+> ve kök nedeni kayıt için korur.
 
 Bu bölümdeki her madde `saqut lsp` / `saqut dap` gerçek süreçleriyle,
 `tests/lsp/lsp_test_driver.py` ve `tests/dap/dap_test_driver.py` kullanılarak
@@ -17,27 +21,27 @@ gözlendi. Kaynak koda dokunulmadı.
 
 ### LSP
 
-- **L-1: Tanı aralıkları bütün satırı işaretliyor.** `int y = 1.5;` için
+- ✅ **L-1 (düzeltildi): Tanı aralıkları bütün satırı işaretliyordu.** `int y = 1.5;` için
   CLI doğru sütunu veriyor (`column: 13`), LSP ise aralığı `0–16` gönderiyor
   (beklenen `12–13`). 1.0 öncesi commit (`0d5a0c6`) derlenip denendi: hata
   orada da var, yani 1.0'dan önce gelmiş. LSP golden'larının çoğu bu yüzden
   kırmızı. Kök neden adayı: LSP'nin `SourceLocation` → `Range` çevirisi sütunu
   ve uzunluğu kullanmıyor.
-- **L-2: 24 LSP testinin tamamı ilk mesajda düşüyor** çünkü `serverInfo.version`
+- ✅ **L-2 (düzeltildi): 24 LSP testinin tamamı ilk mesajda düşüyordu** çünkü `serverInfo.version`
   golden'da `0.9.4`, sunucuda `1.0.0`. Capability listesi değişmemiş. Sürüm
   alanı karşılaştırmadan hariç tutulmalı ya da golden güncellenmeli.
-- **L-3: Tamamlama senaryolarında ek E905/E903 tanıları** (yarım kod: `p.`,
+- ✅ **L-3 (golden güncellendi): Tamamlama senaryolarında ek E905/E903 tanıları** (yarım kod: `p.`,
   `bi`). 1.0'da `;` zorunlu olduğu için beklenen değişiklik; golden'lar
   güncellenmeli.
 - **L-4: Rename ölçümleri** (test dosyası: global `count`, gölgeleyen yerel
   `count`, parametre `x`, alan `x`, struct `P`, `print`, FFI `sqrt`):
   - global ve yerel `count`: ✅ doğru ayrılıyor (gölgeleme doğru).
-  - **parametre `x`: ❌ hiç düzenleme dönmüyor.**
-  - **struct alanı `x`: ❌ hiç düzenleme dönmüyor.**
-  - **struct `P`: ❌ yalnız bildirim değişiyor, `P p;` kullanımı değişmiyor**
+  - parametre `x`: ✅ çalışıyor (ilk ölçümde imleç `)` üzerindeydi; ölçüm hatası).
+  - ✅ **struct alanı `x` (düzeltildi):** artık bildirim + tüm `x.alan` erişimleri (bu belgede) değişiyor.
+  - ✅ **struct `P` (düzeltildi): eskiden yalnız bildirim değişiyordu, `P p;` kullanımı değişmiyordu**
     → rename sonrası kod derlenmez.
   - `print`: ✅ düzgün hata ("cannot rename builtin symbol").
-  - **FFI `sqrt`: ❌ var olmayan `file://<builtin:root.sqt>` belgesine
+  - ✅ **FFI `sqrt` (düzeltildi, artık açıklayıcı hatayla reddediliyor): var olmayan `file://<builtin:root.sqt>` belgesine
     düzenleme gönderiyor** ve import satırındaki `sqrt`'ü de değiştiriyor
     (`import {zz} from math` geçersiz). Editör WorkspaceEdit'i uygulayamayınca
     rename tümden başarısız olur: "rename bazen patlıyor" şikâyetinin en güçlü
@@ -51,27 +55,32 @@ gözlendi. Kaynak koda dokunulmadı.
 Test programı: global `int g = 10;`, `add()` fonksiyonu, `double d = x as double;`,
 `for` döngüsü, tek satırda iki deyim.
 
-- **D-1: Giriş noktası yanlış satır.** `stopOnEntry` ile ilk durma `main`
+- ✅ **D-1 (düzeltildi): Giriş noktası yanlış satır.** `stopOnEntry` ile ilk durma `main`
   içinde **1. satır** (global başlatıcı `int g = 10;`, `main`'in başına
   enjekte ediliyor). ✅ 8.1'deki tahmin doğrulandı.
-- **D-2: Satır atlama.** `next` dizisi: 1 → 7 → **9** (8 atlandı) → 10 → 11
+- ✅ **D-2 (düzeltildi): Satır atlama.** `next` dizisi: 1 → 7 → **9** (8 atlandı) → 10 → 11
   → 10 → 11 → 10 → 13 → 14 → 15. 8. satır (`double d = x as double;`) yalnız
   cast komutu içeriyor ve bu komut satır bilgisi taşımıyor. ✅ doğrulandı.
-- **D-3: Aynı satıra breakpoint doğrulanmıyor.** `setBreakpoints` sonuçları:
+- ✅ **D-3 (düzeltildi, satır kaydırma eklendi): Breakpoint doğrulanmıyordu.** `setBreakpoints` sonuçları:
   satır 8 `verified:false`, satır 3 ✅, satır 12 (`}`) `false`, satır 6
   (fonksiyon başlığı) `false`, satır 13 ✅. Doğrulanmayan breakpoint en yakın
   çalıştırılabilir satıra **kaydırılmıyor**; kullanıcı gri nokta görür.
-- **D-4: `stopped` olayında `hitBreakpointIds` yok.** Editör hangi
+- ✅ **D-4 (düzeltildi): `stopped` olayında `hitBreakpointIds` yoktu.** Editör hangi
   breakpoint'e takıldığını vurgulayamaz.
-- **D-5: `stepIn` ilk denemede ilerlemiyor.** 9. satırda (`add(x, 2)`) ilk
+- ✅ **D-5 (düzeltildi): `stepIn` ilk denemede ilerlemiyordu** (tek IR komutu çalıştırıyordu). 9. satırda (`add(x, 2)`) ilk
   `stepIn` yine 9'da duruyor, `add`'e ancak ikinci `stepIn` ile giriliyor.
-- **D-6: `stepOut` çağrı satırını atlıyor.** `add` içinden `stepOut`,
+- 🟡 **D-6 (kısmen): `stepOut` çağrı satırını atlıyordu.** D-2 ile satır bilgisi eksikliği giderildi; çağrı satırında dönüşten sonra komut kalmadıysa bir sonraki satırda durulur (gdb ile aynı). "Return value" kapsamı hâlâ yok. `add` içinden `stepOut`,
   dönüş değerinin atandığı 9. satırı göstermeden 10'a gidiyor (VS Code
   kullanıcısı dönüş değerini göremez; "return value" kapsamı da yok).
-- **D-7: Program bittikten sonra olay yağmuru.** Program sonlandıktan sonra
+- ✅ **D-7 (düzeltildi): Program bittikten sonra olay yağmuru.** Program sonlandıktan sonra
   gelen her istek için `exited` + `terminated` olayları yeniden gönderiliyor
   (tek oturumda 11 kez). Olaylar bir kez gönderilmeli, sonraki isteklere
   hata dönülmeli.
+- ✅ **D-8 (bulundu ve düzeltildi): `setBreakpoints` dosya başına gelir ama
+  tüm dosyaların breakpoint'lerini siliyordu;** çok dosyalı projede diğer
+  dosyadaki breakpoint'ler kayboluyordu. Ayrıca breakpoint satırın her
+  komutunda tetikleniyor, çağrıdan aynı satıra dönüşte yeniden takılıyordu;
+  artık yalnız satıra girişte tetikleniyor.
 - ✅ `for` döngüsünde `next` başlık ve gövde arasında doğru dolaşıyor;
   tek satırdaki iki deyim (`string t = "a"; t = t + "b";`) tek adımda geçiyor.
 

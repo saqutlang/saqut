@@ -3,6 +3,6 @@
 {"body": null, "command": "launch", "request_seq": 2, "seq": 102, "success": true, "type": "response"}
 {"body": null, "command": "configurationDone", "request_seq": 3, "seq": 103, "success": true, "type": "response"}
 {"body": {"reason": "entry", "threadId": 1}, "event": "stopped", "seq": 104, "type": "event"}
-{"body": {"stackFrames": [{"column": 0, "id": 0, "line": 3, "name": "main", "source": {"path": "%FIXDIR%/simple.sqt"}}], "totalFrames": 1}, "command": "stackTrace", "request_seq": 4, "seq": 105, "success": true, "type": "response"}
+{"body": {"stackFrames": [{"column": 0, "id": 0, "line": 2, "name": "main", "source": {"path": "%FIXDIR%/simple.sqt"}}], "totalFrames": 1}, "command": "stackTrace", "request_seq": 4, "seq": 105, "success": true, "type": "response"}
 {"body": {"scopes": [{"expensive": false, "name": "Locals", "variablesReference": 1000}]}, "command": "scopes", "request_seq": 5, "seq": 106, "success": true, "type": "response"}
-{"body": {"variables": [{"name": "x", "type": "", "value": "1", "variablesReference": 0}, {"name": "y", "type": "", "value": "0", "variablesReference": 0}]}, "command": "variables", "request_seq": 6, "seq": 107, "success": true, "type": "response"}
+{"body": {"variables": [{"name": "x", "type": "", "value": "0", "variablesReference": 0}, {"name": "y", "type": "", "value": "0", "variablesReference": 0}]}, "command": "variables", "request_seq": 6, "seq": 107, "success": true, "type": "response"}

@@ -96,6 +96,14 @@ public:
     void setBreakpoint(const std::string& file, int line);
     void clearBreakpoint(const std::string& file, int line);
     void clearAllBreakpoints();
+    // Yalnız bir dosyanın breakpoint'lerini siler: DAP setBreakpoints dosya
+    // başına gelir; tümünü silmek diğer dosyalardakileri kaybettiriyordu.
+    void clearBreakpointsInFile(const std::string& file);
+    // Doğrulanmayan satır için aynı dosyada sonraki çalıştırılabilir satır
+    // (en çok maxAhead satır ileride); yoksa 0.
+    int  nextExecutableLine(const std::string& file, int line, int maxAhead = 50) const;
+    // Duraklama noktasının (dosya, satır) çifti — hitBreakpointIds için.
+    std::pair<std::string, int> currentLocation() const;
     // Faz 7 (#105): (dosya, satır) çalıştırılabilir bir satıra denk geliyor mu?
     // setBreakpoints.verified için Faz 5'in lineToFirstIP indeksinde arar.
     bool isExecutableLine(const std::string& file, int line) const;
@@ -107,6 +115,13 @@ public:
     // Faz 5: satır bazlı adımlar
     void        stepLine();   // sourceLine değişene kadar ilerle
     void        stepOut();    // callDepth azalana kadar ilerle
+    // Satır değişene kadar ilerle, çağrılan fonksiyonlara GİR (DAP stepIn).
+    // Eskiden stepIn tek IR komutu çalıştırıyordu; satır değişmediği için
+    // kullanıcı ikinci kez basmak zorunda kalıyordu.
+    void        stepInto();
+    // Görünür ilk satıra kadar (global başlatıcı prelude'u dahil) çalış ve
+    // o satırın ilk komutu ÇALIŞMADAN dur (DAP stopOnEntry).
+    void        stepToFirstLine();
 
     // Faz 5: instruction budget ile koş — mevcut durumdan devam eder, başlatma yapmaz.
     RunReason   runUntilEvent(int maxInstructions, int startCallDepth = -1);
@@ -154,6 +169,7 @@ private:
     int  runBudget_      = 0;       // kalan talimat bütçesi (0 = sınırsız, run() tarafından kullanılmaz)
     int  stepStartDepth_ = -1;      // stepOver/Out için başlangıç derinliği
     int  stepStartLine_  = 0;       // stepOver/Line için başlangıç satırı
+    int  forcedStartLine_ = 0;      // !=0 ise runUntilEvent stepStartLine_'ı bundan alır
     int  lastReturnValue_ = 0;      // main'in dönüş değeri (pause/resume sonrası için)
 
     bool isBreakpoint() const;

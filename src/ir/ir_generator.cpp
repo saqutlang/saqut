@@ -103,6 +103,7 @@ IRProgram IRGenerator::generateModuleGraph(ModuleGraph& graph, SymbolTable& symb
             currentFunction_ = program.findFunction(fnDecl->name);
 
             if (fnDecl->name == "main") {
+                const size_t preludeStart = currentFunction_->instructions.size();
                 // main'i barındıran modülden bağımsız — TÜM modüllerin
                 // global başlangıç ifadeleri burada, ön-geçişteki (graph.units)
                 // sırayla çalıştırılır.
@@ -118,6 +119,8 @@ IRProgram IRGenerator::generateModuleGraph(ModuleGraph& graph, SymbolTable& symb
                         emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
                     }
                 }
+                for (size_t pi = preludeStart; pi < currentFunction_->instructions.size(); ++pi)
+                    currentFunction_->instructions[pi].debugHidden = true;
             }
 
             generateFunction(child);
@@ -183,6 +186,7 @@ IRProgram IRGenerator::generate(ASTNode* programNode, SymbolTable& symbolTable,
 
             // main'in başında global değişkenlerin init ifadelerini üret
             if (fnDecl->name == "main") {
+                const size_t preludeStart = currentFunction_->instructions.size();
                 for (VariableDeclNode* gv : globalVars) {
                     if (gv->initExpr) {
                         int initSlot = generateExpression(gv->initExpr);
@@ -195,6 +199,8 @@ IRProgram IRGenerator::generate(ASTNode* programNode, SymbolTable& symbolTable,
                         emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
                     }
                 }
+                for (size_t pi = preludeStart; pi < currentFunction_->instructions.size(); ++pi)
+                    currentFunction_->instructions[pi].debugHidden = true;
             }
 
             generateFunction(child);
@@ -240,7 +246,7 @@ void IRGenerator::generateFunction(ASTNode* functionDeclNode) {
     // Faz 5: (sourceLine) → ilk instruction IP indeksi (breakpoint eşlemesi için)
     for (int i = 0; i < (int) currentFunction_->instructions.size(); ++i) {
         int sl = currentFunction_->instructions[i].sourceLine;
-        if (sl > 0 &&
+        if (sl > 0 && !currentFunction_->instructions[i].debugHidden &&
             currentFunction_->lineToFirstIP.find(sl) == currentFunction_->lineToFirstIP.end())
             currentFunction_->lineToFirstIP[sl] = i;
     }
@@ -250,7 +256,30 @@ void IRGenerator::generateFunction(ASTNode* functionDeclNode) {
 // generateStatement — Deyim türlerine göre talimat üret
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Deyimin ürettiği ve kendi konumunu taşımayan her komut deyimin satırını
+// alır (D-2). Cast dönüşümü, LOAD_SLOT kopyası, varsayılan değer yüklemesi
+// gibi yardımcı komutlar eskiden satır 0 taşıyordu: `double d = x as double;`
+// gibi yalnız bu komutlardan oluşan satırlar hata ayıklayıcıda atlanıyor,
+// bu satırlara konan breakpoint doğrulanmıyordu. İç içe deyimler önce kendi
+// satırlarını yazar; dıştaki yalnız boş kalanları doldurur.
 void IRGenerator::generateStatement(ASTNode* node) {
+    if (!node || !currentFunction_) {
+        generateStatementImpl(node);
+        return;
+    }
+    const size_t first = currentFunction_->instructions.size();
+    generateStatementImpl(node);
+    if (!node->loc.isValid() || node->loc.line <= 0)
+        return;
+    auto& ins = currentFunction_->instructions;
+    for (size_t i = first; i < ins.size(); ++i)
+        if (ins[i].sourceLine <= 0) {
+            ins[i].sourceLine = node->loc.line;
+            if (ins[i].sourceCol <= 0) ins[i].sourceCol = node->loc.column;
+        }
+}
+
+void IRGenerator::generateStatementImpl(ASTNode* node) {
     if (!node)
         return;
 

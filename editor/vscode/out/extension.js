@@ -17833,7 +17833,7 @@ function getSaqutVersion(bin) {
 function versionAtLeast(ver) {
   if (!ver) return false;
   const [major, minor] = ver.split(".").map(Number);
-  return major > 0 || major === 0 && minor >= 9;
+  return major >= 1;
 }
 async function checkSaqutVersion(bin) {
   const ver = await getSaqutVersion(bin);
@@ -17845,7 +17845,7 @@ async function checkSaqutVersion(bin) {
   }
   if (!versionAtLeast(ver)) {
     vscode.window.showWarningMessage(
-      `saQut: bulunan derleyici ${ver} \u2014 bu uzant\u0131 0.9.x+ gerektirir. 'saqut.path' ile ba\u015Fka bir binary se\xE7in.`
+      `saQut: bulunan derleyici ${ver} \u2014 bu uzant\u0131 1.0.0+ gerektirir. 'saqut.path' ile ba\u015Fka bir binary se\xE7in.`
     );
   }
 }
