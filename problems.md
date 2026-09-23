@@ -689,8 +689,7 @@ Not: P-33 (`>>>`) ayrı bir hata değil, P-32'nin yansıması: `a >>> 1` →
 
 - [ ] ⚑ JIT'te `Error.trace` `main (?)` basıyor; VM dosya yolunu basıyor (VM≢JIT) — `mir_backend.cpp` trace çerçevesi yalnız try'lı fonksiyonlarda ve dosya bilgisi eksik.
   JIT iz çerçevesine dosya/konum bilgisini VM ile aynı biçimde taşı.
-- [ ] ⚑ `enum as int` derlenmiyor (belge izinli diyor) — `type_checker.cpp` cast kaynağı yalnız primitive/string kabul ediyor.
-  Enum → int (ve istenirse int → enum) cast'ini matrise ekle.
+- [ ] Belgeler `enum as int`'i izinli gösteriyor; ürün kararı: enum bir referanstır, cast derlenmemeli (derleyici doğru, E003). `enums.md`/`data-types.md` düzeltilmeli; LSP de aynı tanıyı yayınlamalı.
 - [ ] ⚑ `byte b; b + 300` → E003 (literal byte bağlamına zorlanıyor) — ikili ifadede literal yeniden tipleme.
   Byte bağlamında aralık dışı literal int kalsın, sonuç int olsun (ürün kararı).
 - [ ] ⚑ Nullable global için `gs.length()` hatasının ipucu `if (gs != null)` öneriyor; globaller artık daraltılmadığı için ipucu yerel kopya önermeli — `checkAssign` düğüm bilmiyor.

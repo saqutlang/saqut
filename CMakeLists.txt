@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(saqut VERSION 0.9.9 LANGUAGES CXX C)
+project(saqut VERSION 1.0.0 LANGUAGES CXX C)
 
 # Derleyici sürümünü koda #define olarak geçir
 add_compile_definitions(SAQUT_VERSION="${PROJECT_VERSION}")
