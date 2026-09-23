@@ -78,7 +78,7 @@ public:
     }
 
     void printReport(std::ostream& out) const {
-        out << "[profil] Asama olcumleri:\n";
+        out << "[profile] stage timings:\n";
         long long total = 0;
         for (const auto& name : order_) {
             const StageInfo& si = totals_.at(name);
@@ -93,7 +93,7 @@ public:
             out << std::right << std::setw(10) << (si.microseconds / 1000.0)
                 << " ms\n";
         }
-        out << "  " << std::left << std::setw(14) << "toplam"
+        out << "  " << std::left << std::setw(14) << "total"
             << std::setw(20) << ""
             << std::right << std::setw(10) << (total / 1000.0) << " ms\n";
     }

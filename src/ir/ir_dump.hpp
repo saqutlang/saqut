@@ -91,6 +91,23 @@ inline const char* opSymbol(Opcode op) {
         case Opcode::LPOW:          return "**L";
         case Opcode::FPOW:          return "**.";
         case Opcode::F32POW:        return "**f";
+        case Opcode::FMOD:          return "%.";
+        // #266: longint (L) ve float32 (f) aritmetiği — eskiden render edilmiyordu.
+        case Opcode::LADD:          return "+L";
+        case Opcode::LSUB:          return "-L";
+        case Opcode::LMUL:          return "*L";
+        case Opcode::LDIV:          return "/L";
+        case Opcode::LMOD:          return "%L";
+        case Opcode::LBAND:         return "&L";
+        case Opcode::LBOR:          return "|L";
+        case Opcode::LBXOR:         return "^L";
+        case Opcode::LSHL:          return "<<L";
+        case Opcode::LSHR:          return ">>L";
+        case Opcode::F32ADD:        return "+f";
+        case Opcode::F32SUB:        return "-f";
+        case Opcode::F32MUL:        return "*f";
+        case Opcode::F32DIV:        return "/f";
+        case Opcode::F32MOD:        return "%f";
         case Opcode::BAND:          return "&";
         case Opcode::BOR:           return "|";
         case Opcode::BXOR:          return "^";
@@ -113,12 +130,19 @@ inline const char* opSymbol(Opcode op) {
 }
 
 // Flat dump'daki isBinaryOp kümesi — BİREBİR korunur (golden spec).
-// Longint/float32 aritmetik opcode'ları bilinçli DIŞARIDA: render edilmez.
+// #266: longint/float32 aritmetiği de ikili op olarak render edilir
+// (eskiden bilinçli dışarıdaydı ve `saqut ir` operandsız satır basıyordu).
 static bool isBinaryOp(Opcode op) {
     switch (op) {
+        case Opcode::LADD: case Opcode::LSUB: case Opcode::LMUL:
+        case Opcode::LDIV: case Opcode::LMOD:
+        case Opcode::LBAND: case Opcode::LBOR: case Opcode::LBXOR:
+        case Opcode::LSHL: case Opcode::LSHR:
+        case Opcode::F32ADD: case Opcode::F32SUB: case Opcode::F32MUL: case Opcode::F32DIV:
         case Opcode::ADD: case Opcode::SUB: case Opcode::MUL:
         case Opcode::DIV: case Opcode::MOD:
         case Opcode::POW: case Opcode::LPOW: case Opcode::FPOW: case Opcode::F32POW:
+        case Opcode::FMOD: case Opcode::F32MOD:
         case Opcode::FADD: case Opcode::FSUB: case Opcode::FMUL: case Opcode::FDIV:
         case Opcode::BAND: case Opcode::BOR: case Opcode::BXOR:
         case Opcode::SHL: case Opcode::SHR:
@@ -367,6 +391,7 @@ inline std::string operands(const Instruction& ins, const Palette& p = kFlatPale
         case Opcode::ADD: case Opcode::SUB: case Opcode::MUL:
         case Opcode::DIV: case Opcode::MOD:
         case Opcode::POW: case Opcode::LPOW: case Opcode::FPOW: case Opcode::F32POW:
+        case Opcode::FMOD: case Opcode::F32MOD:
         case Opcode::FADD: case Opcode::FSUB: case Opcode::FMUL: case Opcode::FDIV:
         case Opcode::BAND: case Opcode::BOR: case Opcode::BXOR:
         case Opcode::SHL: case Opcode::SHR:
@@ -376,25 +401,61 @@ inline std::string operands(const Instruction& ins, const Palette& p = kFlatPale
         case Opcode::STRING_CONCAT:
         case Opcode::DADD: case Opcode::DSUB: case Opcode::DMUL:
         case Opcode::DDIV: case Opcode::DMOD:
+        case Opcode::LADD: case Opcode::LSUB: case Opcode::LMUL:
+        case Opcode::LDIV: case Opcode::LMOD:
+        case Opcode::LBAND: case Opcode::LBOR: case Opcode::LBXOR:
+        case Opcode::LSHL: case Opcode::LSHR:
+        case Opcode::F32ADD: case Opcode::F32SUB: case Opcode::F32MUL: case Opcode::F32DIV:
             break;
 
-        // ── Bilinçli boş render (flat dump golden spec'i, bkz. başlık) ─────
-        // Longint/float32 aritmetik, long/float32 yükleme ve cast ailesi.
+        // #266: longint/float32 yükleme, dönüşüm ve tekli işlemler.
         case Opcode::LOAD_LONG:
-        case Opcode::LADD: case Opcode::LSUB: case Opcode::LMUL:
-        case Opcode::LDIV: case Opcode::LMOD: case Opcode::LNEG:
-        case Opcode::LBAND: case Opcode::LBOR: case Opcode::LBXOR:
-        case Opcode::LSHL: case Opcode::LSHR: case Opcode::LBNOT:
-        case Opcode::INT_TO_LONG: case Opcode::LONG_TO_INT_CHECKED:
+            os << s(ins.dest) << " " << L("=") << " " << p.value() << ins.int64Value << "L" << reset;
+            break;
         case Opcode::LOAD_FLOAT32:
-        case Opcode::F32ADD: case Opcode::F32SUB: case Opcode::F32MUL:
-        case Opcode::F32DIV: case Opcode::F32NEG:
-        case Opcode::INT_TO_FLOAT32: case Opcode::FLOAT32_TO_INT:
-        case Opcode::FLOAT_TO_FLOAT32: case Opcode::FLOAT32_TO_FLOAT:
+            os << s(ins.dest) << " " << L("=") << " " << p.value() << ins.floatValue << "f" << reset;
+            break;
+        case Opcode::LNEG: case Opcode::F32NEG:
+            os << s(ins.dest) << " " << L("=") << " " << p.op() << "-" << reset << s(ins.src);
+            break;
+        case Opcode::LBNOT:
+            os << s(ins.dest) << " " << L("=") << " " << p.op() << "~" << reset << s(ins.src);
+            break;
+        case Opcode::INT_TO_LONG:
+            os << s(ins.dest) << " " << L("=") << " " << L("(longint)") << s(ins.src);
+            break;
+        case Opcode::INT_TO_FLOAT32: case Opcode::FLOAT_TO_FLOAT32:
+            os << s(ins.dest) << " " << L("=") << " " << L("(float)") << s(ins.src);
+            break;
+        case Opcode::FLOAT32_TO_FLOAT:
+            os << s(ins.dest) << " " << L("=") << " " << L("(double)") << s(ins.src);
+            break;
+        case Opcode::FLOAT32_TO_INT:
+            os << s(ins.dest) << " " << L("=") << " " << L("(int)") << s(ins.src);
+            break;
+        case Opcode::LONG_TO_INT_CHECKED:
+            os << s(ins.dest) << " " << L("=") << " " << L("int?(") << s(ins.src) << L(")")
+               << nullableTag(ins, p);
+            break;
         case Opcode::CAST_INT_TO_BYTE_CHECKED:
-        case Opcode::CAST_LONG_TO_STR: case Opcode::CAST_STR_TO_LONG:
-        case Opcode::CAST_FLOAT32_TO_STR: case Opcode::CAST_STR_TO_FLOAT32:
+            os << s(ins.dest) << " " << L("=") << " " << L("byte?(") << s(ins.src) << L(")")
+               << nullableTag(ins, p);
+            break;
         case Opcode::CAST_FLOAT_TO_LONG_CHECKED:
+            os << s(ins.dest) << " " << L("=") << " " << L("longint?(") << s(ins.src) << L(")")
+               << nullableTag(ins, p);
+            break;
+        case Opcode::CAST_STR_TO_LONG:
+            os << s(ins.dest) << " " << L("=") << " " << L("longint?(") << s(ins.src) << L(")")
+               << nullableTag(ins, p);
+            break;
+        case Opcode::CAST_STR_TO_FLOAT32:
+            os << s(ins.dest) << " " << L("=") << " " << L("float?(") << s(ins.src) << L(")")
+               << nullableTag(ins, p);
+            break;
+        case Opcode::CAST_LONG_TO_STR: case Opcode::CAST_FLOAT32_TO_STR:
+            os << s(ins.dest) << " " << L("=") << " " << L("(string)") << s(ins.src);
+            break;
         case Opcode::LEAVE_TRY:
             break;
     }

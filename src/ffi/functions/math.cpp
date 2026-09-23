@@ -21,8 +21,14 @@
 // Hepsi HOST_PURE: env istemez, heap'e dokunmaz, hata döndürmez
 // (#89: IEEE754 korunur — sqrt(-1) NaN döner, Error FIRLATMAZ).
 
+// #243: std::abs(INT_MIN) C++'ta tanımsız davranıştır (UB). Dilin int
+// sözleşmesi ikiye tümleyen sarmadır (overflow hata vermez, sarar), bu yüzden
+// negasyon unsigned üzerinden yapılır: abs(INT_MIN) == INT_MIN, tanımlı ve
+// VM≡JIT (aynı gövde).
 static int math_abs(HostCallFrame* f) {
-    f->ret = HostSlot::fromInt(std::abs(static_cast<int>(hostAsI64(f->args[0]))));
+    const int v = static_cast<int>(hostAsI64(f->args[0]));
+    const int r = v < 0 ? static_cast<int>(0u - static_cast<unsigned>(v)) : v;
+    f->ret = HostSlot::fromInt(r);
     return 0;
 }
 static int math_absf(HostCallFrame* f) {

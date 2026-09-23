@@ -151,6 +151,16 @@ struct StructObject : Object {
 
 };
 
+// Yerleşik Error struct'ının alan adları — sıra seedBuiltins() ve
+// makeErrorValue ile birebir: [line, col, message, trace, code]. Runtime'da
+// üretilen Error nesneleri (VM makeErrorValue, JIT jitMakeError) bu tabloyu
+// taşır; aksi halde toJson/dump alan adları yerine field0..4 basıyordu (#260).
+inline const std::shared_ptr<std::vector<std::string>>& errorStructFieldNames() {
+    static const auto names = std::make_shared<std::vector<std::string>>(
+        std::vector<std::string>{"line", "col", "message", "trace", "code"});
+    return names;
+}
+
 // ── StringObject (tek string modeli, ADR-024 / ADR-037) ─────────────────────
 //
 // saQut string'i DEĞİŞMEZDİR (ADR-024) ve heap'te bu nesne olarak yaşar.

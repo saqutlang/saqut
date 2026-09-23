@@ -247,6 +247,19 @@ private:
                     newRight->parent = bin;
             }
 
+            // Katlama int32 semantiğiyle hesaplar. Tip denetleyici ifadeyi
+            // longint tiplediyse (longint bağlamındaki literaller, #262)
+            // katlamak sonucu DEĞİŞTİRİR: `longint l = 1000000 * 1000000;`
+            // katlanınca -727379968, katlanmayınca 10^12 veriyordu (ADR-038:
+            // optimizasyon gözlenen sonucu değiştiremez). Bu ifadeler IR'ye
+            // bırakılır; LMUL/LADD 64-bit hesaplar.
+            auto isLongTyped = [](ASTNode* n) {
+                auto* e = dynamic_cast<ExpressionNode*>(n);
+                return e && e->resolvedType.isLongInt();
+            };
+            if (bin->resolvedType.isLongInt() || isLongTyped(bin->Left) || isLongTyped(bin->Right))
+                return bin;
+
             // ── Unary dal: Left==nullptr → !x, ~x, -x, +x ──────────────────
             if (bin->Left == nullptr) {
                 if (!isScalarLit(bin->Right))

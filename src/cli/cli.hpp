@@ -68,7 +68,7 @@ public:
         // Unknown command
         std::cerr << "error: unknown command '" << args.command << "'\n";
         std::cerr << "for available commands: saqut --help\n";
-        return 1;
+        return saqut::exit_code::kUsageError;
     }
 
     void printHelp() const {
@@ -96,6 +96,7 @@ public:
         std::cout << "      --verbose              Print stage progress                         (run, bench)\n";
         std::cout << "      --profile              Report per-stage timings                     (run)\n";
         std::cout << "      --gc-stats             Print GC statistics on exit                  (run)\n";
+        std::cout << "      --max-call-depth=N     Maximum call depth (default 100000)          (run, exec, bench)\n";
         std::cout << "      --gc-threshold=N       GC threshold in bytes; 0 = default,          (run)\n";
         std::cout << "                             negative disables collection\n";
         std::cout << "      --runs=N               Benchmark iterations (default 5)             (bench)\n";

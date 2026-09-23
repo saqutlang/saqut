@@ -12,6 +12,8 @@
 // program reddedilir — bu türler sonraki dilimlerde (kutulama + shadow stack).
 // ============================================================================
 
+#include "core/config.hpp"
+#include <sys/resource.h>
 #include "mir/mir_backend.hpp"
 
 #include <cstring>
@@ -111,6 +113,12 @@ struct JitRuntime {
 
     // Deterministik iz yığını (ADR-025) — yalnızca try'lı fonksiyonlar.
     std::vector<JitTraceFrame> traceStack;
+
+    // #254: saQut çağrı derinliği (VM callStack_ boyunun karşılığı) ve
+    // native yığın koruması. stackBase çalıştırma girişinde kaydedilir.
+    int64_t     callDepth  = 0;
+    const char* stackBase  = nullptr;
+    size_t      stackBudget = 0;
 
     // STRUCT_NEW talimat başına bir kayıt (derleme sırasında dolar).
     std::vector<JitStructMeta> structMeta;
@@ -218,6 +226,7 @@ static StructObject* jitMakeError(std::string message, std::string code,
                                   int64_t line, int64_t col) {
     if (!rt().heap) return nullptr;
     auto* err = rt().heap->allocStruct(5);
+    err->fieldNames = errorStructFieldNames();
     err->fields[0] = Value::fromInt((int)line);
     err->fields[1] = Value::fromInt((int)col);
     err->fields[2] = Value::fromString(std::move(message));
@@ -987,7 +996,7 @@ extern "C" void rt_jit_div_zero(int64_t line, int64_t col) {
 }
 
 extern "C" void rt_jit_mod_zero(int64_t line, int64_t col) {
-    jitSetError("sıfıra bölme (mod)", "E_DIVZERO", line, col);
+    jitSetError("modulo by zero", "E_DIVZERO", line, col);
 }
 
 extern "C" void rt_jit_fdiv_zero(int64_t line, int64_t col) {
@@ -1021,8 +1030,49 @@ extern "C" float rt_jit_pow_f(float base, float exp) {
     return std::powf(base, exp);
 }
 
+// #241: ondalık kalan. MIR'de native fmod yok; gövde VM'in çağırdığı
+// std::fmod'un kendisi (bit-birebir). Sıfır kontrolü kodgen'de inline.
+extern "C" double rt_jit_fmod_d(double a, double b) {
+    return std::fmod(a, b);
+}
+
+extern "C" float rt_jit_fmod_f(float a, float b) {
+    return std::fmod(a, b);
+}
+
+// #254: çağrı derinliği ve native yığın koruması. Çağrı noktasında, çağrıdan
+// ÖNCE: sınır aşılırsa hata bayrağı set edilir ve 1 döner (çağrı yapılmaz).
+// Dönüşte (normal ya da hata yayılımı) rt_jit_call_leave derinliği geri alır.
+extern "C" int64_t rt_jit_call_enter(int64_t line, int64_t col) {
+    char probe = 0;
+    const char* base = rt().stackBase;
+    const bool nativeLow = base && base > &probe &&
+                           static_cast<size_t>(base - &probe) > rt().stackBudget;
+    if (rt().callDepth + 1 >= gMaxCallDepth || nativeLow) {
+        jitSetError("stack overflow: maximum call depth (" + std::to_string(gMaxCallDepth) +
+                        ") exceeded",
+                    "E_STACK_OVERFLOW", line, col);
+        return 1;
+    }
+    ++rt().callDepth;
+    return 0;
+}
+
+extern "C" void rt_jit_call_leave() {
+    --rt().callDepth;
+}
+
+// #255: null struct üzerinde alan erişimi — VM ile aynı yakalanabilir hata.
+extern "C" void rt_jit_null_struct(int64_t line, int64_t col) {
+    jitSetError("null struct access", "E_NULL", line, col);
+}
+
+extern "C" void rt_jit_fmod_zero(int64_t line, int64_t col) {
+    jitSetError("float modulo by zero", "E_DIVZERO", line, col);
+}
+
 extern "C" void rt_jit_pow_negative(int64_t line, int64_t col) {
-    jitSetError("negatif üs tamsayıda tanımsız", "E_POWNEG", line, col);
+    jitSetError("negative exponent is undefined for integers", "E_POWNEG", line, col);
 }
 
 // SlotType → MIR register tipi (MIRPLAN §3; ADR-040 genişletmesi).
@@ -1132,10 +1182,12 @@ bool wholeProgramSupported(IRProgram& program, UnsupportedReason& outReason) {
             if (instr.opcode == Opcode::LOAD_GLOBAL || instr.opcode == Opcode::STORE_GLOBAL) {
                 int slot = instr.opcode == Opcode::LOAD_GLOBAL ? instr.dest : instr.src;
                 SlotType t = slotKindOf(fn, slot);
+                // Date bir i64 epoch-ms'tir; globalI deposunda Int/LongInt
+                // gibi taşınır (VM tarafında türü Value'nun kendisi taşır).
                 if (t != SlotType::Int && t != SlotType::LongInt &&
                     t != SlotType::Float && t != SlotType::Float32 &&
                     t != SlotType::Str && t != SlotType::Decimal &&
-                    t != SlotType::Ref) {
+                    t != SlotType::Ref && t != SlotType::Date) {
                     outReason.functionName = name;
                     outReason.opcodeName = std::string(opcodeName(instr.opcode)) +
                                            " <boxed global>";
@@ -1315,6 +1367,20 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     jitShadowStack().clear();
     rt().structMeta.clear();
     rt().traceStack.clear();
+    rt().callDepth = 0;
+    {
+        // Native yığın bütçesi: RLIMIT_STACK'tan 1 MB güvenlik payı düşülür
+        // (host çağrıları ve MIR çerçeveleri için). Sınırsız ya da okunamazsa
+        // 8 MB varsayılır.
+        char here = 0;
+        rt().stackBase = &here;
+        struct rlimit rl {};
+        size_t total = 8u * 1024 * 1024;
+        if (getrlimit(RLIMIT_STACK, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY)
+            total = static_cast<size_t>(rl.rlim_cur);
+        const size_t margin = 1024u * 1024;
+        rt().stackBudget = total > 2 * margin ? total - margin : total / 2;
+    }
 
     if (program.findFunction("main") == nullptr) {
         outReason.functionName = "main";
@@ -1534,6 +1600,18 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     MIR_item_t powDImport      = MIR_new_import(ctx, "rt_jit_pow_d");
     MIR_item_t powFProto       = MIR_new_proto_arr(ctx, "pow_f_proto", 1, &fRet, 2, powFVars);
     MIR_item_t powFImport      = MIR_new_import(ctx, "rt_jit_pow_f");
+    MIR_item_t fmodDProto      = MIR_new_proto_arr(ctx, "fmod_d_proto", 1, &dRet, 2, powDVars);
+    MIR_item_t fmodDImport     = MIR_new_import(ctx, "rt_jit_fmod_d");
+    MIR_item_t fmodFProto      = MIR_new_proto_arr(ctx, "fmod_f_proto", 1, &fRet, 2, powFVars);
+    MIR_item_t fmodFImport     = MIR_new_import(ctx, "rt_jit_fmod_f");
+    MIR_item_t fmodZeroProto   = MIR_new_proto_arr(ctx, "fmodzero_proto", 0, nullptr, 2, zeroErrVars);
+    MIR_item_t nullStructProto  = MIR_new_proto_arr(ctx, "nullstruct_proto", 0, nullptr, 2, zeroErrVars);
+    MIR_item_t callEnterProto   = MIR_new_proto_arr(ctx, "call_enter_proto", 1, &i64Ret, 2, zeroErrVars);
+    MIR_item_t callEnterImport  = MIR_new_import(ctx, "rt_jit_call_enter");
+    MIR_item_t callLeaveProto   = MIR_new_proto(ctx, "call_leave_proto", 0, nullptr, 0);
+    MIR_item_t callLeaveImport  = MIR_new_import(ctx, "rt_jit_call_leave");
+    MIR_item_t nullStructImport = MIR_new_import(ctx, "rt_jit_null_struct");
+    MIR_item_t fmodZeroImport  = MIR_new_import(ctx, "rt_jit_fmod_zero");
     MIR_item_t powNegProto     = MIR_new_proto_arr(ctx, "pow_neg_proto", 0, nullptr, 2, zeroErrVars);
     MIR_item_t powNegImport    = MIR_new_import(ctx, "rt_jit_pow_negative");
     MIR_item_t errPendingProto = MIR_new_proto_arr(ctx, "err_pending_proto", 1, &i64Ret, 0, nullptr);
@@ -1621,6 +1699,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
         switch (op) {
             case Opcode::DIV: case Opcode::MOD: case Opcode::FDIV:
             case Opcode::LDIV: case Opcode::LMOD: case Opcode::F32DIV:
+            case Opcode::FMOD: case Opcode::F32MOD:
+            case Opcode::FIELD_GET: case Opcode::FIELD_SET:   // #255: null struct
             case Opcode::DADD: case Opcode::DSUB: case Opcode::DMUL:
             case Opcode::DDIV: case Opcode::DMOD:
             // #237: tamsayı ** negatif üste E_POWNEG yayar (float'ta değil).
@@ -2006,6 +2086,19 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                 }
             };
 
+            // #255: null struct'ta alan erişimi. Satır içi tek karşılaştırma;
+            // köprü yalnız hata dalında (FDIV'in sıfır kontrolüyle aynı desen).
+            auto emitNullStructCheck = [&](int objSlot) {
+                MIR_label_t okLabel = MIR_new_label(ctx);
+                MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_BNE,
+                    MIR_new_label_op(ctx, okLabel), R(objSlot), MIR_new_int_op(ctx, 0)));
+                MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 4,
+                    MIR_new_ref_op(ctx, nullStructProto), MIR_new_ref_op(ctx, nullStructImport),
+                    MIR_new_int_op(ctx, instr.sourceLine), MIR_new_int_op(ctx, instr.sourceCol)));
+                emitJumpToErrorTarget();
+                MIR_append_insn(ctx, func, okLabel);
+            };
+
             // Hata konumu: yakalanabilir hata üretebilen opcode'dan ÖNCE
             // rt().errorLine/Col'u doldur — jitSetError defaults olarak bu
             // değerleri kullanır (VM'in instr.sourceLine/sourceCol kullanımıyla
@@ -2347,6 +2440,24 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                         MIR_new_ref_op(ctx, powFProto), MIR_new_ref_op(ctx, powFImport),
                         R(instr.dest), R(instr.left), R(instr.right)));
                     break;
+                // #241: ondalık kalan — sıfır kontrolü inline (FDIV ile aynı
+                // desen), hesap köprü üzerinden std::fmod.
+                case Opcode::FMOD:
+                case Opcode::F32MOD: {
+                    const bool isF32 = instr.opcode == Opcode::F32MOD;
+                    MIR_label_t okLabel = MIR_new_label(ctx);
+                    MIR_append_insn(ctx, func, isF32
+                        ? MIR_new_insn(ctx, MIR_FBNE, MIR_new_label_op(ctx, okLabel), R(instr.right), MIR_new_float_op(ctx, 0.0f))
+                        : MIR_new_insn(ctx, MIR_DBNE, MIR_new_label_op(ctx, okLabel), R(instr.right), MIR_new_double_op(ctx, 0.0)));
+                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 4, MIR_new_ref_op(ctx, fmodZeroProto), MIR_new_ref_op(ctx, fmodZeroImport), MIR_new_int_op(ctx, instr.sourceLine), MIR_new_int_op(ctx, instr.sourceCol)));
+                    emitJumpToErrorTarget();
+                    MIR_append_insn(ctx, func, okLabel);
+                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 5,
+                        MIR_new_ref_op(ctx, isF32 ? fmodFProto : fmodDProto),
+                        MIR_new_ref_op(ctx, isF32 ? fmodFImport : fmodDImport),
+                        R(instr.dest), R(instr.left), R(instr.right)));
+                    break;
+                }
                 // ── Float aritmetiği (Dilim 1.5) ────────────────────────
                 case Opcode::FADD:
                     MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_DADD, R(instr.dest), R(instr.left), R(instr.right)));
@@ -2590,6 +2701,20 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     break;
                 case Opcode::CALL: {
                     const FuncEntry& callee = funcMap.at(instr.functionName);
+                    // #254: derinlik/yığın koruması — aşılırsa çağrı yapılmaz,
+                    // hata hedefine (catch ya da yayılım) atlanır.
+                    {
+                        MIR_reg_t over = newTmp("callover");
+                        MIR_label_t callOk = MIR_new_label(ctx);
+                        MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 5,
+                            MIR_new_ref_op(ctx, callEnterProto), MIR_new_ref_op(ctx, callEnterImport),
+                            MIR_new_reg_op(ctx, over),
+                            MIR_new_int_op(ctx, instr.sourceLine), MIR_new_int_op(ctx, instr.sourceCol)));
+                        MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_BF,
+                            MIR_new_label_op(ctx, callOk), MIR_new_reg_op(ctx, over)));
+                        emitJumpToErrorTarget();
+                        MIR_append_insn(ctx, func, callOk);
+                    }
                     for (size_t ai = 0; ai < instr.argSlots.size(); ++ai) {
                         int as = instr.argSlots[ai];
                         MIR_op_t nullOp = isNullableSlot(as)
@@ -2607,6 +2732,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     for (int argSlot : instr.argSlots) ops.push_back(R(argSlot));
                     MIR_append_insn(ctx, func,
                         MIR_new_insn_arr(ctx, MIR_CALL, ops.size(), ops.data()));
+                    MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 2,
+                        MIR_new_ref_op(ctx, callLeaveProto), MIR_new_ref_op(ctx, callLeaveImport)));
                     if (isNullableSlot(instr.dest))
                         MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 3,
                             MIR_new_ref_op(ctx, callRetNullGetProto),
@@ -2892,6 +3019,7 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     bool isD = (vt == SlotType::Float || vt == SlotType::Float32);
                     bool isP = (vt == SlotType::Ref || vt == SlotType::Str ||
                                 vt == SlotType::Decimal);
+                    emitNullStructCheck(instr.src);
                     MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 5,
                         MIR_new_ref_op(ctx, isD ? fgetDProto : (isP ? fgetPProto : fgetIProto)),
                         MIR_new_ref_op(ctx, isD ? fgetDImport : (isP ? fgetPImport : fgetIImport)),
@@ -2911,6 +3039,7 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     bool isD = (vt == SlotType::Float || vt == SlotType::Float32);
                     bool isP = (vt == SlotType::Ref || vt == SlotType::Str ||
                                 vt == SlotType::Decimal);
+                    emitNullStructCheck(instr.dest);
                     MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 5,
                         MIR_new_ref_op(ctx, isD ? fsetDProto : (isP ? fsetPProto : fsetIProto)),
                         MIR_new_ref_op(ctx, isD ? fsetDImport : (isP ? fsetPImport : fsetIImport)),
@@ -3280,6 +3409,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     case Opcode::DIV: case Opcode::MOD:
                     case Opcode::LDIV: case Opcode::LMOD:
                     case Opcode::FDIV: case Opcode::F32DIV:
+                    case Opcode::FMOD: case Opcode::F32MOD:
+                    case Opcode::FIELD_GET: case Opcode::FIELD_SET:
                         return true;
                     default:
                         return false;
@@ -3426,6 +3557,12 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     MIR_load_external(ctx, "rt_jit_pow_i64",     reinterpret_cast<void*>(rt_jit_pow_i64));
     MIR_load_external(ctx, "rt_jit_pow_d",       reinterpret_cast<void*>(rt_jit_pow_d));
     MIR_load_external(ctx, "rt_jit_pow_f",       reinterpret_cast<void*>(rt_jit_pow_f));
+    MIR_load_external(ctx, "rt_jit_fmod_d",      reinterpret_cast<void*>(rt_jit_fmod_d));
+    MIR_load_external(ctx, "rt_jit_fmod_f",      reinterpret_cast<void*>(rt_jit_fmod_f));
+    MIR_load_external(ctx, "rt_jit_fmod_zero",   reinterpret_cast<void*>(rt_jit_fmod_zero));
+    MIR_load_external(ctx, "rt_jit_null_struct", reinterpret_cast<void*>(rt_jit_null_struct));
+    MIR_load_external(ctx, "rt_jit_call_enter",  reinterpret_cast<void*>(rt_jit_call_enter));
+    MIR_load_external(ctx, "rt_jit_call_leave",  reinterpret_cast<void*>(rt_jit_call_leave));
     MIR_load_external(ctx, "rt_jit_pow_negative", reinterpret_cast<void*>(rt_jit_pow_negative));
 
     MIR_gen_init(ctx);

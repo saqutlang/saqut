@@ -112,7 +112,27 @@ run_live run --dont-optimize
 run_live run --optimized   # geriye uyum: no-op ama usage error vermemeli
 run_live run --jit
 run_live run --profile
-run_live run --allow-fs
-run_live ir --capabilities
 run_live run --gc-stats
 run_live bench --verbose
+
+# N6 (#257): kaldırılmış capability bayrakları (ADR-043) ve tanınmayan
+# bayraklar artık sessizce yutulmaz — kullanım hatası (64).
+for opt in "run --allow-fs" "ir --capabilities" "run --jitt" "run --gc-treshold=5"; do
+    set +e
+    # shellcheck disable=SC2086
+    "$binary" $opt "$f" >"$out" 2>"$err"
+    actual=$?
+    set -e
+    if [ "$actual" -ne 64 ]; then
+        echo "FAIL: '$opt' beklenen exit 64, gercek $actual" >&2
+        exit 1
+    fi
+done
+
+# N7 (#257): dosyadan sonra `--` olmadan gelen argüman düşürülmez — hata.
+set +e
+"$binary" run "$f" foo >"$out" 2>"$err"
+actual=$?
+set -e
+test "$actual" -eq 64
+grep -q -- "--" "$err"

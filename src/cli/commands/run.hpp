@@ -76,7 +76,7 @@ inline int cmdRun(const CliArgs& args) {
 
     // ── Aşama 4 (opsiyonel): Optimizasyon ────────────────────────────────
     if (args.optimize) {
-        profiling::StageTimer::ScopedStage _prof(profilerPtr, "optimizasyon");
+        profiling::StageTimer::ScopedStage _prof(profilerPtr, "optimize");
         CompilerConfig   cfg;
         DiagnosticEngine optDiag;
         // --profile: "geçiş" = fixpoint tur sayısı (her modül için ayrı ayrı
@@ -85,7 +85,7 @@ inline int cmdRun(const CliArgs& args) {
         for (auto& unit : graph.units)
             totalRounds += OptimizationManager(cfg, optDiag)
                                .runPassesInPlace(unit.ast, &symbolTable);
-        if (profilerPtr) profilerPtr->count("optimizasyon", totalRounds, "gecis");
+        if (profilerPtr) profilerPtr->count("optimize", totalRounds, "round");
         if (optDiag.errorCount() + optDiag.warningCount() > 0)
             optDiag.printAll(std::cerr);
     }
@@ -131,17 +131,16 @@ inline int cmdRun(const CliArgs& args) {
         bool jitOk = mir_backend::tryCompileAndRunProgram(
             program, jitResult, reason, args.programArgs, profilerPtr);
         if (jitOk) {
-            if (args.verbose) std::cerr << "[jit] program bastan sona JIT'lendi (VM calismadi)\n";
+            if (args.verbose) std::cerr << "[jit] whole program ran on the JIT (VM not used)\n";
             // --gc-stats: VM ve JIT AYNI formatta raporlar — iki backend aynı
             // GC çekirdeğini kullandığı için sayaçlar karşılaştırılabilirdir.
             if (args.gcStats) printGcStats(std::cerr, mir_backend::lastRunGcStats());
             if (args.profile) stageTimer.printReport(std::cerr);
             return jitResult;
         }
-        std::cerr << "error: --jit bu programi tam olarak derleyemiyor "
-                   << "(fonksiyon '" << reason.functionName << "', desteklenmeyen opcode: "
-                   << reason.opcodeName << ") — VM'e sessizce dusulmuyor, "
-                   << "bkz. MIRPLAN.md.\n";
+        std::cerr << "error: --jit cannot compile this program completely (function '"
+                  << reason.functionName << "', unsupported opcode: " << reason.opcodeName
+                  << "); not falling back to the VM silently. Run without --jit.\n";
         // Kullanıcı --jit'i doğru kullandı (kUsageError değil); programın
         // kendisi de tanı hatası vermedi (kDataError değil) — derleyicinin
         // JIT backend'i istenen işi tam yapamadı. "runtime/compiler çalışma

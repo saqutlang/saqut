@@ -62,6 +62,13 @@ private:
     // literal taraf bağlamsal olarak byte tiplenebilir ama ifade int olabilir.
     int generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTNode* rightNode,
                                  int line = 0, int col = 0, ASTNode* resultNode = nullptr);
+    // Hazır slotlar üzerinde tip-yükseltmeli ikili işlem: opcode seçimi
+    // (decimal/longint/double/float32) ve operand genişletmesi TEK yerde.
+    // generateBinaryArithmetic ve bileşik atama (`x op= y`) bunu paylaşır;
+    // eskiden bileşik atama kendi opcode tablosunu kullanıyor ve int RHS'yi
+    // genişletmiyordu (`d *= k` → çöp, #251).
+    int emitTypedBinary(Opcode opcode, int leftSlot, const Type& leftType, int rightSlot,
+                        const Type& rightType, int line, int col, ASTNode* resultNode);
 
     // ── L-value: yazılabilir bir konum (#237/#238) ───────────────────────
     //
@@ -101,6 +108,14 @@ private:
     // `f++` float32 bir slota int 1 ekler: VM karışık ADD'den geçip yanlış
     // sonuç verir, JIT ise fmov'a int operand geldiğini bildirip çöker.
     int emitOneConstant(const Type& t, const SourceLocation& loc = {});
+
+    // Açık başlangıç değeri olmayan bir bildirimin (yerel, global, struct
+    // alanı) sıfır değerini slota yazar: nullable → null, string → "",
+    // struct → örnek, dizi → boş dizi, skaler → tipli sıfır. Skaler için de
+    // HER ZAMAN yükleme üretilir: slot başka türlü önceki döngü turunun
+    // değerini (VM) ya da başlatılmamış register'ı (JIT) taşırdı.
+    void emitDefaultValue(int destSlot, const std::string& typeName,
+                          const SourceLocation& loc = {});
 
     // Artırma/azaltma ortak gövdesi: önek ve sonek yalnız DÖNDÜRDÜKLERİ
     // değerde ayrışır (önek yeni, sonek eski), yan etki aynıdır.

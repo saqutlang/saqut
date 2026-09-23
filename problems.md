@@ -624,43 +624,43 @@ Not: P-33 (`>>>`) ayrı bir hata değil, P-32'nin yansıması: `a >>> 1` →
 
 ### 10.1 Hemen (v1 öncesi): sessiz yanlış değer, çökme, güvenlik açığı
 
-- [ ] ⚑ Başlatılmamış skaler yerel değişken için kod üretilmiyor (`int x;`, `double d;`) — `src/ir/ir_generator.cpp` VariableDecl son `else` dalı yalnız string/nullable/struct/dizi işliyor; VM'de slot önceki döngü turunun değerini taşıyor (3 yerine 6), JIT'te çöp değer.
+- [x] ⚑ Başlatılmamış skaler yerel değişken için kod üretilmiyor (`int x;`, `double d;`) — `src/ir/ir_generator.cpp` VariableDecl son `else` dalı yalnız string/nullable/struct/dizi işliyor; VM'de slot önceki döngü turunun değerini taşıyor (3 yerine 6), JIT'te çöp değer.
   Her bildirimde tipe göre sıfır yükle (int/long/float/double/decimal/date/enum); struct alanları (`initNestedStructFields`) ve globaller de tipli sıfırla başlasın (bugün `double` alan VM'de `0`, JIT'te `0.0`).
-- [ ] ⚑ Bileşik atama int RHS'yi genişletmiyor (`d *= k` → `1.48e-323`, `f += k` → `1.5`) — `ir_generator.cpp` bileşik atama yolu kendi opcode switch'ini kullanıyor, `generateBinaryArithmetic` dönüşümünü atlıyor.
+- [x] ⚑ Bileşik atama int RHS'yi genişletmiyor (`d *= k` → `1.48e-323`, `f += k` → `1.5`) — `ir_generator.cpp` bileşik atama yolu kendi opcode switch'ini kullanıyor, `generateBinaryArithmetic` dönüşümünü atlıyor.
   Bileşik atama ikili aritmetikle aynı tip-yükseltme rutinini paylaşsın.
-- [ ] P-1: float/double `%` her zaman hata — `FMOD`/`F32MOD` opcode'u yok; `MOD` int yoluna düşüyor (VM float bitlerini int okuyup "sıfıra bölme", JIT `bne` hatası).
+- [x] P-1: float/double `%` her zaman hata — `FMOD`/`F32MOD` opcode'u yok; `MOD` int yoluna düşüyor (VM float bitlerini int okuyup "sıfıra bölme", JIT `bne` hatası).
   `FMOD`/`F32MOD` ekle (`fmod`/`fmodf`), VM+JIT, `%=` dahil.
-- [ ] P-31/P-32/P-33: Eksik ifade raporlanmıyor (`5 +` → 10, `int x = ;`, `>>>`) — `src/parser/parser.cpp` `parseLeftDenotation` `right == nullptr` için tanı üretmiyor; VarDecl ilk değeri ve `return` da aynı.
+- [x] P-31/P-32/P-33: Eksik ifade raporlanmıyor (`5 +` → 10, `int x = ;`, `>>>`) — `src/parser/parser.cpp` `parseLeftDenotation` `right == nullptr` için tanı üretmiyor; VarDecl ilk değeri ve `return` da aynı.
   `expectExpression()` yardımcısı: null → E901 + panic-mode kurtarma; `>>>` kendiliğinden sözdizimi hatası olur.
-- [ ] ⚑ Noktalı virgül her yerde fiilen isteğe bağlı (`int x = 1 print(x);`, `return 0 }`, for başlığı) — `parser.cpp` genelinde `if (SEMICOLON) nextToken();` kalıbı.
+- [x] ⚑ Noktalı virgül her yerde fiilen isteğe bağlı (`int x = 1 print(x);`, `return 0 }`, for başlığı) — `parser.cpp` genelinde `if (SEMICOLON) nextToken();` kalıbı.
   `expect(SEMICOLON)` yardımcısı E905 üretsin; tüm deyim sonları ve for başlığı.
-- [ ] P-2: `date as longint` VM'de int32'ye kırpılıyor (VM≠JIT) — `src/vm/value.hpp` `asI64()` Date'i `(int)` okuyor; `as longint` IR'de yeniden etiketlemiyor.
+- [x] P-2: `date as longint` VM'de int32'ye kırpılıyor (VM≠JIT) — `src/vm/value.hpp` `asI64()` Date'i `(int)` okuyor; `as longint` IR'de yeniden etiketlemiyor.
   Cast yeniden etiketlesin; `asI64`/`asDouble` Date'i 64-bit okusun.
-- [ ] P-3: `abs(INT_MIN)` — `src/ffi/functions/math.cpp` `std::abs(int)`, bu değerde C++ UB.
+- [x] P-3: `abs(INT_MIN)` — `src/ffi/functions/math.cpp` `std::abs(int)`, bu değerde C++ UB.
   Tanımlı davranış (yakalanabilir taşma hatası ya da sarma — ürün kararı).
-- [ ] P-6 + ⚑: Modüller tek global sembol tablosunu paylaşıyor — iki modülde export edilmemiş aynı ad E002; FFI importu diğer modüllere sızıyor (`sqrt` import edilmeden kullanılabiliyor); kaynak dosyada `import {x as y}` çalışmıyor — `src/symbol/symbol_collector.cpp` `validateImports`/`resolveFfiImport`; IR/VM `findFunction(name)` düz ad.
+- [x] P-6 + ⚑: Modüller tek global sembol tablosunu paylaşıyor — iki modülde export edilmemiş aynı ad E002; FFI importu diğer modüllere sızıyor (`sqrt` import edilmeden kullanılabiliyor); kaynak dosyada `import {x as y}` çalışmıyor — `src/symbol/symbol_collector.cpp` `validateImports`/`resolveFfiImport`; IR/VM `findFunction(name)` düz ad.
   Modül başına kapsam; FFI ve kaynak import yerel adı tek rutinle bağlasın; IR'de modül-nitelikli fonksiyon/struct/global adları.
-- [ ] ⚑ Import edilen dosya yol **soneki** ile eşleniyor (`"lib.sqt"` → `mylib.sqt`) — `validateImports` suffix karşılaştırması.
+- [x] ⚑ Import edilen dosya yol **soneki** ile eşleniyor (`"lib.sqt"` → `mylib.sqt`) — `validateImports` suffix karşılaştırması.
   Loader'ın canonical yolunu kullan, tam eşleşme.
-- [ ] ⚑ Global nullable daraltma sağlam değil: `if (g != null) { clear(); g + 1 }` → sessizce `1`; `gs.length()` hiçbir şey basmadan rc=0 — type checker globalleri daraltıyor, çağrıda geçersiz kılmıyor.
+- [x] ⚑ Global nullable daraltma sağlam değil: `if (g != null) { clear(); g + 1 }` → sessizce `1`; `gs.length()` hiçbir şey basmadan rc=0 — type checker globalleri daraltıyor, çağrıda geçersiz kılmıyor.
   Globalleri alanlar gibi daraltma (yerel kopya iste); VM aritmetiğinde null operand E_NULL.
-- [ ] ⚑ Sonsuz özyineleme: VM sınırsız büyüyüp askıda kalıyor, JIT segfault — çağrı derinliği sınırı yok.
+- [x] ⚑ Sonsuz özyineleme: VM sınırsız büyüyüp askıda kalıyor, JIT segfault — çağrı derinliği sınırı yok.
   Yapılandırılabilir derinlik sınırı → yakalanabilir `E_STACK_OVERFLOW` (VM ve JIT aynı).
-- [ ] ⚑ Null struct erişimi yakalanamıyor — `src/vm/interpreter.cpp` FIELD_GET/SET `std::runtime_error("not a struct")`; JIT farklı mesaj; non-nullable öz-referans alan (`Node next;`) başlatma zinciri kesilince null kalıyor.
+- [x] ⚑ Null struct erişimi yakalanamıyor — `src/vm/interpreter.cpp` FIELD_GET/SET `std::runtime_error("not a struct")`; JIT farklı mesaj; non-nullable öz-referans alan (`Node next;`) başlatma zinciri kesilince null kalıyor.
   FIELD_GET/SET yakalanabilir `E_NULL`; non-nullable struct döngüsü için E010'u geri aç (`Node? next` zorunlu).
-- [ ] P-21 + ⚑: Ondalık literal varsayılanı float32, belge double diyor; `double d = 1.0/3.0` → `0.3333333433` — type checker literal tiplemesi.
+- [x] P-21 + ⚑: Ondalık literal varsayılanı float32, belge double diyor; `double d = 1.0/3.0` → `0.3333333433` — type checker literal tiplemesi.
   Bağlamsız ondalık literal double; yalnız float bağlamında float.
-- [ ] ⚑ Büyük int literal longint bağlamını almıyor (`l + 3000000000` → E003) — literal tiplemesi yalnız doğrudan ilk değer/atamada.
+- [x] ⚑ Büyük int literal longint bağlamını almıyor (`l + 3000000000` → E003) — literal tiplemesi yalnız doğrudan ilk değer/atamada.
   Diğer operand longint ise literal longint tiplensin.
-- [ ] ⚑ Bilinmeyen kaçış dizisi sessizce yutuluyor (`"\x41"` → `x41`) — tokenizer/lexer string kaçışları.
+- [x] ⚑ Bilinmeyen kaçış dizisi sessizce yutuluyor (`"\x41"` → `x41`) — tokenizer/lexer string kaçışları.
   Bilinmeyen `\?` derleme hatası.
-- [ ] ⚑ CLI sessiz kabul: `run a.sqt foo bar` argümanları düşürüyor, `--jitt` yok sayılıyor, `--gc-treshold=5` modül adı sanılıyor, `--runs=abc` yutuluyor, argümansız `run` → `source.sqt` (P-27/28/29) — `src/cli/args.hpp`.
+- [x] ⚑ CLI sessiz kabul: `run a.sqt foo bar` argümanları düşürüyor, `--jitt` yok sayılıyor, `--gc-treshold=5` modül adı sanılıyor, `--runs=abc` yutuluyor, argümansız `run` → `source.sqt` (P-27/28/29) — `src/cli/args.hpp`.
   Bilinmeyen bayrak/hatalı sayı → kullanım hatası 64; fazla konumsal argüman hata; `source.sqt` varsayılanı kaldır; `-` uygula ya da kaldır.
-- [ ] ⚑ Kullanıcıya Türkçe mesajlar: `sıfıra bölme (mod)`, `negatif üs…`, JIT "bu programi tam olarak derleyemiyor" — `interpreter.cpp`, `mir_backend.cpp`.
+- [x] ⚑ Kullanıcıya Türkçe mesajlar: `sıfıra bölme (mod)`, `negatif üs…`, JIT "bu programi tam olarak derleyemiyor" — `interpreter.cpp`, `mir_backend.cpp`.
   İngilizce; VM/JIT tek mesaj.
-- [ ] ⚑ Tanılarda değişken adı yerine `'assignment'` (`int? assignment = null;`) — `src/semantic/type_checker.cpp` atama `checkAssign` çağrısında sabit bağlam.
+- [x] ⚑ Tanılarda değişken adı yerine `'assignment'` (`int? assignment = null;`) — `src/semantic/type_checker.cpp` atama `checkAssign` çağrısında sabit bağlam.
   Hedefin adı/ifade metni geçirilsin.
-- [ ] P-37: `Error.toJson()` `field0..4` üretiyor — yerleşik Error layout'u serileştirmede ad taşımıyor.
+- [x] P-37: `Error.toJson()` `field0..4` üretiyor — yerleşik Error layout'u serileştirmede ad taşımıyor.
   Error, kullanıcı struct'larıyla aynı adlı layout yolunu kullansın.
 
 ### 10.2 JIT (deneysel) — v1'de VM≡JIT iddia edilecekse hemen, değilse sonra
@@ -680,7 +680,21 @@ Not: P-33 (`>>>`) ayrı bir hata değil, P-32'nin yansıması: `a >>> 1` →
   Eleman tipinden sonra `?`; eleman türü Value (boxed).
 - [ ] `>>>` mantıksal kaydırma, string sıralaması (P-16), varsayılan parametre/aşırı yükleme (P-36), `auto`, `finally` — dilde yok.
   Ürün kararıyla ayrı özellikler (`>>>` P-32 düzeltmesiyle hemen sözdizimi hatası olur).
-- [ ] ⚑ `saqut ir` dökümü `LOAD_FLOAT32` ve `F32*` operandlarını göstermiyor — `src/ir/ir_dump.hpp`.
+- [x] ⚑ `saqut ir` dökümü `LOAD_FLOAT32` ve `F32*` operandlarını göstermiyor — `src/ir/ir_dump.hpp`.
   Eksik opcode'lar için operand biçimleri.
 - [ ] Doküman/örnek sapmaları: P-9..13, P-20, P-22, P-23, P-34, P-35; `upper()` Unicode iddiası (gerçekte ASCII); `length` bayt/kod noktası çelişkisi (gerçekte kod noktası); knowledge-base; `examples/error.sqt` derlenmiyor; csv örneği `--allow` diyor ve her çalıştırmada kendi `data.csv`'sine kayıt ekliyor; library/csv workaround yorumları bayat (P-14).
   Tek geçişte doküman+örnek düzeltmesi; `examples/` VM ve JIT ile CI'da koşulsun.
+
+### 10.4 Düzeltme sırasında bulunan ek sorunlar (açık)
+
+- [ ] ⚑ JIT'te `Error.trace` `main (?)` basıyor; VM dosya yolunu basıyor (VM≢JIT) — `mir_backend.cpp` trace çerçevesi yalnız try'lı fonksiyonlarda ve dosya bilgisi eksik.
+  JIT iz çerçevesine dosya/konum bilgisini VM ile aynı biçimde taşı.
+- [ ] ⚑ `enum as int` derlenmiyor (belge izinli diyor) — `type_checker.cpp` cast kaynağı yalnız primitive/string kabul ediyor.
+  Enum → int (ve istenirse int → enum) cast'ini matrise ekle.
+- [ ] ⚑ `byte b; b + 300` → E003 (literal byte bağlamına zorlanıyor) — ikili ifadede literal yeniden tipleme.
+  Byte bağlamında aralık dışı literal int kalsın, sonuç int olsun (ürün kararı).
+- [ ] ⚑ Nullable global için `gs.length()` hatasının ipucu `if (gs != null)` öneriyor; globaller artık daraltılmadığı için ipucu yerel kopya önermeli — `checkAssign` düğüm bilmiyor.
+  checkAssign'a düğüm/global bilgisi geçir.
+- [ ] ⚑ Sayı literalinden hemen sonra gelen harf (`2.0d`, `12abc`) iki token'a bölünüyor; artık `;` hatası veriyor ama mesaj yanıltıcı — tokenizer.
+  Geçersiz sayı literali için ayrı sözcüksel tanı (E90x).
+- [ ] Belgeler: `struct Node { Node other; }` (GC sayfası) ve compiler-errors'daki "E010 üretilmez" artık yanlış — E010 non-nullable döngüde üretiliyor; `Node? next` yazılmalı. Yeni kodlar E906/E907 ve E_STACK_OVERFLOW/E_NULL belgelenmeli; bağlamsız ondalık literal artık double.

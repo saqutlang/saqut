@@ -58,6 +58,15 @@ private:
     // token'ına kadar (en az bir token ilerleyerek) atlar ve bir ErrorNode döner.
     ASTNode* synchronizeAndMakeError(const SourceLocation& loc, const std::string& code,
                                        const std::string& message);
+    // expectSemicolon: ';' varsa tüketir; yoksa E905 raporlar ve TÜKETMEZ
+    // (sonraki deyim normal ayrışabilsin). Eskiden her yerde
+    // `if (SEMICOLON) nextToken();` vardı — eksik ';' sessizce kabul ediliyordu.
+    void expectSemicolon(const char* after);
+    // expectExpression: zorunlu ifade konumu. parseExpression nullptr dönerse
+    // (NUD hiçbir kalıba uymadı, tanı basmadı) E901 raporlar. Eksik operand
+    // eskiden sessizce geçiyor, IR'de sol taraf yeniden kullanılıyordu
+    // (`5 +` → 10, `a >>> 1` → 0).
+    ASTNode* expectExpression(const std::string& context, uint16_t precedence = 0);
 
     // --- Üst seviye ---
     ASTNode* parseProgram();

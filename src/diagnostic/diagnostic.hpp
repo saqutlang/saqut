@@ -33,6 +33,9 @@
 //   E902  Sözdizimi hatası — 'as' sonrası tip adı bekleniyor                Faz 2
 //   E903  Sözdizimi hatası — '.'/'->' sonrası üye adı bekleniyor            Faz 2
 //   E904  Sözdizimi hatası — değişken adı bekleniyor                       Faz 2
+//   E905  Sözdizimi hatası — kapanış sınırlayıcısı (';' ')' ']' '}') bekleniyor
+//   E906  Sözcüksel hata — string'de tanınmayan kaçış dizisi (#256)
+//   E907  Sözcüksel hata — kapanmamış string literali (#256)
 //
 // ============================================================================
 
@@ -140,6 +143,8 @@ inline const std::vector<DiagInfo>& diagnosticCatalog() {
         {"E903", DiagLevel::Error,   "Syntax error: expected member name", "expected member name"},
         {"E904", DiagLevel::Error,   "Syntax error: expected variable name", "expected variable name"},
         {"E905", DiagLevel::Error,   "Syntax error: expected closing delimiter", "expected closing delimiter"},
+        {"E906", DiagLevel::Error,   "Syntax error: unknown escape sequence in string literal", "unknown escape sequence"},
+        {"E907", DiagLevel::Error,   "Syntax error: unterminated string literal", "unterminated string literal"},
     };
     return catalog;
 }

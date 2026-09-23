@@ -1,24 +1,24 @@
 IR DUMP
 
 NAME=main PARAMS=0 SLOTS=19
-    0  LOAD_LONG       
-    1  LNEG            
-    2  LBNOT           
-    3  LOAD_FLOAT32    
-    4  F32NEG          
-    5  LONG_TO_INT_CHECKED
+    0  LOAD_LONG       s0 = 100L
+    1  LNEG            s1 = -s0
+    2  LBNOT           s2 = ~s0
+    3  LOAD_FLOAT32    s3 = 1.5f
+    4  F32NEG          s4 = -s3
+    5  LONG_TO_INT_CHECKED s5 = int?(s0) [null]
     6  LOAD_CONST      s6 = 42
-    7  CAST_INT_TO_BYTE_CHECKED
+    7  CAST_INT_TO_BYTE_CHECKED s7 = byte?(s6) [null]
     8  LOAD_FLOAT      s8 = 1.5
-    9  CAST_FLOAT_TO_LONG_CHECKED
+    9  CAST_FLOAT_TO_LONG_CHECKED s9 = longint?(s8) [null]
    10  LOAD_CONST      s10 = 5
-   11  INT_TO_FLOAT32  
-   12  CAST_LONG_TO_STR
+   11  INT_TO_FLOAT32  s11 = (float)s10
+   12  CAST_LONG_TO_STR s12 = (string)s0
    13  LOAD_STRING     s13 = "999"
-   14  CAST_STR_TO_LONG
-   15  CAST_FLOAT32_TO_STR
+   14  CAST_STR_TO_LONG s14 = longint?(s13) [null]
+   15  CAST_FLOAT32_TO_STR s15 = (string)s3
    16  LOAD_STRING     s16 = "2.25"
-   17  CAST_STR_TO_FLOAT32
+   17  CAST_STR_TO_FLOAT32 s17 = float?(s16) [null]
    18  CALLHOST        print(s1)
    19  CALLHOST        print(s2)
    20  CALLHOST        print(s4)

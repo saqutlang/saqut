@@ -128,16 +128,16 @@ static void printTimingTable(const std::vector<PhaseResult>& phases, int runs,
                               const std::string& file, bool compileOnly,
                               const std::string& execLabel) {
     std::cout << "\n=== saQut bench: " << file << " ===\n";
-    std::cout << "Timing çalışması: " << runs;
-    if (compileOnly) std::cout << " | compile-only (çalıştırma atlandı)";
+    std::cout << "Timing runs: " << runs;
+    if (compileOnly) std::cout << " | compile-only (execution skipped)";
     std::cout << "\n\n";
 
     const int W1 = 20, W2 = 12, W3 = 12;
     std::string sep(W1 + W2 + W3 + 6, '-');
 
-    std::cout << std::left  << std::setw(W1) << "Aşama"
-              << std::right << std::setw(W2) << "Ort (µs)"
-              << std::right << std::setw(W3) << "En iyi (µs)"
+    std::cout << std::left  << std::setw(W1) << "Stage"
+              << std::right << std::setw(W2) << "Avg (µs)"
+              << std::right << std::setw(W3) << "Best (µs)"
               << "\n" << sep << "\n";
 
     BMicros compileAvg = 0, compileBest = 0;
@@ -153,7 +153,7 @@ static void printTimingTable(const std::vector<PhaseResult>& phases, int runs,
                   << "\n";
     }
     std::cout << sep << "\n";
-    std::cout << std::left  << std::setw(W1) << "derleme-toplam"
+    std::cout << std::left  << std::setw(W1) << "compile-total"
               << std::right << std::setw(W2) << compileAvg
               << std::right << std::setw(W3) << compileBest << "\n";
 
@@ -162,7 +162,7 @@ static void printTimingTable(const std::vector<PhaseResult>& phases, int runs,
         for (auto& p : phases) {
             if (p.name == execLabel) { execAvg = p.avg(); execBest = p.best(); }
         }
-        std::cout << std::left  << std::setw(W1) << "toplam"
+        std::cout << std::left  << std::setw(W1) << "total"
                   << std::right << std::setw(W2) << (compileAvg + execAvg)
                   << std::right << std::setw(W3) << (compileBest + execBest) << "\n";
     }
@@ -314,10 +314,9 @@ static bool runPipeline(
                                    << " (+warmup " << out.jitWarmupUs/1000 << " ms)\n";
 
             if (!jitOk) {
-                std::cerr << "bench: --jit bu programı tam olarak derleyemiyor "
-                          << "(fonksiyon '" << reason.functionName
-                          << "', desteklenmeyen opcode: " << reason.opcodeName
-                          << ") — VM'e sessizce düşülmüyor.\n";
+                std::cerr << "bench: --jit cannot compile this program completely (function '"
+                          << reason.functionName << "', unsupported opcode: "
+                          << reason.opcodeName << "); not falling back to the VM silently.\n";
                 return false;
             }
             if (profile) {
@@ -364,8 +363,8 @@ static bool runPipeline(
 inline int cmdBench(const CliArgs& args) {
     std::string filePath = inputFilePath(args);
     if (filePath.empty()) {
-        std::cerr << "bench: giriş dosyası gerekli\n";
-        std::cerr << "kullanım: saqut bench <dosya.sqt> [--runs=N] [--compile-only]\n";
+        std::cerr << "bench: an input file is required\n";
+        std::cerr << "usage: saqut bench <file.sqt> [--runs=N] [--compile-only]\n";
         return 1;
     }
 
@@ -379,16 +378,16 @@ inline int cmdBench(const CliArgs& args) {
     // ── Bağımlılık tarama ────────────────────────────────────────────────────
     auto fileSources = discoverModules(filePath);
     if (fileSources.empty()) {
-        std::cerr << "bench: dosya okunamadı veya parse hatası: " << filePath << "\n";
+        std::cerr << "bench: cannot read or parse file: " << filePath << "\n";
         return 1;
     }
 
     size_t totalBytes = 0;
     for (auto& [_, src] : fileSources) totalBytes += src.size();
 
-    std::cerr << "[bench] " << fileSources.size() << " modül, "
+    std::cerr << "[bench] " << fileSources.size() << " module(s), "
               << (totalBytes / 1024) << " KB\n";
-    std::cerr << "[bench] " << N << " timing çalışması...\n";
+    std::cerr << "[bench] " << N << " timing run(s)...\n";
 
     // ── N timing çalışması (profil YOK) ─────────────────────────────────────
     PhaseResult rTok  {"tokenize",       {}};
@@ -445,13 +444,13 @@ inline int cmdBench(const CliArgs& args) {
     if (useJit && !compileOnly) compileSec += rWarm.best() / 1e6;
     if (compileSec > 0) {
         double mbps = (totalBytes / 1024.0 / 1024.0) / compileSec;
-        std::cout << "Derleme verimi (best): "
+        std::cout << "Compile throughput (best): "
                   << std::fixed << std::setprecision(2) << mbps << " MB/s\n";
     }
 
     // ── 1 Profil çalışması (trace etkin) ─────────────────────────────────────
-    std::cerr << "[bench] profil çalışması (trace etkin, süre farklı olabilir)...\n";
-    if (verbose) std::cerr << "[profil çalışması]\n";
+    std::cerr << "[bench] profiling run (tracing enabled, timings may differ)...\n";
+    if (verbose) std::cerr << "[profiling run]\n";
     BenchProfile profile;
     PipelineTimes profTimes;
     if (!runPipeline(fileSources, compileOnly, useJit, programArgs,

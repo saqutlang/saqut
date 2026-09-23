@@ -58,7 +58,42 @@ static std::string nodeHintText(ASTNode* node) {
             return op + nodeHintText(bin->Right);
         return nodeHintText(bin->Left) + " " + op + " " + nodeHintText(bin->Right);
     }
+    // #259: atama hedefleri çoğunlukla alan/eleman konumlarıdır; tanıda
+    // `<expression>` yerine kaynaktaki biçim görünsün (`p.name`, `a[i]`).
+    if (node->kind == ASTKind::MemberAccess) {
+        auto* ma = static_cast<MemberAccessNode*>(node);
+        return nodeHintText(ma->object) + "." + ma->member;
+    }
+    if (node->kind == ASTKind::IndexExpression) {
+        auto* ix = static_cast<IndexExpressionNode*>(node);
+        return nodeHintText(ix->object) + "[" + nodeHintText(ix->index) + "]";
+    }
     return "<expression>";
+}
+
+// #253: global değişken mi? (kök kapsamda tanımlı değişken sembolü)
+// Globaller null kontrolüyle daraltılmaz: araya giren herhangi bir fonksiyon
+// çağrısı onları null'a çekebilir ve tip denetleyici bunu göremez.
+static bool isGlobalVariable(ASTNode* n) {
+    if (!n || n->kind != ASTKind::Identifier)
+        return false;
+    auto* id = static_cast<IdentifierNode*>(n);
+    const Symbol* s = id->resolvedSymbol;
+    return s && s->kind == SymbolKind::Variable && s->scope && s->scope->parent == nullptr;
+}
+
+// Nullable operand hatasının ipucu: global operand için doğru çözüm yerel
+// kopyadır; yerelde null kontrolü yeterlidir.
+static std::string nullableOperandHint(ASTNode* a, ASTNode* b) {
+    ASTNode* g = isGlobalVariable(a) ? a : (isGlobalVariable(b) ? b : nullptr);
+    if (g) {
+        const std::string name = nodeHintText(g);
+        return "global variables are not narrowed by a null check (a function call could reset "
+               "them); copy to a local first: `" + name + "Local = " + name + ";` then check `" +
+               name + "Local != null`";
+    }
+    return "if (variable != null) { /* here it is non-null, safe to use */ } or define the "
+           "variable as non-null type";
 }
 
 int TypeChecker::numericRank(const Type& t) {
@@ -277,7 +312,8 @@ bool TypeChecker::checkAssign(const Type& target, const Type& src, bool srcIsLit
         diag_.report("E003", loc,
                      "'" + ctx + "': cannot assign null to non-null type (" + target.toString() +
                          ")",
-                     "make the type nullable: `" + target.toString() + "? " + ctx + " = null;`");
+                     "declare '" + ctx + "' with a nullable type (`" + target.toString() +
+                         "?`) if it may hold null");
         return false;
     }
 
@@ -756,18 +792,22 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             break;
         }
         case LiteralType::FLOAT:
-            // float literal → decimal bağlamında decimal olur (ADR-028); int bağlamında E003.
+            // Ondalık literal bağlama göre tiplenir: decimal bağlamında decimal
+            // (ADR-028), float bağlamında 32-bit float, int bağlamında E003.
+            // Bağlamsız literal DOUBLE'dır (#261): belge ve AGENTS sözleşmesi
+            // bunu söylüyordu ama varsayılan Float() idi — `double d = 1.0/3.0`
+            // sessizce 32-bit hassasiyetle hesaplanıp 0.3333333433 veriyordu.
             if (!expected.isError() && expected.isDecimal())
                 result = Type::Decimal();
-            else if (!expected.isError() && expected.equals(Type::Double()))
-                result = Type::Double();
+            else if (!expected.isError() && expected.equals(Type::Float()))
+                result = Type::Float();
             else if (!expected.isError() && numericRank(expected) == 0) {
                 diag_.report(
                     "E003", lit->loc, "float literal cannot be used in int context (data loss)",
                     "use an integer literal (e.g. 3 instead of 3.0) or change the variable type to float: `float variable = ...;`");
                 result = Type::error();
             } else {
-                result = Type::Float();
+                result = Type::Double();
             }
             break;
         case LiteralType::BOOLEAN:
@@ -797,7 +837,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         // ADR-021: narrowing — bu değişken null kontrolünden geçtiyse non-null say
         if (result.nullable && id->parserToken.token) {
             std::string name = id->parserToken.token->token;
-            if (narrowedNonNull_.count(name))
+            if (narrowedNonNull_.count(name) && !isGlobalVariable(id))
                 result = result.asNonNull();
         }
         break;
@@ -814,7 +854,11 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             Type leftType = checkExpr(bin->Left);
             Type rightType = checkExpr(bin->Right, leftType);
             bool isLit = bin->Right && bin->Right->kind == ASTKind::Literal;
-            checkAssign(leftType, rightType, isLit, bin->loc, "assignment");
+            // #259: bağlam adı hedefin kaynaktaki biçimidir (`x`, `p.name`,
+            // `a[i]`); eskiden sabit "assignment" yazılıyor, ipucu
+            // `int? assignment = null;` gibi anlamsız kod öneriyordu.
+            checkAssign(leftType, rightType, isLit, bin->loc, nodeHintText(bin->Left),
+                        nodeHintText(bin->Right));
             result = leftType;
             break;
         }
@@ -851,7 +895,82 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             break;
         }
 
-        Type leftType = checkExpr(bin->Left);
+        // #261: ondalık bağlam (float/double/decimal) aritmetik operandlara
+        // iner; böylece `float f = 1.5 * 2.0;` içindeki literaller float,
+        // `decimal m = 0.1 + 0.2;` içindekiler decimal tiplenir. Karşılaştırma
+        // ve mantık operatörlerinin sonucu bool'dur, bağlam aktarılmaz.
+        const bool isArithOp =
+            bin->Operator == TokenType::PLUS || bin->Operator == TokenType::MINUS ||
+            bin->Operator == TokenType::STAR || bin->Operator == TokenType::SLASH ||
+            bin->Operator == TokenType::PERCENT || bin->Operator == TokenType::STAR_STAR;
+        const bool fractionalCtx =
+            !expected.isError() && (expected.isDecimal() || expected.equals(Type::Float()) ||
+                                    expected.equals(Type::Double()));
+        // Bağlam YALNIZ ondalık literallere ve iç içe ifadelere iner; int
+        // literale inmez: `float half = 1 / 2;` belgelendiği gibi tamsayı
+        // bölmesi (0) kalmalı, bağlam onu 0.5'e çevirmemeli.
+        //
+        // longint bağlamı (#262) tamsayı literallere de iner: `longint l =
+        // 1000000 * 1000000;` 32-bit'te sessizce taşıyordu, `longint l =
+        // -9223372036854775807 - 1;` int32 aralık hatası veriyordu. Tamsayı
+        // bölmesi değişmez (7 / 2 her iki genişlikte 3), yalnız taşma kalkar.
+        const bool longCtx = !expected.isError() && expected.isLongInt();
+        const bool isIntArithOp =
+            isArithOp || bin->Operator == TokenType::AMPERSAND ||
+            bin->Operator == TokenType::PIPE || bin->Operator == TokenType::CARET ||
+            bin->Operator == TokenType::LSHIFT || bin->Operator == TokenType::RSHIFT;
+        auto operandCtx = [&](ASTNode* operand) -> Type {
+            if (!operand)
+                return Type::error();
+            if (longCtx && isIntArithOp) {
+                if (operand->kind == ASTKind::Literal)
+                    return static_cast<LiteralNode*>(operand)->literalType == LiteralType::INTEGER
+                               ? expected
+                               : Type::error();
+                return operand->kind == ASTKind::BinaryExpression ? expected : Type::error();
+            }
+            if (!isArithOp || !fractionalCtx)
+                return Type::error();
+            if (operand->kind == ASTKind::Literal)
+                return static_cast<LiteralNode*>(operand)->literalType == LiteralType::FLOAT
+                           ? expected
+                           : Type::error();
+            return operand->kind == ASTKind::BinaryExpression ? expected : Type::error();
+        };
+
+        // #262: literal operand, literal OLMAYAN diğer operandın tipinden
+        // bağlam alır. Eskiden literal önce bağlamsız denetleniyordu: `l +
+        // 3000000000` (l: longint) int32 aralık hatası verip aşağıdaki yeniden
+        // tiplemeye hiç ulaşamıyordu. Ondalık literal tamsayı operanddan
+        // bağlam ALMAZ: `i * 1.5` literali int'e zorlayıp E003 veriyordu;
+        // doğrusu int'in genişlemesidir (int ⊕ double → double).
+        auto fractionalIntoIntegral = [](ASTNode* lit, const Type& other) {
+            return lit && lit->kind == ASTKind::Literal &&
+                   static_cast<LiteralNode*>(lit)->literalType == LiteralType::FLOAT &&
+                   (other.isIntegral() || other.isByte());
+        };
+        auto literalCtx = [&](ASTNode* lit, const Type& other) -> Type {
+            if (!lit || lit->kind != ASTKind::Literal || other.isError() || other.nullable ||
+                !other.isNumeric() || other.isByte() || fractionalIntoIntegral(lit, other))
+                return Type::error();
+            return other;
+        };
+        const bool logicalOp = bin->Operator == TokenType::AMPERSAND_AMPERSAND ||
+                               bin->Operator == TokenType::PIPE_PIPE;
+        const bool leftIsLitOperand = bin->Left && bin->Left->kind == ASTKind::Literal;
+        const bool rightIsLitOperand = bin->Right && bin->Right->kind == ASTKind::Literal;
+        const bool rightFirst = !logicalOp && leftIsLitOperand && !rightIsLitOperand;
+
+        Type leftType, rightType;
+        if (rightFirst) {
+            rightType = checkExpr(bin->Right, operandCtx(bin->Right));
+            Type lc = operandCtx(bin->Left);
+            if (lc.isError())
+                lc = literalCtx(bin->Left, rightType);
+            leftType = checkExpr(bin->Left, lc);
+        } else {
+            leftType = checkExpr(bin->Left, operandCtx(bin->Left));
+        }
 
         // ADR-021: && kısa-devre sağ taraf narrowing — "a != null && a.field"
         if (bin->Operator == TokenType::AMPERSAND_AMPERSAND) {
@@ -865,7 +984,12 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             break;
         }
 
-        Type rightType = checkExpr(bin->Right);
+        if (!rightFirst) {
+            Type rc = operandCtx(bin->Right);
+            if (rc.isError() && !logicalOp && rightIsLitOperand && !leftIsLitOperand)
+                rc = literalCtx(bin->Right, leftType);
+            rightType = checkExpr(bin->Right, rc);
+        }
 
         // Mantıksal (||)
         if (bin->Operator == TokenType::PIPE_PIPE) {
@@ -902,10 +1026,10 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             bin->Operator == TokenType::LESS       || bin->Operator == TokenType::LESS_EQUAL ||
             bin->Operator == TokenType::GREATER    || bin->Operator == TokenType::GREATER_EQUAL) {
             if (bin->Left && bin->Left->kind == ASTKind::Literal && !rightType.isError() &&
-                rightType.isNumeric())
+                rightType.isNumeric() && !fractionalIntoIntegral(bin->Left, rightType))
                 leftType = checkExpr(bin->Left, rightType);
             if (bin->Right && bin->Right->kind == ASTKind::Literal && !leftType.isError() &&
-                leftType.isNumeric())
+                leftType.isNumeric() && !fractionalIntoIntegral(bin->Right, leftType))
                 rightType = checkExpr(bin->Right, leftType);
         }
 
@@ -932,7 +1056,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                     "E003", bin->loc,
                     "nullable operand: '" + leftType.toString() + "' and '" + rightType.toString() +
                         "' — check for null or narrow",
-                    "if (variable != null) { /* here it is non-null, safe to use */ } or define the variable as non-null type");
+                    nullableOperandHint(bin->Left, bin->Right));
                 result = Type::error();
             } else if (leftType.isNumeric() && rightType.isNumeric()) {
                 result = Type::Bool();
@@ -959,7 +1083,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 "E003", bin->loc,
                 "nullable operand: '" + leftType.toString() + "' and '" + rightType.toString() +
                     "' — check for null or narrow",
-                "if (variable != null) { /* here it is non-null, safe to use */ } or define the variable as non-null type");
+                nullableOperandHint(bin->Left, bin->Right));
             result = Type::error();
             break;
         }
@@ -994,10 +1118,10 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         // (d: double) sağdaki `0.2` bağlamsız Float() (32-bit) tiplenir, sonra
         // double'a genişletilir ve çift-yuvarlama precision farkı sızar.
         if (bin->Left && bin->Left->kind == ASTKind::Literal && !rightType.isError() &&
-            rightType.isNumeric())
+            rightType.isNumeric() && !fractionalIntoIntegral(bin->Left, rightType))
             leftType = checkExpr(bin->Left, rightType);
         if (bin->Right && bin->Right->kind == ASTKind::Literal && !leftType.isError() &&
-            leftType.isNumeric())
+            leftType.isNumeric() && !fractionalIntoIntegral(bin->Right, leftType))
             rightType = checkExpr(bin->Right, leftType);
 
         // byte aritmetiği (ADR-040 Faz 4 kararı, ürün sahibi 2026-09-13):
@@ -1206,7 +1330,8 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             // çalışmaz ve kullanıcıyı çalışmayan bir yola sokuyordu.
             const std::string nonNullType =
                 objType.toString().substr(0, objType.toString().size() - 1);
-            const bool isPlainVariable = ma->object->kind == ASTKind::Identifier;
+            const bool isPlainVariable = ma->object->kind == ASTKind::Identifier &&
+                                         !isGlobalVariable(ma->object);
             diag_.report(
                 "E003", node->loc,
                 "direct access on nullable type '" + objType.toString() +
@@ -1524,8 +1649,10 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             if (isLit && !expectedType.isError())
                 argType = checkExpr(sc->arguments[i], expectedType);
             if (!argType.isError() && !expectedType.isError()) {
+                // #259: bağlam, argümanın kaynaktaki biçimidir (`gs` in
+                // `gs.length()`); "`.length arg 1`" anlamsız ipucu üretiyordu.
                 if (!checkAssign(expectedType, argType, isLit, sc->arguments[i]->loc,
-                                 displayName + " arg " + std::to_string(i + 1)))
+                                 nodeHintText(sc->arguments[i]), nodeHintText(sc->arguments[i])))
                     anyError = true;
             }
         }
@@ -1623,6 +1750,32 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                          "use `value as string` — result will be \"true\" or \"false\"");
             result = Type::error();
             break;
+        }
+
+        // #242: date yalnız longint (epoch-ms) ile iki yönlü, string'e tek
+        // yönlü dönüşür. Eskiden her sayısal hedef kabul edilip IR'de düz
+        // kopyaya düşüyordu: `d as int` 64-bit değeri int slotuna koyuyor,
+        // `d as longint` Date etiketini taşıyıp VM karşılaştırmasını int32'ye
+        // kırpıyordu.
+        {
+            const bool srcIsDate = srcType.isDate();
+            const bool tgtIsDate = targetBase.isDate();
+            if ((srcIsDate || tgtIsDate) && !srcType.isError()) {
+                const bool ok = (srcIsDate && tgtIsDate) ||
+                                (srcIsDate && (targetBase.isLongInt() || tgtIsStr)) ||
+                                (tgtIsDate && srcType.isLongInt());
+                if (!ok) {
+                    diag_.report("E003", cast->loc,
+                                 "'" + srcType.toString() + "' cannot be cast to '" +
+                                     targetBase.toString() +
+                                     "' — date converts only to/from longint (epoch milliseconds) "
+                                     "or to string",
+                                 srcIsDate ? "use `value as longint` for epoch milliseconds"
+                                           : "convert to longint first: `value as longint as date`");
+                    result = Type::error();
+                    break;
+                }
+            }
         }
 
         // string→bool forbidden

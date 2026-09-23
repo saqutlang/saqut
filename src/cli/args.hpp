@@ -12,7 +12,11 @@
 // DESTEKLENEN FORMATLAR:
 //   saqut <komut> [dosya] [-o çıktı] [--help]
 //   saqut run file:source.sqt           (eski sözdizimi)
-//   saqut -                             (stdin — TODO)
+//
+// Tanınmayan bayrak, bozuk sayısal değer, fazladan/eksik konumsal argüman
+// kullanım hatasıdır (64): eskiden hepsi sessizce yutuluyordu (#257) —
+// `run a.sqt foo` argümanı düşürüyor, `--jitt` yok sayılıyor, argümansız
+// `run` gizli bir `source.sqt` arıyordu.
 //
 // ============================================================================
 
@@ -26,6 +30,7 @@
 #include <string>
 #include <vector>
 #include "cli/exit_codes.hpp"
+#include "core/config.hpp"
 
 struct CliArgs {
     std::string command;
@@ -62,7 +67,29 @@ struct CliArgs {
 
     // `--` sonrası argümanlar — sys::args() ile programa geçilir.
     std::vector<std::string> programArgs;
+
+    // Boş değilse ayrıştırma bir kullanım hatası buldu; main 64 ile çıkar.
+    std::string usageError;
 };
+
+// Sayısal bayrak değeri: tamamı tamsayı değilse false (`--runs=abc`, `--runs=5x`).
+inline bool parseIntFlag(const std::string& text, int& out) {
+    if (text.empty()) return false;
+    try {
+        size_t used = 0;
+        int v = std::stoi(text, &used);
+        if (used != text.size()) return false;
+        out = v;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+inline bool isKnownCommand(const std::string& s) {
+    return s == "run" || s == "tokens" || s == "ast" || s == "symbols" || s == "check" ||
+           s == "ir" || s == "exec" || s == "lsp" || s == "dap" || s == "bench" || s == "help";
+}
 
 // ============================================================================
 // parseArgs
@@ -80,7 +107,10 @@ inline CliArgs parseArgs(int argc, char* argv[]) {
             break;
         }
         if (arg == "-") {
-            args.stdinMode = true;
+            // Kaynaktan okuma yalnız dosya yoluyla: modül çözümlemesi
+            // import yollarını dosyanın dizinine göre çözer (bkz. modules).
+            args.usageError = "reading the program from standard input is not supported; "
+                              "pass a file path";
             continue;
         }
         if (arg == "-h" || arg == "--help") {
@@ -137,11 +167,24 @@ inline CliArgs parseArgs(int argc, char* argv[]) {
             exit(0);
         }
         if (arg.compare(0, 7, "--runs=") == 0) {
-            try { args.benchRuns = std::stoi(arg.substr(7)); } catch (...) {}
+            if (!parseIntFlag(arg.substr(7), args.benchRuns) || args.benchRuns < 1)
+                args.usageError = "invalid value for --runs: '" + arg.substr(7) +
+                                  "' (expected a positive integer)";
+            continue;
+        }
+        if (arg.compare(0, 17, "--max-call-depth=") == 0) {
+            int v = 0;
+            if (!parseIntFlag(arg.substr(17), v) || v < 1)
+                args.usageError = "invalid value for --max-call-depth: '" + arg.substr(17) +
+                                  "' (expected a positive integer)";
+            else
+                gMaxCallDepth = v;
             continue;
         }
         if (arg.compare(0, 15, "--gc-threshold=") == 0) {
-            try { args.gcThreshold = std::stoi(arg.substr(15)); } catch (...) {}
+            if (!parseIntFlag(arg.substr(15), args.gcThreshold))
+                args.usageError = "invalid value for --gc-threshold: '" + arg.substr(15) +
+                                  "' (expected an integer)";
             continue;
         }
         if (arg == "--gc-stats") {
@@ -169,13 +212,39 @@ inline CliArgs parseArgs(int argc, char* argv[]) {
             continue;
         }
 
-        // İlk argüman komut mu?
+        // LSP/DAP istemcilerinin yaygın taşıma bayrağı — stdio zaten tek yol.
+        if (arg == "--stdio") {
+            continue;
+        }
+        // ADR-043: capability sistemi 0.9.4'te kaldırıldı; eski betikler
+        // `--allow*` / `--capabilities` geçebilir — neden reddedildiğini söyle.
+        if (arg.compare(0, 7, "--allow") == 0 || arg == "--capabilities") {
+            if (args.usageError.empty())
+                args.usageError = "option '" + arg + "' was removed: the capability system no "
+                                  "longer exists (ADR-043); host calls are open by default";
+            continue;
+        }
+        // Tanınmayan bayrak: sessizce konumsal argüman ya da modül adı
+        // sayılmaz (eskiden `--gc-treshold=5` "cannot open module" veriyordu).
+        if (arg.size() > 1 && arg[0] == '-') {
+            if (args.usageError.empty())
+                args.usageError = "unknown option '" + arg + "'";
+            continue;
+        }
+
+        // İlk argüman komut mu? Değilse ve bir dosyaya benziyorsa `run`
+        // kısayolu (`saqut prog.sqt`); ikisi de değilse bilinmeyen komut —
+        // eskiden `saqut compile x.sqt` "cannot open module 'compile'" diyordu.
         if (args.command.empty() && i == 1) {
-            if (arg == "run"    || arg == "tokens"  || arg == "ast" ||
-                arg == "symbols" || arg == "check"   || arg == "ir"      ||
-                arg == "exec"    || arg == "lsp"     || arg == "dap"     ||
-                arg == "bench") {
+            if (isKnownCommand(arg)) {
                 args.command = arg;
+                continue;
+            }
+            std::ifstream probe(arg);
+            const bool looksLikeFile = probe.good() ||
+                (arg.size() > 4 && arg.compare(arg.size() - 4, 4, ".sqt") == 0);
+            if (!looksLikeFile) {
+                args.usageError = "unknown command '" + arg + "'";
                 continue;
             }
             args.command = "run";
@@ -187,8 +256,23 @@ inline CliArgs parseArgs(int argc, char* argv[]) {
     }
 
     if (args.command.empty()) args.command = "run";
-    if (args.positional.empty() && !args.stdinMode)
-        args.positional.push_back("source.sqt");
+
+    // Komut başına konumsal argüman sayısı. Fazlası sessizce düşmez: program
+    // argümanı olmaları muhtemeldir ve `--` sonrasına gitmeleri gerekir.
+    if (args.usageError.empty() && !args.showHelp && args.command != "help") {
+        const bool noPositional = args.command == "lsp" || args.command == "dap";
+        const size_t maxPositional = noPositional ? 0 : 1;
+        if (args.positional.size() > maxPositional) {
+            const std::string& extra = args.positional[maxPositional];
+            args.usageError = "unexpected argument '" + extra + "'";
+            if (args.command == "run" || args.command == "exec" || args.command == "bench")
+                args.usageError += " (program arguments go after '--': saqut " + args.command +
+                                   " <file> -- " + extra + ")";
+        } else if (!noPositional && args.positional.empty()) {
+            args.usageError = args.command == "exec" ? "no expression given (saqut exec \"1 + 2\")"
+                                                     : "no input file";
+        }
+    }
 
     return args;
 }

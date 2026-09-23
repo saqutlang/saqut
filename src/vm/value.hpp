@@ -132,12 +132,13 @@ public:
     // karşılaştırmaları double üzerinden yapılır (typechecker izin verdiği ölçüde).
     bool isFloaty()  const { return kind == ValueKind::Float || kind == ValueKind::Float32; }
     bool isIntegral() const { return kind == ValueKind::Int || kind == ValueKind::LongInt; }
+    // Date bir 64-bit epoch-ms'tir: int32'ye kırpılmamalı (#242).
     long long asI64() const {
-        return kind == ValueKind::LongInt ? p.i : (long long)(int)p.i;
+        return (kind == ValueKind::LongInt || kind == ValueKind::Date) ? p.i : (long long)(int)p.i;
     }
     double asDouble() const {
         if (isFloaty()) return p.d;
-        if (kind == ValueKind::LongInt) return (double)p.i;
+        if (kind == ValueKind::LongInt || kind == ValueKind::Date) return (double)p.i;
         return (double)(int)p.i;
     }
 

@@ -32,7 +32,7 @@ inline int cmdTokens(const CliArgs& args) {
     Tokenizer tokenizer;
     auto tokens = tokenizer.scan(source, inputFilePath(args));
 
-    std::cout << "Tokenler (" << tokens.size() << " adet):\n";
+    std::cout << "Tokens (" << tokens.size() << "):\n";
     for (auto* t : tokens) {
         std::cout << "  [" << t->gettype() << "] \"" << t->token << "\"  "
                   << t->loc.toString() << "  byteOffset=" << t->start

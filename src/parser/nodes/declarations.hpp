@@ -83,6 +83,9 @@ public:
     // ADR-034 (#107): tırnaklı kaynak = dosya yolu; tırnaksız ad = gömülü/
     // çözümlenen modül. Parser bu ayrımı işaretler ki loader doğru çözsün.
     bool                     isModuleName = false;
+    // ModuleLoader'ın çözdüğü canonical mutlak yol (dosya importu). Sembol
+    // toplayıcı kaynak modülü bununla TAM eşleşmeyle bulur (#252).
+    std::string              resolvedPath;
     ImportDeclNode();
     void log(int indent = 0) override;
     std::string toJson(int depth = 0) override;

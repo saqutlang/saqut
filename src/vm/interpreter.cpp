@@ -11,6 +11,7 @@
 //
 // ============================================================================
 
+#include "core/config.hpp"
 #include "vm/interpreter.hpp"
 #include "core/int_arithmetic.hpp"
 #include "gc/gc_object.hpp"
@@ -68,6 +69,7 @@ Value Interpreter::makeErrorValue(const std::string& message,
                                    const std::string& code,
                                    int line, int col) {
     StructObject* obj = heap_.allocStruct(5);
+    obj->fieldNames = errorStructFieldNames();
     obj->fields[0] = Value::fromInt(line);
     obj->fields[1] = Value::fromInt(col);
     obj->fields[2] = Value::fromString(message);
@@ -484,21 +486,21 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
         }
         case Opcode::MOD: {
             int d = frame.slots[instr.right].intValue();
-            if (d == 0) { pendingThrow_ = makeErrorValue("sıfıra bölme (mod)", "E_DIVZERO", instr.sourceLine, instr.sourceCol); break; }
+            if (d == 0) { pendingThrow_ = makeErrorValue("modulo by zero", "E_DIVZERO", instr.sourceLine, instr.sourceCol); break; }
             frame.slots[instr.dest] = Value::fromInt(wrapModI32(frame.slots[instr.left].intValue(), d));
             break;
         }
         // #237: ** — negatif üs tamsayıda kesirli sonuç verirdi, hata.
         case Opcode::POW: {
             int e = frame.slots[instr.right].intValue();
-            if (e < 0) { pendingThrow_ = makeErrorValue("negatif üs tamsayıda tanımsız", "E_POWNEG", instr.sourceLine, instr.sourceCol); break; }
+            if (e < 0) { pendingThrow_ = makeErrorValue("negative exponent is undefined for integers", "E_POWNEG", instr.sourceLine, instr.sourceCol); break; }
             frame.slots[instr.dest] = Value::fromInt(
                 wrapPowI32(frame.slots[instr.left].intValue(), e));
             break;
         }
         case Opcode::LPOW: {
             long long e = frame.slots[instr.right].int64Value();
-            if (e < 0) { pendingThrow_ = makeErrorValue("negatif üs tamsayıda tanımsız", "E_POWNEG", instr.sourceLine, instr.sourceCol); break; }
+            if (e < 0) { pendingThrow_ = makeErrorValue("negative exponent is undefined for integers", "E_POWNEG", instr.sourceLine, instr.sourceCol); break; }
             frame.slots[instr.dest] = Value::fromLongInt(
                 wrapPowI64(frame.slots[instr.left].int64Value(), e));
             break;
@@ -660,6 +662,14 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
             if (!callee)
                 throw std::runtime_error(
                     "'" + instr.functionName + "' function not found");
+            // #254: derinlik sınırı — yakalanabilir hata, çağrı yapılmaz.
+            if ((int)callStack_.size() >= gMaxCallDepth) [[unlikely]] {
+                pendingThrow_ = makeErrorValue(
+                    "stack overflow: maximum call depth (" + std::to_string(gMaxCallDepth) +
+                        ") exceeded",
+                    "E_STACK_OVERFLOW", instr.sourceLine, instr.sourceCol);
+                break;
+            }
 
             CallFrame newFrame;
             newFrame.function           = callee;
@@ -735,6 +745,21 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
                 std::pow(frame.slots[instr.left].floatValue(),
                          frame.slots[instr.right].floatValue()));
             break;
+        // #241: ondalık kalan. `/` ile aynı sözleşme: sıfır bölen IEEE NaN
+        // değil, yakalanabilir E_DIVZERO. JIT aynı std::fmod gövdesini çağırır.
+        case Opcode::FMOD: {
+            double r = frame.slots[instr.right].floatValue();
+            if (r == 0.0) { pendingThrow_ = makeErrorValue("float modulo by zero", "E_DIVZERO", instr.sourceLine, instr.sourceCol); break; }
+            frame.slots[instr.dest] = Value::fromFloat(std::fmod(frame.slots[instr.left].floatValue(), r));
+            break;
+        }
+        case Opcode::F32MOD: {
+            float r = (float) frame.slots[instr.right].floatValue();
+            if (r == 0.0f) { pendingThrow_ = makeErrorValue("float modulo by zero", "E_DIVZERO", instr.sourceLine, instr.sourceCol); break; }
+            frame.slots[instr.dest] = Value::fromFloat32(
+                std::fmod((float) frame.slots[instr.left].floatValue(), r));
+            break;
+        }
         case Opcode::FNEG:
             frame.slots[instr.dest] = Value::fromFloat(-frame.slots[instr.src].floatValue());
             break;
@@ -829,7 +854,7 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
         }
         case Opcode::LMOD: {
             long long d = frame.slots[instr.right].int64Value();
-            if (d == 0) { pendingThrow_ = makeErrorValue("sıfıra bölme (mod)", "E_DIVZERO", instr.sourceLine, instr.sourceCol); break; }
+            if (d == 0) { pendingThrow_ = makeErrorValue("modulo by zero", "E_DIVZERO", instr.sourceLine, instr.sourceCol); break; }
             frame.slots[instr.dest] = Value::fromLongInt(
                 wrapModI64(frame.slots[instr.left].int64Value(), d));
             break;
@@ -915,8 +940,13 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
         }
         case Opcode::FIELD_GET: {
             Value& objVal = frame.slots[instr.src];
-            if (objVal.kind != ValueKind::Ref || !objVal.ref())
-                throw std::runtime_error("not a struct");
+            // #255: null struct üzerinde alan erişimi yakalanabilir bir
+            // runtime hatasıdır (E_NULL), süreç sonlandıran std::runtime_error
+            // değil. JIT aynı mesaj/kodu üretir (rt_jit_null_struct).
+            if (objVal.kind != ValueKind::Ref || !objVal.ref()) {
+                pendingThrow_ = makeErrorValue("null struct access", "E_NULL", instr.sourceLine, instr.sourceCol);
+                break;
+            }
             auto* obj = (StructObject*)objVal.ref();
             int idx = instr.intValue;
             if (idx < 0 || idx >= (int)obj->fields.size())
@@ -926,8 +956,10 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
         }
         case Opcode::FIELD_SET: {
             Value& objVal = frame.slots[instr.dest];
-            if (objVal.kind != ValueKind::Ref || !objVal.ref())
-                throw std::runtime_error("not a struct");
+            if (objVal.kind != ValueKind::Ref || !objVal.ref()) {
+                pendingThrow_ = makeErrorValue("null struct access", "E_NULL", instr.sourceLine, instr.sourceCol);
+                break;
+            }
             auto* obj = (StructObject*)objVal.ref();
             int idx = instr.intValue;
             if (idx < 0 || idx >= (int)obj->fields.size())
@@ -1030,8 +1062,10 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
         }
         case Opcode::ARRAY_LEN: {
             Value& arrVal = frame.slots[instr.src];
-            if (arrVal.kind != ValueKind::Ref || !arrVal.ref())
-                throw std::runtime_error("not an array");
+            if (arrVal.kind != ValueKind::Ref || !arrVal.ref()) {
+                pendingThrow_ = makeErrorValue("null array access", "E_NULL", instr.sourceLine, instr.sourceCol);
+                break;
+            }
             auto* arr = (ArrayObject*)arrVal.ref();
             // #206: elemKind'a göre doğru buffer'ın size'ını döndür
             int len = 0;

@@ -21,6 +21,7 @@
 #ifndef SAQUT_DIAGNOSTIC_ENGINE
 #define SAQUT_DIAGNOSTIC_ENGINE
 
+#include <cctype>
 #include <string>
 #include <vector>
 #include <ostream>
@@ -43,6 +44,23 @@ public:
     // --- Ekleme ---
     void report(const Diagnostic& d) {
         diagnostics_.push_back(d);
+        // #246: modül ad alanı geçişinin iç adları (`helper@2`) kullanıcıya
+        // görünmez; tanılar kaynakta yazılan adı gösterir.
+        auto strip = [](std::string& t) {
+            std::string out;
+            for (size_t i = 0; i < t.size(); ++i) {
+                if (t[i] == '@' && i > 0 && i + 1 < t.size() &&
+                    (std::isalnum((unsigned char)t[i - 1]) || t[i - 1] == '_' || t[i - 1] == '$') &&
+                    std::isdigit((unsigned char)t[i + 1])) {
+                    while (i + 1 < t.size() && std::isdigit((unsigned char)t[i + 1])) ++i;
+                    continue;
+                }
+                out += t[i];
+            }
+            t = out;
+        };
+        strip(diagnostics_.back().message);
+        strip(diagnostics_.back().hint);
     }
 
     // Kolaylık: koddan üret + ekle (seviye kataloğdan çözülür)

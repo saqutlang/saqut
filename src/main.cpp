@@ -87,5 +87,12 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // #257: kullanım hataları sessizce yutulmaz.
+    if (!args.usageError.empty()) {
+        std::cerr << "error: " << args.usageError << "\n";
+        std::cerr << "for usage: saqut --help\n";
+        return saqut::exit_code::kUsageError;
+    }
+
     return cli.dispatch(args);
 }

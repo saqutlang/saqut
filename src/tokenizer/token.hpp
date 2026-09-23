@@ -36,6 +36,10 @@ public:
     StringToken()             { type = "string"; }
     std::string context;
     int size = 0;
+    // Tokenizer'ın tanı kanalı yok; sözcüksel hatalar burada işaretlenir ve
+    // parser (diag sahibi) string literalini kurarken raporlar (#256).
+    std::string badEscapes;      // tanınmayan kaçışların harfleri (`\x` → 'x')
+    bool        unterminated = false; // kapanış '"' bulunamadan dosya bitti
 };
 
 class NumberToken : public Token {

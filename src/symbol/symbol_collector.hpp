@@ -71,6 +71,8 @@ private:
 
     // struct adı → içerdiği struct-tip alan adları (cycle check için)
     std::unordered_map<std::string, std::vector<std::string>> structFields_;
+    // struct adı → bildirimi (E010 tanısının alan konumunu bulmak için)
+    std::unordered_map<std::string, ASTNode*> structDecls_;
 
     // Mevcut modülün import ettiği isimler (pass2 sınır kontrolü için)
     std::unordered_set<std::string> currentModuleImports_;

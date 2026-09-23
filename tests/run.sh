@@ -161,7 +161,7 @@ while IFS= read -r -d '' sqt; do
     set +e
     jit_err=$("$SAQUT" run --jit "${extra_flags[@]}" "$sqt" 2>&1 >/dev/null)
     set -e
-    if echo "$jit_err" | grep -q "desteklenmeyen opcode"; then
+    if echo "$jit_err" | grep -q "unsupported opcode"; then
         DSKIP=$((DSKIP + 1))
         continue
     fi
@@ -306,7 +306,7 @@ for gf in "$ROOT"/tests/golden/gc/*.sqt "$ROOT"/tests/golden/ir/wide_cast_operan
     for backend in "" "--jit"; do
         got=$("$SAQUT" run $backend --gc-threshold=1 "$gf" 2>/dev/null)
         # JIT desteklemiyorsa bu fixture o backend'de atlanır
-        if [ -z "$backend" ] || ! "$SAQUT" run --jit "$gf" 2>&1 | grep -q "tam olarak derleyemiyor"; then
+        if [ -z "$backend" ] || ! "$SAQUT" run --jit "$gf" 2>&1 | grep -q "cannot compile this program completely"; then
             if [ "$got" != "$(cat "$exp")" ]; then
                 echo "  FAIL: $(basename "$gf") ${backend:-vm} agresif eşikte çıktı bozuldu"
                 agfail=$((agfail+1))
@@ -336,7 +336,7 @@ optpass=0; optfail=0
 while IFS= read -r f; do
     for backend in "" "--jit"; do
         # JIT desteklemiyorsa o backend'de atla
-        if [ -n "$backend" ] && "$SAQUT" run --jit "$f" </dev/null 2>&1 | grep -q "tam olarak derleyemiyor"; then
+        if [ -n "$backend" ] && "$SAQUT" run --jit "$f" </dev/null 2>&1 | grep -q "cannot compile this program completely"; then
             continue
         fi
         # Kasten hata veren fixture'lar sıfırdan farklı exit döndürür

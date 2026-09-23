@@ -34,7 +34,7 @@ execute_process(
     RESULT_VARIABLE JIT_EXIT
 )
 
-if(JIT_ERR MATCHES "desteklenmeyen opcode")
+if(JIT_ERR MATCHES "unsupported opcode")
     message(STATUS "SKIP: JIT bu fixture'i henuz derlemiyor — ${SOURCE}\n${JIT_ERR}")
     return()
 endif()

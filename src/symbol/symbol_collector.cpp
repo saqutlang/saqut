@@ -13,6 +13,7 @@
 // ============================================================================
 
 #include "symbol/symbol_collector.hpp"
+#include <filesystem>
 #include <functional>
 #include "parser/nodes/program.hpp"
 #include "parser/nodes/declarations.hpp"
@@ -23,6 +24,7 @@
 #include "ffi/ffi_catalog.hpp"
 #include "ffi/host_registry.hpp"
 #include "core/module_registry.hpp"
+#include "module/module_namespacer.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // collect — tek dosya (geriye dönük uyumluluk)
@@ -42,6 +44,10 @@ void SymbolCollector::collect(ASTNode* program) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void SymbolCollector::collectModuleGraph(ModuleGraph& graph) {
+    // #246: modül başına ad alanı — çakışan üst düzey adlar ve import takma
+    // adları sembol toplamadan önce AST'de çözülür (module_namespacer.hpp).
+    namespaceModules(graph, diag_);
+
     seedBuiltins();
 
     // Geçiş 1a: tüm modüllerde sadece tip isimlerini kaydet
@@ -134,6 +140,7 @@ void SymbolCollector::pass1aRegisterNames(ASTNode* program, int moduleId) {
                                       Type::structType(st->name), st->loc, moduleId);
             if (!s) break; // çakışma — pass1b'de hata üretilecek
             structFields_[st->name]; // cycle checker için boş giriş aç
+            structDecls_[st->name] = st;
             break;
         }
 
@@ -304,25 +311,22 @@ void SymbolCollector::validateImports(ModuleGraph& graph) {
                 continue;
             }
 
-            // Kaynak modülün moduleId'sini bul
-            // sourcePath ham string; loader canonical yola çevirmiş.
-            // ModuleRegistry üzerinden eşle.
-            std::string resolvedPath;
-            {
-                // FilePath'i registry'den bul: unit.filePath ile aynı dizinde ara.
-                std::string base = unit.filePath.substr(0, unit.filePath.find_last_of("/\\") + 1);
-                resolvedPath = base + imp->sourcePath;
-                // Zaten canonical değilse — en basit yaklaşım: registry'de ara.
-                // Loader canonical yolla ekledi; biz aynı yolu üretmemiz gerek.
-                // Bunun için filesystem::weakly_canonical kullanabiliriz ama
-                // burada sadece registry'deki yola string eşleştirme yaparız.
+            // #252: kaynak modül TAM canonical yol eşleşmesiyle bulunur.
+            // Eskiden yol SONEKİ karşılaştırılıyordu: `"lib.sqt"` importu
+            // grafikte önce gelen `mylib.sqt`'ye, `"sub/lib.sqt"` ise
+            // `lib.sqt`'ye bağlanabiliyordu. Loader'ın çözdüğü yol yoksa
+            // (graf loader dışında kurulduysa) aynı kuralla burada çözülür.
+            std::string wantPath = imp->resolvedPath;
+            if (wantPath.empty()) {
+                std::error_code ec;
+                std::filesystem::path p =
+                    std::filesystem::path(unit.filePath).parent_path() / imp->sourcePath;
+                wantPath = std::filesystem::weakly_canonical(p, ec).string();
+                if (ec) wantPath = p.lexically_normal().string();
             }
-
             int sourceModuleId = -2; // -2 = bulunamadı
             for (auto& u : graph.units) {
-                // Ham sourcePath ile karşılaştır (loader aynı çözümlemeyi yaptı)
-                if (u.filePath.size() >= imp->sourcePath.size() &&
-                    u.filePath.substr(u.filePath.size() - imp->sourcePath.size()) == imp->sourcePath) {
+                if (u.filePath == wantPath) {
                     sourceModuleId = u.moduleId;
                     break;
                 }
@@ -445,7 +449,20 @@ void SymbolCollector::resolveFfiImport(ImportDeclNode* imp) {
             continue;
         }
 
-        if (table_.resolve(local)) continue; // zaten tanımlı (tekrar import vb.)
+        if (Symbol* existing = table_.resolve(local)) {
+            // Aynı host fonksiyonunun tekrar importu zararsızdır. Başka bir
+            // şeye (yerleşik `print`, kullanıcı fonksiyonu, başka bir host
+            // fonksiyonu) bağlı bir adı gölgelemek ise sessizce yok
+            // sayılıyordu: `import {abs as print} from math;` sonrası
+            // `print` hâlâ yerleşikti (#246).
+            if (existing->hostFnId != hostId || existing->isBuiltin)
+                diag_.report("E002", imp->loc,
+                    "cannot import '" + source + "' as '" + local + "': the name '" + local +
+                        "' is already defined",
+                    "choose another local name: `import { " + source + " as other } from " +
+                        imp->sourcePath + ";`");
+            continue;
+        }
 
         std::vector<Type> paramTypes;
         std::vector<std::string> paramNames;
@@ -475,10 +492,66 @@ void SymbolCollector::resolveFfiImport(ImportDeclNode* imp) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void SymbolCollector::checkStructCycles() {
-    // ADR-020: Struct alanları referans semantiği taşır (Object* pointer).
-    // By-value gömme yok → sonsuz-boyut döngüsü imkânsız.
-    // E010 artık üretilmez; bu metot koşullu olarak devre dışı.
-    // TODO(gelecek): Primitive tipler için by-value gömme eklenirse E010 geri açılır.
+    // ADR-020: struct alanları referanstır, bellek düzeninde sonsuz boyut
+    // yoktur. Ama non-nullable bir struct alanı sahibiyle birlikte ÖRNEKLENİR
+    // (initNestedStructFields) ve null olamaz: `struct Node { Node next; }`
+    // sonsuz bir örnekleme zinciri ister. IR zinciri keserek alanı null
+    // bırakıyordu — tip "non-null" derken değer null'dı ve erişim çalışma
+    // zamanında düşüyordu (#255). Döngü non-nullable alanlardan geçiyorsa
+    // E010: en az bir halka `T?` olmalı (bağlı liste/ağaç böyle kurulur).
+    enum class Mark { None, Active, Done };
+    std::unordered_map<std::string, Mark> mark;
+    std::vector<std::string> stack;
+
+    auto fieldLoc = [&](const std::string& owner, const std::string& field) {
+        auto it = structDecls_.find(owner);
+        if (it != structDecls_.end()) {
+            for (ASTNode* ch : it->second->getChildren())
+                if (auto* vd = dynamic_cast<VariableDeclNode*>(ch))
+                    if (vd->name == field)
+                        return vd->loc;
+            return it->second->loc;
+        }
+        return SourceLocation{};
+    };
+
+    std::function<void(const std::string&)> visit = [&](const std::string& name) {
+        mark[name] = Mark::Active;
+        stack.push_back(name);
+        auto lay = table_.structLayouts.find(name);
+        if (lay != table_.structLayouts.end()) {
+            for (const auto& [fieldName, fieldType] : lay->second) {
+                if (!fieldType.isStruct() || fieldType.nullable)
+                    continue;   // dizi alanı boş dizi, `T?` null başlar — döngü kırılır
+                const std::string& target = fieldType.structName;
+                Mark m = mark.count(target) ? mark[target] : Mark::None;
+                if (m == Mark::Active) {
+                    std::string chain;
+                    bool on = false;
+                    for (const auto& s : stack) {
+                        if (s == target) on = true;
+                        if (on) chain += s + " → ";
+                    }
+                    chain += target;
+                    diag_.report("E010", fieldLoc(name, fieldName),
+                        "struct '" + target + "' contains itself through non-nullable fields (" +
+                            chain + ")",
+                        "make the field nullable so the chain can end: `" + target + "? " +
+                            fieldName + ";`");
+                } else if (m == Mark::None) {
+                    visit(target);
+                }
+            }
+        }
+        stack.pop_back();
+        mark[name] = Mark::Done;
+    };
+
+    for (const auto& [name, layout] : table_.structLayouts) {
+        (void)layout;
+        if (!mark.count(name) || mark[name] == Mark::None)
+            visit(name);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -697,6 +770,17 @@ void SymbolCollector::walkExpr(ASTNode* node) {
                 currentModuleImports_.find(name) == currentModuleImports_.end()) {
                 diag_.report("E_SYMBOL_NOT_IMPORTED", id->loc,
                     "'" + name + "' is from another module and must be imported explicitly");
+            }
+            // #246: FFI sembolü yalnız onu import eden modülde görünür.
+            // Eskiden bir modülün `import {sqrt} from math;` satırı programın
+            // TÜM modüllerinde `sqrt`'ü kullanılabilir yapıyordu.
+            else if (s->hostFnId >= 0 && !s->isBuiltin &&
+                     currentModuleId_ != ModuleRegistry::INVALID_ID &&
+                     currentModuleImports_.find(name) == currentModuleImports_.end()) {
+                diag_.report("E_SYMBOL_NOT_IMPORTED", id->loc,
+                    "'" + name + "' comes from the '" + s->ffiModule +
+                        "' module and must be imported in this file",
+                    "add `import { " + name + " } from " + s->ffiModule + ";`");
             }
         } else {
             std::vector<std::string> cands_;

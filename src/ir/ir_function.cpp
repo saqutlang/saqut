@@ -10,6 +10,7 @@
 //
 // ============================================================================
 
+#include <cstring>
 #include "ir/ir_function.hpp"
 #include "data/data_registry.hpp"
 #include "ir/ir_color.hpp"
@@ -52,6 +53,8 @@ void IRFunction::dump() const {
 
         // Opcode sütunu
         std::cout << IrColor::SoftMor() << std::left << std::setw(16) << opcodeName(ins.opcode) << IrColor::Reset();
+        // Sütunu dolduran uzun adlar (CAST_LONG_TO_STR) operandla bitişmesin.
+        if (std::strlen(opcodeName(ins.opcode)) >= 16) std::cout << ' ';
 
         // Operandlar — ortak renderer (ir_dump.hpp, flat paleti); literal
         // değerler, slot'lar ve callee adları tek kaynaktan (#218).

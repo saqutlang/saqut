@@ -109,6 +109,7 @@ void ModuleLoader::loadUnit(const std::string& filePath, ModuleGraph& graph,
         if (imp->isModuleName) continue;
 
         std::string depPath = resolvePath(filePath, imp->sourcePath);
+        imp->resolvedPath = depPath;
         loadUnit(depPath, graph, imp->loc);
     }
     loadChain_.pop_back();

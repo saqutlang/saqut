@@ -170,6 +170,25 @@ ASTNode* Parser::synchronizeAndMakeError(const SourceLocation& loc, const std::s
     return err;
 }
 
+void Parser::expectSemicolon(const char* after) {
+    if (currentToken().type == TokenType::SEMICOLON) {
+        nextToken();
+        return;
+    }
+    reportError(lastLoc_, "E905", std::string("expected ';' after ") + after);
+}
+
+ASTNode* Parser::expectExpression(const std::string& context, uint16_t precedence) {
+    ASTNode* expr = parseExpression(precedence);
+    if (!expr) {
+        auto ct = currentToken();
+        std::string tokText = ct.token ? "'" + ct.token->token + "'" : "end of file";
+        reportError(ct.token ? ct.token->loc : lastLoc_, "E901",
+                    "expected an expression " + context + ", found " + tokText);
+    }
+    return expr;
+}
+
 ASTNode* Parser::parseProgram() {
     ProgramNode* program = new ProgramNode();
 
@@ -511,7 +530,7 @@ ASTNode* Parser::parseNullDenotation() {
                             "E904", "expected expression before ','");
                 nextToken();
             } else {
-                sc->arguments.push_back(parseExpression(0));
+                sc->arguments.push_back(expectExpression("in argument list"));
             }
             while (currentToken().type == TokenType::COMMA) {
                 auto comma = currentToken();
@@ -521,7 +540,7 @@ ASTNode* Parser::parseNullDenotation() {
                                 "E904", "expected expression after ','");
                     continue;
                 }
-                sc->arguments.push_back(parseExpression(0));
+                sc->arguments.push_back(expectExpression("in argument list"));
             }
         }
         if (currentToken().type == TokenType::RPAREN)
@@ -534,7 +553,7 @@ ASTNode* Parser::parseNullDenotation() {
 
     if (ct.type == TokenType::LPAREN) {
         nextToken();
-        ASTNode* expr = parseExpression(0);
+        ASTNode* expr = expectExpression("inside '( )'");
         if (currentToken().type == TokenType::RPAREN)
             nextToken();
         else
@@ -549,10 +568,13 @@ ASTNode* Parser::parseNullDenotation() {
         ArrayLiteralNode* arr = new ArrayLiteralNode();
         arr->loc = ct.token ? ct.token->loc : SourceLocation{};
         if (currentToken().type != TokenType::RBRACKET) {
-            arr->elements.push_back(parseExpression(0));
+            arr->elements.push_back(expectExpression("in array literal"));
             while (currentToken().type == TokenType::COMMA) {
                 nextToken();
-                arr->elements.push_back(parseExpression(0));
+                // Sondaki virgül serbest: `[1, 2, 3,]` (çok satırlı literal).
+                if (currentToken().type == TokenType::RBRACKET)
+                    break;
+                arr->elements.push_back(expectExpression("in array literal"));
             }
         }
         if (currentToken().type == TokenType::RBRACKET)
@@ -569,7 +591,9 @@ ASTNode* Parser::parseNullDenotation() {
     // değeri" ifadesine indirgeniyor, hiçbir yan etki üretmiyordu.
     if (ct.is({TokenType::PLUS_PLUS, TokenType::MINUS_MINUS})) {
         nextToken();
-        ASTNode* right = parseExpression(ct.getPowerOperator());
+        ASTNode* right = expectExpression(
+            "after prefix '" + std::string(ct.token ? ct.token->token : "?") + "'",
+            ct.getPowerOperator());
         PostfixNode* pf = new PostfixNode();
         pf->loc = ct.token ? ct.token->loc : SourceLocation{};
         pf->operand = right;
@@ -583,7 +607,9 @@ ASTNode* Parser::parseNullDenotation() {
     if (ct.is({TokenType::PLUS, TokenType::MINUS,
                TokenType::BANG, TokenType::TILDE})) {
         nextToken();
-        ASTNode* right = parseExpression(ct.getPowerOperator());
+        ASTNode* right = expectExpression(
+            "after unary '" + std::string(ct.token ? ct.token->token : "?") + "'",
+            ct.getPowerOperator());
         BinaryExpressionNode* bin = new BinaryExpressionNode();
         bin->loc = ct.token ? ct.token->loc : SourceLocation{};
         bin->Right = right;
@@ -610,6 +636,14 @@ ASTNode* Parser::parseNullDenotation() {
 
     if (ct.type == TokenType::STRING) {
         nextToken();
+        if (auto* st = dynamic_cast<StringToken*>(ct.token)) {
+            if (st->unterminated)
+                reportError(st->loc, "E907", "unterminated string literal (missing closing '\"')");
+            for (char e : st->badEscapes)
+                reportError(st->loc, "E906",
+                            std::string("unknown escape sequence '\\") + e +
+                                "' in string literal (supported: \\n \\t \\r \\b \\\\ \\\")");
+        }
         LiteralNode* lit = new LiteralNode();
         lit->literalType = LiteralType::STRING;
         lit->loc = ct.token ? ct.token->loc : SourceLocation{};
@@ -669,7 +703,7 @@ ASTNode* Parser::parseLeftDenotation(ASTNode* left) {
                             "E904", "expected expression before ','");
                 nextToken();
             } else {
-                call->arguments.push_back(parseExpression(0));
+                call->arguments.push_back(expectExpression("in argument list"));
             }
             while (currentToken().type == TokenType::COMMA) {
                 auto comma = currentToken();
@@ -679,7 +713,7 @@ ASTNode* Parser::parseLeftDenotation(ASTNode* left) {
                                 "E904", "expected expression after ','");
                     continue;
                 }
-                call->arguments.push_back(parseExpression(0));
+                call->arguments.push_back(expectExpression("in argument list"));
             }
         }
         if (currentToken().type == TokenType::RPAREN)
@@ -696,7 +730,7 @@ ASTNode* Parser::parseLeftDenotation(ASTNode* left) {
         idx->loc = ct.token ? ct.token->loc : SourceLocation{};
         idx->object = left;
         left->parent = idx;
-        idx->index = parseExpression(0);
+        idx->index = expectExpression("inside '[ ]'");
         if (currentToken().type == TokenType::RBRACKET)
             nextToken();
         else
@@ -771,7 +805,7 @@ ASTNode* Parser::parseLeftDenotation(ASTNode* left) {
                                 "E904", "expected expression before ','");
                     nextToken();
                 } else {
-                    sc->arguments.push_back(parseExpression(0));
+                    sc->arguments.push_back(expectExpression("in argument list"));
                 }
                 while (currentToken().type == TokenType::COMMA) {
                     auto comma = currentToken();
@@ -781,7 +815,7 @@ ASTNode* Parser::parseLeftDenotation(ASTNode* left) {
                                     "E904", "expected expression after ','");
                         continue;
                     }
-                    sc->arguments.push_back(parseExpression(0));
+                    sc->arguments.push_back(expectExpression("in argument list"));
                 }
             }
             if (currentToken().type == TokenType::RPAREN)
@@ -817,7 +851,13 @@ ASTNode* Parser::parseLeftDenotation(ASTNode* left) {
     if (prec > 0 && RightAssociative(ct.type))
         prec = static_cast<uint16_t>(prec - 1);
 
-    ASTNode* right = parseExpression(prec);
+    std::string opContext =
+        "after operator '" + std::string(ct.token ? ct.token->token : "?") + "'";
+    // `a >>> 1` → `>>` + `>`: saQut'ta mantıksal kaydırma yok; sessizce
+    // `(a >> ?) > 1` diye ayrışmak yerine kullanıcıya nedenini söyle.
+    if (ct.type == TokenType::RSHIFT && currentToken().type == TokenType::GREATER)
+        opContext += " (saQut has no '>>>' operator; '>>' is an arithmetic shift)";
+    ASTNode* right = expectExpression(opContext, prec);
 
     BinaryExpressionNode* bin = new BinaryExpressionNode();
     bin->loc = ct.token ? ct.token->loc : SourceLocation{};
@@ -1128,7 +1168,7 @@ ASTNode* Parser::parseVariableDecl() {
 
     if (currentToken().type == TokenType::EQUAL) {
         nextToken();
-        vd->initExpr = parseExpression();
+        vd->initExpr = expectExpression("after '=' in declaration");
     }
 
     while (currentToken().type == TokenType::COMMA) {
@@ -1161,14 +1201,13 @@ ASTNode* Parser::parseVariableDecl() {
 
         if (currentToken().type == TokenType::EQUAL) {
             nextToken();
-            sibling->initExpr = parseExpression();
+            sibling->initExpr = expectExpression("after '=' in declaration");
         }
 
         vd->addChild(sibling);
     }
 
-    if (currentToken().type == TokenType::SEMICOLON)
-        nextToken();
+    expectSemicolon("declaration");
 
     return vd;
 }
@@ -1282,12 +1321,15 @@ ASTNode* Parser::parseIfStatement() {
 
     if (currentToken().type == TokenType::LPAREN) {
         nextToken();
-        ifNode->condition = parseExpression();
+        ifNode->condition = expectExpression("as if condition");
         if (currentToken().type == TokenType::RPAREN)
             nextToken();
         else
             reportError(currentToken().token ? currentToken().token->loc : ifNode->loc,
                         "E905", "expected ')' after if condition");
+    } else {
+        reportError(currentToken().token ? currentToken().token->loc : ifNode->loc,
+                    "E905", "expected '(' after 'if'");
     }
 
     ifNode->thenBranch = parseStatement();
@@ -1307,12 +1349,15 @@ ASTNode* Parser::parseWhileStatement() {
 
     if (currentToken().type == TokenType::LPAREN) {
         nextToken();
-        ws->condition = parseExpression();
+        ws->condition = expectExpression("as while condition");
         if (currentToken().type == TokenType::RPAREN)
             nextToken();
         else
             reportError(currentToken().token ? currentToken().token->loc : ws->loc,
                         "E905", "expected ')' after while condition");
+    } else {
+        reportError(currentToken().token ? currentToken().token->loc : ws->loc,
+                    "E905", "expected '(' after 'while'");
     }
 
     ws->body = parseStatement();
@@ -1327,18 +1372,19 @@ ASTNode* Parser::parseForStatement() {
     if (currentToken().type == TokenType::LPAREN)
         nextToken();
 
+    // init bir deyimdir ve kendi ';'ünü tüketir (VarDecl/ExpressionStatement);
+    // boş init ise ';' burada tüketilir.
     if (currentToken().type != TokenType::SEMICOLON)
         fs->init = parseStatement();
-    if (currentToken().type == TokenType::SEMICOLON)
+    else
         nextToken();
 
     if (currentToken().type != TokenType::SEMICOLON)
-        fs->condition = parseExpression();
-    if (currentToken().type == TokenType::SEMICOLON)
-        nextToken();
+        fs->condition = expectExpression("as for condition");
+    expectSemicolon("for condition");
 
     if (currentToken().type != TokenType::RPAREN)
-        fs->update = parseExpression();
+        fs->update = expectExpression("as for update");
     if (currentToken().type == TokenType::RPAREN)
         nextToken();
     else
@@ -1361,15 +1407,20 @@ ASTNode* Parser::parseDoWhileStatement() {
         nextToken();
         if (currentToken().type == TokenType::LPAREN) {
             nextToken();
-            dw->condition = parseExpression();
+            dw->condition = expectExpression("as do-while condition");
             if (currentToken().type == TokenType::RPAREN)
                 nextToken();
             else
                 reportError(currentToken().token ? currentToken().token->loc : dw->loc,
                             "E905", "expected ')' after do-while condition");
+        } else {
+            reportError(currentToken().token ? currentToken().token->loc : dw->loc,
+                        "E905", "expected '(' after 'while'");
         }
-        if (currentToken().type == TokenType::SEMICOLON)
-            nextToken();
+        expectSemicolon("do-while statement");
+    } else {
+        reportError(currentToken().token ? currentToken().token->loc : dw->loc,
+                    "E905", "expected 'while' after do-while body");
     }
 
     return dw;
@@ -1381,11 +1432,10 @@ ASTNode* Parser::parseReturnStatement() {
     nextToken();
 
     if (currentToken().type != TokenType::SEMICOLON && currentToken().type != TokenType::RBRACE) {
-        rs->value = parseExpression();
+        rs->value = expectExpression("after 'return'");
     }
 
-    if (currentToken().type == TokenType::SEMICOLON)
-        nextToken();
+    expectSemicolon("return statement");
 
     return rs;
 }
@@ -1394,8 +1444,7 @@ ASTNode* Parser::parseBreakStatement() {
     BreakStatementNode* bs = new BreakStatementNode();
     bs->loc = currentToken().token->loc;
     nextToken();
-    if (currentToken().type == TokenType::SEMICOLON)
-        nextToken();
+    expectSemicolon("'break'");
     return bs;
 }
 
@@ -1403,8 +1452,7 @@ ASTNode* Parser::parseContinueStatement() {
     ContinueStatementNode* cs = new ContinueStatementNode();
     cs->loc = currentToken().token->loc;
     nextToken();
-    if (currentToken().type == TokenType::SEMICOLON)
-        nextToken();
+    expectSemicolon("'continue'");
     return cs;
 }
 
@@ -1434,8 +1482,7 @@ ASTNode* Parser::parseExpressionStatement() {
     ExpressionStatementNode* es = new ExpressionStatementNode();
     es->loc = loc;
     es->expression = expr;
-    if (currentToken().type == TokenType::SEMICOLON)
-        nextToken();
+    expectSemicolon("expression");
 
     return es;
 }
@@ -1482,7 +1529,7 @@ ASTNode* Parser::parseSwitchStatement() {
     // subject: switch (expr)
     if (currentToken().type == TokenType::LPAREN) {
         nextToken();
-        sw->subject = parseExpression();
+        sw->subject = expectExpression("as switch subject");
         if (currentToken().type == TokenType::RPAREN)
             nextToken();
         else
@@ -1503,10 +1550,10 @@ ASTNode* Parser::parseSwitchStatement() {
 
             // case değerlerini virgülle ayır: case 1, 2, 3:
             // COLON'ın önceliği 3 — parseExpression(3) ile ':'yi tüketmeyiz
-            clause.values.push_back(parseExpression(3));
+            clause.values.push_back(expectExpression("after 'case'", 3));
             while (currentToken().type == TokenType::COMMA) {
                 nextToken();
-                clause.values.push_back(parseExpression(3));
+                clause.values.push_back(expectExpression("after ',' in case list", 3));
             }
             if (currentToken().type == TokenType::COLON)
                 nextToken(); // tüket: :
@@ -1562,8 +1609,7 @@ ASTNode* Parser::parseThrowStatement() {
     ThrowStatementNode* th = new ThrowStatementNode();
     th->loc = currentToken().token->loc;
     nextToken(); // tüket: throw
-    th->value = parseExpression();
-    if (currentToken().type == TokenType::SEMICOLON)
-        nextToken();
+    th->value = expectExpression("after 'throw'");
+    expectSemicolon("throw statement");
     return th;
 }

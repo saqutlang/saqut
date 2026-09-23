@@ -139,6 +139,7 @@ enum : uint8_t {
     X(FMUL, 3, OP_VM | OP_JIT) \
     X(FDIV, 3, OP_VM | OP_JIT) /* sıfır → runtime_error */ \
     X(FPOW, 3, OP_VM | OP_JIT) /* #237: double üs — libm pow() */ \
+    X(FMOD, 3, OP_VM | OP_JIT) /* #241: double % — fmod(); sıfır → Error */ \
     X(FNEG, 2, OP_VM | OP_JIT) /* -slots[src] */ \
     X(INT_TO_FLOAT, 2, OP_VM | OP_JIT) /* gizli int→float */ \
     X(FLOAT_TO_INT, 2, OP_VM | OP_JIT) /* açık cast */ \
@@ -149,6 +150,7 @@ enum : uint8_t {
     X(F32MUL, 3, OP_VM | OP_JIT) \
     X(F32DIV, 3, OP_VM | OP_JIT) /* sıfır → runtime_error */ \
     X(F32POW, 3, OP_VM | OP_JIT) /* #237: float32 üs — powf() */ \
+    X(F32MOD, 3, OP_VM | OP_JIT) /* #241: float32 % — fmodf(); sıfır → Error */ \
     X(F32NEG, 2, OP_VM | OP_JIT) \
     X(INT_TO_FLOAT32,   2, OP_VM | OP_JIT) /* int → float32 */ \
     X(FLOAT32_TO_INT,   2, OP_VM | OP_JIT) /* float32 → int (checked) */ \

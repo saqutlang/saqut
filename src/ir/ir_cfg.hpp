@@ -23,6 +23,7 @@
 #ifndef SAQUT_IR_CFG
 #define SAQUT_IR_CFG
 
+#include <cstring>
 #include <vector>
 #include <string>
 #include <sstream>
@@ -92,6 +93,8 @@ struct BasicBlock {
             const char* opColor = (ins.opcode == Opcode::CALLHOST)
                 ? IrColor::Kirmizi() : IrColor::SoftTuruncu();
             os << opColor << std::left << std::setw(16) << opcodeName(ins.opcode) << IrColor::Reset();
+            // Sütunu dolduran uzun adlar (CAST_LONG_TO_STR) operandla bitişmesin.
+            if (std::strlen(opcodeName(ins.opcode)) >= 16) os << ' ';
             os << IrDump::operands(ins, IrDump::kCfgPalette);
             os << "\n";
         }

@@ -296,7 +296,15 @@ StringToken* Tokenizer::readString() {
                     case 't': actual = '\t'; break;
                     case 'r': actual = '\r'; break;
                     case 'b': actual = '\b'; break;
-                    default:  actual = c;    break; // \\ ve \" dahil, olduğu gibi
+                    case '\\':
+                    case '"': actual = c;    break;
+                    default:
+                        // #256: tanınmayan kaçış eskiden sessizce harfe
+                        // dönüşüyordu (`"\x41"` → `x41`). Artık işaretlenir;
+                        // parser E906 raporlar.
+                        st->badEscapes.push_back(c);
+                        actual = c;
+                        break;
                 }
                 st->context.push_back(actual);
                 break;
@@ -309,6 +317,7 @@ StringToken* Tokenizer::readString() {
         if (ended) break;
     }
 
+    st->unterminated = !ended;
     st->end  = hmx.getOffset();
     st->size = static_cast<int>(st->context.size());
     st->loc  = hmx.sourceFile.offsetToLocation(st->start);

@@ -110,21 +110,11 @@ IRProgram IRGenerator::generateModuleGraph(ModuleGraph& graph, SymbolTable& symb
                     if (gv->initExpr) {
                         int initSlot = generateExpression(gv->initExpr);
                         emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
-                    } else if (!gv->varType.empty() && gv->varType.back() == '?') {
-                        // ADR-021 null kapısı: init'siz nullable global null
-                        // başlar (local emitLoadNull ile aynı sözleşme). Aksi
-                        // halde slot Value{} (= Int 0) kalır ve `q == null`
-                        // hiç atanmamış değer için sessizce false döner —
-                        // null kapısının kendisi yalan söyler.
+                    } else {
+                        // Init'siz global: yerel bildirimle aynı sözleşme
+                        // (null / "" / örnek / boş dizi / tipli sıfır).
                         int initSlot = freshSlot();
-                        emitLoadNull(initSlot, SourceLocation{});
-                        emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
-                    } else if (gv->varType == "string") {
-                        // #184 ürün kararı: init'siz non-nullable global
-                        // string "" başlar (Int 0 değil) — local/alan ile
-                        // aynı sözleşme. `string?` yukarıda null alır.
-                        int initSlot = freshSlot();
-                        emitLoadString(initSlot, "", SourceLocation{});
+                        emitDefaultValue(initSlot, gv->varType, gv->loc);
                         emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
                     }
                 }
@@ -197,18 +187,11 @@ IRProgram IRGenerator::generate(ASTNode* programNode, SymbolTable& symbolTable,
                     if (gv->initExpr) {
                         int initSlot = generateExpression(gv->initExpr);
                         emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
-                    } else if (!gv->varType.empty() && gv->varType.back() == '?') {
-                        // ADR-021 null kapısı: init'siz nullable global null
-                        // başlar (local emitLoadNull ile aynı sözleşme).
+                    } else {
+                        // Init'siz global: yerel bildirimle aynı sözleşme
+                        // (null / "" / örnek / boş dizi / tipli sıfır).
                         int initSlot = freshSlot();
-                        emitLoadNull(initSlot, SourceLocation{});
-                        emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
-                    } else if (gv->varType == "string") {
-                        // #184 ürün kararı: init'siz non-nullable global
-                        // string "" başlar (Int 0 değil). `string?` yukarıda
-                        // null alır.
-                        int initSlot = freshSlot();
-                        emitLoadString(initSlot, "", SourceLocation{});
+                        emitDefaultValue(initSlot, gv->varType, gv->loc);
                         emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
                     }
                 }
@@ -351,39 +334,10 @@ void IRGenerator::generateStatement(ASTNode* node) {
                 registerVariable(vd->name, initSlot);
             }
 
-        } else if (structLayouts_.count(vd->varType)) {
-            // Struct değişkeni: dış struct + iç struct-tipi alanları özyinelemeli tahsis
-            int varSlot = freshSlot();
-            registerVariable(vd->name, varSlot);
-            int fc = getStructFieldCount(vd->varType);
-            SourceLocation loc = vd->loc;
-            emitStructNew(varSlot, vd->varType, fc, loc);
-            initNestedStructFields(varSlot, vd->varType, loc);
-        } else if (vd->varType.size() > 2 && vd->varType.substr(vd->varType.size() - 2) == "[]") {
-            // Array değişkeni: init ifadesi yoksa boş dizi (kapasite=0)
-            int varSlot = freshSlot();
-            registerVariable(vd->name, varSlot);
-            std::string elemTypeName = vd->varType.substr(0, vd->varType.size() - 2);
-            emitArrayNew(varSlot, 0, arrayElemKindFromTypeName(elemTypeName));
         } else {
             int varSlot = freshSlot();
             registerVariable(vd->name, varSlot);
-            // ADR-021 zero-init: tipi `T?` olan ve açık başlangıç değeri
-            // verilmeyen değişken null başlar.
-            //
-            //     int? a;                 // a == null  → true
-            //     if (a == null) { ... }  // çalışır
-            //
-            // Aksi halde slot varsayılan Value{} (= Int 0) kalır ve `a == null`
-            // sessizce false döner — nullable sözleşmesinin sessiz ihlali.
-            // varType nullable'ı sonundaki '?' ile taşır (AST: "int?").
-            if (!vd->varType.empty() && vd->varType.back() == '?')
-                emitLoadNull(varSlot, vd->loc);
-            // #184 ürün kararı: non-nullable `string` zero-init "" başlar.
-            // Aksi halde Value{} (= Int 0) kalır; print "0" basar, length
-            // "expected string" ile patlar. `string?` yukarıda null alır.
-            else if (vd->varType == "string")
-                emitLoadString(varSlot, "", vd->loc);
+            emitDefaultValue(varSlot, vd->varType, vd->loc);
         }
 
         // Sibling VariableDecl'ler: int a, b; → children'da diğer VariableDecl'ler
@@ -969,70 +923,24 @@ int IRGenerator::generateExpression(ASTNode* node) {
             else if (bin->Operator == TokenType::RSHIFT_EQUAL)
                 arithOp = Opcode::SHR;
 
-            // string += string → STRING_CONCAT (ADR-024)
-            if (bin->Operator == TokenType::PLUS_EQUAL) {
-                if (auto* e = dynamic_cast<ExpressionNode*>(bin->Right))
-                    if (e->resolvedType.isString())
-                        arithOp = Opcode::STRING_CONCAT;
-            }
-
             if (lv.kind == LValue::Kind::Invalid)
                 return rhsSlot;   // tip denetleyici bildirmiş olmalı
 
-            // #238: opcode TİPE GÖRE seçilir. Eskiden her zaman int ADD/SUB
-            // yayılıyordu; `f += 1.0` ondalık bir slota int toplama uygular
-            // ve sessizce 0 üretirdi (`f++` ile aynı kök neden).
-            Type lhsType;
+            // #238/#251: opcode seçimi ve operand genişletmesi ikili aritmetikle
+            // AYNI rutinde (emitTypedBinary). Eskiden burada ayrı bir tablo
+            // vardı: opcode'u sol tipe göre seçiyor ama int RHS'yi
+            // genişletmiyordu — `d *= k` FMUL'a ham int veriyordu (çöp değer),
+            // `f += k` F32ADD'e (yanlış sonuç); `%=` float'ta int MOD'a düşüyordu.
+            Type lhsType, rhsType;
             if (auto* lhsExpr = dynamic_cast<ExpressionNode*>(bin->Left))
                 lhsType = lhsExpr->resolvedType;
-
-            if (arithOp != Opcode::STRING_CONCAT) {
-                if (lhsType.isDecimal()) {
-                    switch (arithOp) {
-                    case Opcode::ADD: arithOp = Opcode::DADD; break;
-                    case Opcode::SUB: arithOp = Opcode::DSUB; break;
-                    case Opcode::MUL: arithOp = Opcode::DMUL; break;
-                    case Opcode::DIV: arithOp = Opcode::DDIV; break;
-                    case Opcode::MOD: arithOp = Opcode::DMOD; break;
-                    default: break;
-                    }
-                } else if (lhsType.isPrimitive() && lhsType.prim == PrimitiveKind::Double) {
-                    switch (arithOp) {
-                    case Opcode::ADD: arithOp = Opcode::FADD; break;
-                    case Opcode::SUB: arithOp = Opcode::FSUB; break;
-                    case Opcode::MUL: arithOp = Opcode::FMUL; break;
-                    case Opcode::DIV: arithOp = Opcode::FDIV; break;
-                    default: break;
-                    }
-                } else if (lhsType.isPrimitive() && lhsType.prim == PrimitiveKind::Float) {
-                    switch (arithOp) {
-                    case Opcode::ADD: arithOp = Opcode::F32ADD; break;
-                    case Opcode::SUB: arithOp = Opcode::F32SUB; break;
-                    case Opcode::MUL: arithOp = Opcode::F32MUL; break;
-                    case Opcode::DIV: arithOp = Opcode::F32DIV; break;
-                    default: break;
-                    }
-                } else if (lhsType.isLongInt()) {
-                    switch (arithOp) {
-                    case Opcode::ADD:  arithOp = Opcode::LADD;  break;
-                    case Opcode::SUB:  arithOp = Opcode::LSUB;  break;
-                    case Opcode::MUL:  arithOp = Opcode::LMUL;  break;
-                    case Opcode::DIV:  arithOp = Opcode::LDIV;  break;
-                    case Opcode::MOD:  arithOp = Opcode::LMOD;  break;
-                    case Opcode::BAND: arithOp = Opcode::LBAND; break;
-                    case Opcode::BOR:  arithOp = Opcode::LBOR;  break;
-                    case Opcode::BXOR: arithOp = Opcode::LBXOR; break;
-                    case Opcode::SHL:  arithOp = Opcode::LSHL;  break;
-                    case Opcode::SHR:  arithOp = Opcode::LSHR;  break;
-                    default: break;
-                    }
-                }
-            }
+            if (auto* rhsExpr = dynamic_cast<ExpressionNode*>(bin->Right))
+                rhsType = rhsExpr->resolvedType;
 
             const int currentSlot = emitLValueLoad(lv, lhsType);
-            const int resultSlot  = freshSlot();
-            emitBinaryOp(arithOp, resultSlot, currentSlot, rhsSlot, bin->loc.line,
-                         bin->loc.column);
+            const int resultSlot = emitTypedBinary(arithOp, currentSlot, lhsType, rhsSlot,
+                                                   rhsType, bin->loc.line, bin->loc.column,
+                                                   nullptr);
 
             // byte ⊕ byte → byte: sonucu 8 bite sar (ADR-040 Faz 4).
             int storeSlot = resultSlot;
@@ -1438,6 +1346,46 @@ int IRGenerator::generateExpression(ASTNode* node) {
             currentFunction_->instructions.push_back(std::move(nop));
         };
 
+        // #242: date yalnız host gövdeleriyle dönüşür — VM'de Value türü
+        // (Date↔LongInt) ve JIT'te slot türü ancak böyle doğru etiketlenir.
+        // Düz kopya (LOAD_SLOT) Date etiketini longint slotuna taşıyor, VM
+        // karşılaştırması da onu int32'ye kırpıyordu.
+        auto emitDateHost = [&](const char* hostId, int dest, int src, SlotType resultKind) {
+            Instruction ins(Opcode::CALLHOST);
+            ins.functionName = "__ffi__";
+            ins.intValue = kHostFnBase + hostEntryIndex(hostId);
+            ins.dest = dest;
+            ins.argSlots = {src};
+            ins.valueType = resultKind;
+            ins.sourceLine = cast->loc.line;
+            ins.sourceCol = cast->loc.column;
+            currentFunction_->instructions.push_back(std::move(ins));
+        };
+        const bool srcIsDate = srcType.isDate();
+        const bool tgtIsDate = tgtType.isDate();
+        if (srcIsDate && tgtIsDate) {
+            emitIdentity();
+            return destSlot;
+        }
+        if (srcIsDate && tgtIsLong) {
+            emitDateHost("DATE_TO_EPOCH_MS", destSlot, srcSlot, SlotType::LongInt);
+            return destSlot;
+        }
+        if (srcIsLong && tgtIsDate) {
+            emitDateHost("DATE_FROM_EPOCH_MS", destSlot, srcSlot, SlotType::Date);
+            return destSlot;
+        }
+        if (srcIsDate && tgtIsStr) {
+            const int msSlot = freshSlot();
+            emitDateHost("DATE_TO_EPOCH_MS", msSlot, srcSlot, SlotType::LongInt);
+            Instruction ins(Opcode::CAST_LONG_TO_STR);
+            ins.dest = destSlot;
+            ins.src = msSlot;
+            ins.left = -1;
+            currentFunction_->instructions.push_back(std::move(ins));
+            return destSlot;
+        }
+
         Opcode op;
         bool infallible = false;
         // ── longint dönüşümleri (ADR-040) ──
@@ -1674,6 +1622,57 @@ int IRGenerator::emitOneConstant(const Type& t, const SourceLocation& loc) {
     return slot;
 }
 
+void IRGenerator::emitDefaultValue(int destSlot, const std::string& typeName,
+                                   const SourceLocation& loc) {
+    // ADR-021: `T?` null başlar.
+    if (!typeName.empty() && typeName.back() == '?') {
+        emitLoadNull(destSlot, loc);
+        return;
+    }
+    if (structLayouts_.count(typeName)) {
+        emitStructNew(destSlot, typeName, getStructFieldCount(typeName), loc);
+        initNestedStructFields(destSlot, typeName, loc);
+        return;
+    }
+    if (typeName.size() > 2 && typeName.compare(typeName.size() - 2, 2, "[]") == 0) {
+        // Dizi: boş dizi (kapasite 0).
+        const std::string elemTypeName = typeName.substr(0, typeName.size() - 2);
+        emitArrayNew(destSlot, 0, arrayElemKindFromTypeName(elemTypeName), loc);
+        return;
+    }
+    if (typeName == "string") {
+        // #184 ürün kararı: non-nullable string "" başlar.
+        emitLoadString(destSlot, "", loc);
+    } else if (typeName == "double") {
+        emitLoadFloat(destSlot, 0.0, loc);
+    } else if (typeName == "float") {
+        emitLoadFloat32(destSlot, 0.0, loc);
+    } else if (typeName == "longint") {
+        emitLoadLong(destSlot, 0, loc);
+    } else if (typeName == "decimal") {
+        emitLoadDecimal(destSlot, DecimalValue::zero(), loc);
+    } else if (typeName == "date") {
+        // date yalnız host'tan üretilir (VM'de Date türü, JIT'te Date slotu);
+        // sıfırı epoch 0'dır: fromEpochMillis(0).
+        const int msSlot = freshSlot();
+        emitLoadLong(msSlot, 0, loc);
+        Instruction ins(Opcode::CALLHOST);
+        ins.functionName = "__ffi__";
+        ins.intValue = kHostFnBase + hostEntryIndex("DATE_FROM_EPOCH_MS");
+        ins.dest = destSlot;
+        ins.argSlots = {msSlot};
+        ins.valueType = SlotType::Date;
+        auto el = effectiveLoc(loc);
+        ins.sourceLine = el.line;
+        ins.sourceCol = el.column;
+        ins.sourceFile = el.filePath();
+        currentFunction_->instructions.push_back(std::move(ins));
+    } else {
+        // int, byte, bool, char, enum → 0
+        emitLoadConst(destSlot, 0, loc);
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // generateIncDec — ++/-- ortak gövdesi (önek ve sonek)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1730,6 +1729,17 @@ int IRGenerator::generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTN
                                           int line, int col, ASTNode* resultNode) {
     int leftSlot = generateExpression(leftNode);
     int rightSlot = generateExpression(rightNode);
+    Type leftType, rightType;
+    if (auto* e = dynamic_cast<ExpressionNode*>(leftNode))
+        leftType = e->resolvedType;
+    if (auto* e = dynamic_cast<ExpressionNode*>(rightNode))
+        rightType = e->resolvedType;
+    return emitTypedBinary(opcode, leftSlot, leftType, rightSlot, rightType, line, col,
+                           resultNode);
+}
+
+int IRGenerator::emitTypedBinary(Opcode opcode, int leftSlot, const Type& leftType, int rightSlot,
+                                 const Type& rightType, int line, int col, ASTNode* resultNode) {
     int destSlot = freshSlot();
 
     // Tip tespiti — resolvedType üstünden (tip denetleyici tarafından yazıldı).
@@ -1741,20 +1751,18 @@ int IRGenerator::generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTN
     bool leftIsLong = false, rightIsLong = false; // 64-bit int
     bool leftIsString = false, rightIsString = false;
     bool leftIsByte = false, rightIsByte = false;   // ADR-040 Faz 4: tip-içi sarma
-    auto classify = [](ASTNode* n, bool& isDec, bool& isF32, bool& isDbl, bool& isLong,
+    auto classify = [](const Type& t, bool& isDec, bool& isF32, bool& isDbl, bool& isLong,
                        bool& isStr, bool& isByte) {
-        if (auto* e = dynamic_cast<ExpressionNode*>(n)) {
-            isDec = e->resolvedType.isDecimal();
-            isF32 = e->resolvedType.isPrimitive() && e->resolvedType.prim == PrimitiveKind::Float;
-            isDbl = e->resolvedType.isPrimitive() && e->resolvedType.prim == PrimitiveKind::Double;
-            isLong = e->resolvedType.isLongInt();
-            isStr = e->resolvedType.isString();
-            isByte = e->resolvedType.isByte();
-        }
+        isDec = t.isDecimal();
+        isF32 = t.isPrimitive() && t.prim == PrimitiveKind::Float;
+        isDbl = t.isPrimitive() && t.prim == PrimitiveKind::Double;
+        isLong = t.isLongInt();
+        isStr = t.isString();
+        isByte = t.isByte();
     };
-    classify(leftNode, leftIsDecimal, leftIsFloat32, leftIsDouble, leftIsLong, leftIsString,
+    classify(leftType, leftIsDecimal, leftIsFloat32, leftIsDouble, leftIsLong, leftIsString,
              leftIsByte);
-    classify(rightNode, rightIsDecimal, rightIsFloat32, rightIsDouble, rightIsLong, rightIsString,
+    classify(rightType, rightIsDecimal, rightIsFloat32, rightIsDouble, rightIsLong, rightIsString,
              rightIsByte);
 
     bool leftIsFloat = leftIsFloat32 || leftIsDouble;
@@ -1901,6 +1909,8 @@ int IRGenerator::generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTN
                 floatOp = Opcode::FDIV;
             else if (opcode == Opcode::POW)
                 floatOp = Opcode::FPOW;
+            else if (opcode == Opcode::MOD)
+                floatOp = Opcode::FMOD; // #241: eskiden int MOD'a düşüyordu
         } else {
             if (opcode == Opcode::ADD)
                 floatOp = Opcode::F32ADD;
@@ -1912,6 +1922,8 @@ int IRGenerator::generateBinaryArithmetic(Opcode opcode, ASTNode* leftNode, ASTN
                 floatOp = Opcode::F32DIV;
             else if (opcode == Opcode::POW)
                 floatOp = Opcode::F32POW;
+            else if (opcode == Opcode::MOD)
+                floatOp = Opcode::F32MOD;
         }
         emitBinaryOp(floatOp, destSlot, leftSlot, rightSlot, line, col);
     } else {
@@ -2105,6 +2117,7 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
             case Opcode::FMUL:
             case Opcode::FDIV:
             case Opcode::FPOW:
+            case Opcode::FMOD:
             case Opcode::FNEG:
             case Opcode::INT_TO_FLOAT:
             case Opcode::FLOAT32_TO_FLOAT:
@@ -2117,6 +2130,7 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
             case Opcode::F32MUL:
             case Opcode::F32DIV:
             case Opcode::F32POW:
+            case Opcode::F32MOD:
             case Opcode::F32NEG:
             case Opcode::INT_TO_FLOAT32:
             case Opcode::FLOAT_TO_FLOAT32:
@@ -2145,6 +2159,10 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
                 break;
             case Opcode::STRUCT_NEW:
             case Opcode::ARRAY_NEW:
+            // catch değişkeni (ENTER_TRY dest) bir Error struct referansıdır.
+            // İşaretlenmezse Int kalıyor, JIT onu host çağrısına tamsayı
+            // olarak geçiriyor ve `e.toJson()` "null" dönüyordu (#260).
+            case Opcode::ENTER_TRY:
                 nk = SlotType::Ref;
                 break;
             case Opcode::LOAD_STRING:
@@ -2722,6 +2740,19 @@ void IRGenerator::initNestedStructFields(int destSlot, const std::string& struct
             int arrSlot = freshSlot();
             emitArrayNew(arrSlot, 0, arrayElemKindFromType(fieldType), loc);
             emitFieldSet(destSlot, i, arrSlot, loc.line, loc.column);
+            continue;
+        }
+        if (fieldType.isPrimitive() || fieldType.isLongInt() || fieldType.isDecimal()) {
+            // Tipli sıfır: STRUCT_NEW alanları Value{} (= Int 0) ile doldurur;
+            // `double` alan VM'de `0`, JIT'te `0.0` basıyordu (VM≢JIT). Int
+            // ailesi zaten doğru türde başladığı için yalnız diğerleri yazılır.
+            const std::string tn = fieldType.toString();
+            if (tn == "double" || tn == "float" || tn == "longint" || tn == "decimal" ||
+                tn == "date") {
+                int zeroSlot = freshSlot();
+                emitDefaultValue(zeroSlot, tn, loc);
+                emitFieldSet(destSlot, i, zeroSlot, loc.line, loc.column);
+            }
             continue;
         }
         if (!fieldType.isStruct() || fieldType.structName.empty())

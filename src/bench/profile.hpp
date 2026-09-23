@@ -546,31 +546,31 @@ inline void printBenchProfile(const BenchProfile& p,
     };
     std::cout << "\n";
     std::cout << "╔══════════════════════════════════════════════════════╗\n";
-    std::cout << "║           saQut Aşama Profil Raporu                 ║\n";
+    std::cout << "║             saQut Stage Profile Report               ║\n";
     std::cout << "╚══════════════════════════════════════════════════════╝\n\n";
 
     // ── Tokenizer ──────────────────────────────────────────────────────────
     auto& t = p.tok;
     std::cout << "┌─ [Tokenizer]  " << fmtN(tokUs) << " µs\n";
-    std::cout << "│  Toplam token : " << fmtN(t.total) << "\n";
-    std::cout << "│  Dosya sayısı : " << fmtN(t.fileCount) << "\n";
-    std::cout << "│  Anahtar kelime: " << fmtN(t.keywords)
-              << "   Tanımlayıcı: " << fmtN(t.identifiers)
-              << "   Sayı: " << fmtN(t.numbers) << "\n";
-    std::cout << "│  Metin literal: " << fmtN(t.strings)
-              << "   Operatör: " << fmtN(t.operators_)
-              << "   Sınırlayıcı: " << fmtN(t.delimiters) << "\n";
+    std::cout << "│  Total tokens : " << fmtN(t.total) << "\n";
+    std::cout << "│  Files        : " << fmtN(t.fileCount) << "\n";
+    std::cout << "│  Keywords: " << fmtN(t.keywords)
+              << "   Identifiers: " << fmtN(t.identifiers)
+              << "   Numbers: " << fmtN(t.numbers) << "\n";
+    std::cout << "│  String literals: " << fmtN(t.strings)
+              << "   Operators: " << fmtN(t.operators_)
+              << "   Delimiters: " << fmtN(t.delimiters) << "\n";
     std::cout << "│\n";
 
     // ── Parser ─────────────────────────────────────────────────────────────
     auto& a = p.ast;
     std::cout << "├─ [Parser]  " << fmtN(parseUs) << " µs\n";
-    std::cout << "│  Toplam düğüm : " << fmtN(a.totalNodes) << "\n";
-    std::cout << "│  İfade (expr) : " << fmtN(a.expressions)
-              << "   Deyim (stmt): " << fmtN(a.statements)
-              << "   Tanım (decl): " << fmtN(a.declarations) << "\n";
-    std::cout << "│  Fonksiyon tanımı: " << fmtN(a.funcDecls)
-              << "   Değişken tanımı: " << fmtN(a.varDecls)
+    std::cout << "│  Total nodes  : " << fmtN(a.totalNodes) << "\n";
+    std::cout << "│  Expressions  : " << fmtN(a.expressions)
+              << "   Statements: " << fmtN(a.statements)
+              << "   Declarations: " << fmtN(a.declarations) << "\n";
+    std::cout << "│  Function decls: " << fmtN(a.funcDecls)
+              << "   Variable decls: " << fmtN(a.varDecls)
               << "   Import: " << fmtN(a.importDecls) << "\n";
     std::cout << "│\n";
 
@@ -579,27 +579,27 @@ inline void printBenchProfile(const BenchProfile& p,
     // ayrı satırlarda raporlar. Toplanırlarsa aynı koşu iki farklı sembol
     // süresi gösterir ve "en yavaş aşama" sıralaması bozulur.
     auto& s = p.sym;
-    std::cout << "├─ [Sembol Toplama]  " << fmtN(symUs) << " µs\n";
-    std::cout << "│  Geçiş sayısı   : " << s.passes << "\n";
-    std::cout << "│  Toplam sembol  : " << fmtN(s.total) << "\n";
-    std::cout << "│  Fonksiyon: " << fmtN(s.functions)
-              << "   Değişken: " << fmtN(s.variables)
-              << "   Parametre: " << fmtN(s.parameters)
+    std::cout << "├─ [Symbol Collection]  " << fmtN(symUs) << " µs\n";
+    std::cout << "│  Passes         : " << s.passes << "\n";
+    std::cout << "│  Total symbols  : " << fmtN(s.total) << "\n";
+    std::cout << "│  Functions: " << fmtN(s.functions)
+              << "   Variables: " << fmtN(s.variables)
+              << "   Parameters: " << fmtN(s.parameters)
               << "   Struct: " << fmtN(s.structs) << "\n";
     std::cout << "│\n";
 
     // ── Tip denetimi ───────────────────────────────────────────────────────
     // Tip denetimi + yapısal doğrulama (bench.hpp aşama 4). Daha önce bu süre
     // "Sembol Toplama" satırına gömülüydü ve aşama hiç görünmüyordu.
-    std::cout << "├─ [Tip Denetimi]  " << fmtN(tcUs) << " µs\n";
-    std::cout << "│  Tip denetimi + yapısal doğrulama\n";
+    std::cout << "├─ [Type Checking]  " << fmtN(tcUs) << " µs\n";
+    std::cout << "│  Type checking + structural validation\n";
     std::cout << "│\n";
 
     // ── IR ─────────────────────────────────────────────────────────────────
     auto& ir = p.ir;
-    std::cout << "├─ [IR Üretimi]  " << fmtN(irUs) << " µs\n";
-    std::cout << "│  Fonksiyon     : " << fmtN(ir.funcCount) << "\n";
-    std::cout << "│  Talimat       : " << fmtN(ir.totalInstr) << "\n";
+    std::cout << "├─ [IR Generation]  " << fmtN(irUs) << " µs\n";
+    std::cout << "│  Functions     : " << fmtN(ir.funcCount) << "\n";
+    std::cout << "│  Instructions  : " << fmtN(ir.totalInstr) << "\n";
     std::cout << "│  CALL site     : " << fmtN(ir.callSites)
               << "   CALLHOST site: " << fmtN(ir.ffiSites) << "\n";
     std::cout << "│\n";
@@ -608,27 +608,27 @@ inline void printBenchProfile(const BenchProfile& p,
     if (!compileOnly) {
         if (p.jitUsed) {
             // ── JIT ─────────────────────────────────────────────────────────
-            std::cout << "├─ [JIT Derleme/Isıtma]  " << fmtN(p.jitWarmupUs) << " µs\n";
-            std::cout << "│  IR→MIR çeviri + native koda derleme\n";
+            std::cout << "├─ [JIT Compile/Warmup]  " << fmtN(p.jitWarmupUs) << " µs\n";
+            std::cout << "│  IR→MIR lowering + native code generation\n";
             std::cout << "│\n";
-            std::cout << "├─ [JIT Çalıştırma]  " << fmtN(p.jitExecUs) << " µs\n";
-            std::cout << "│  CALLHOST (toplam): " << fmtN(p.jitCallhostCount) << "\n";
-            std::cout << "│  FFI çağrısı       : " << fmtN(p.jitFfiCount) << "\n";
-            std::cout << "│  Builtin çağrısı    : " << fmtN(p.jitBuiltinCount) << "\n";
+            std::cout << "├─ [JIT Execution]  " << fmtN(p.jitExecUs) << " µs\n";
+            std::cout << "│  CALLHOST (total) : " << fmtN(p.jitCallhostCount) << "\n";
+            std::cout << "│  FFI calls        : " << fmtN(p.jitFfiCount) << "\n";
+            std::cout << "│  Builtin calls    : " << fmtN(p.jitBuiltinCount) << "\n";
             std::cout << "│\n";
         } else {
             // ── VM ─────────────────────────────────────────────────────────
             auto& vm = p.vmTrace;
-            std::cout << "├─ [VM Çalıştırma]  " << fmtN(vmUs) << " µs\n";
-            std::cout << "│  Dispatch döngüsü : " << fmtN(vm.vmLoopIter) << "\n";
+            std::cout << "├─ [VM Execution]  " << fmtN(vmUs) << " µs\n";
+            std::cout << "│  Dispatch loop    : " << fmtN(vm.vmLoopIter) << "\n";
             std::cout << "│  saQut CALL       : " << fmtN(vm.vmSaqutCalls) << "\n";
             std::cout << "│  FFI (CALLHOST)   : " << fmtN(vm.vmFfiCalls) << "\n";
-            std::cout << "│  Builtin metod    : " << fmtN(vm.vmBuiltinCalls) << "\n";
-            std::cout << "│  Heap tahsis      : " << fmtN(p.vmHeapAllocCount) << " nesne\n";
-            std::cout << "│  Süre örneklemi   : "
+            std::cout << "│  Builtin methods  : " << fmtN(vm.vmBuiltinCalls) << "\n";
+            std::cout << "│  Heap allocations : " << fmtN(p.vmHeapAllocCount) << " objects\n";
+            std::cout << "│  Timing samples   : "
                       << fmtN(vm.sampleOpcodes.size())
-                      << " örnek (her "
-                      << BenchVMTrace::kSampleStride << " talimatta 1, ~"
+                      << " samples (1 per "
+                      << BenchVMTrace::kSampleStride << " instructions, ~"
                       << fmtN((vm.sampleOpcodes.size() * 9) / 1024)
                       << " KB)\n";
             std::cout << "│\n";
@@ -638,7 +638,7 @@ inline void printBenchProfile(const BenchProfile& p,
     // ── Opcode profili ─────────────────────────────────────────────────────
     // JIT'de native kod çalışır; opcode trace mevcut değil.
     if (!compileOnly && !p.jitUsed && !p.opcodeResult.empty()) {
-        std::cout << "└─ [Opcode Profili — çalışma zamanı dağılımı]\n\n";
+        std::cout << "└─ [Opcode Profile: runtime distribution]\n\n";
 
         // Çalışma sayısına göre sırala (azalan)
         std::vector<std::pair<std::string, OpcodeStats>> sorted(
@@ -667,12 +667,12 @@ inline void printBenchProfile(const BenchProfile& p,
         };
         const int W1 = 22, W2 = 12, W3 = 10, W4 = 10, W5 = 10, W6 = 8, W7 = 10;
         std::cout << std::left  << std::setw(W1) << "Opcode"
-                  << std::right << std::setw(utf8Pad("Çalışma", W2))  << "Çalışma"
+                  << std::right << std::setw(utf8Pad("Count", W2))  << "Count"
                   << std::right << std::setw(W3) << "Ort(ns)"
                   << std::right << std::setw(W4) << "Min(ns)"
                   << std::right << std::setw(W5) << "Max(ns)"
-                  << std::right << std::setw(utf8Pad("%Süre", W6))    << "%Süre"
-                  << std::right << std::setw(utf8Pad("Örneklem", W7)) << "Örneklem"
+                  << std::right << std::setw(utf8Pad("%Time", W6))    << "%Time"
+                  << std::right << std::setw(utf8Pad("Samples", W7)) << "Samples"
                   << "\n";
         std::string sep(W1 + W2 + W3 + W4 + W5 + W6 + W7, '-');
         std::cout << sep << "\n";
@@ -713,13 +713,12 @@ inline void printBenchProfile(const BenchProfile& p,
             std::cout << "\n";
         }
         std::cout << "\n";
-        std::cout << "  Not: Çalışma sayıları tam sayımdır. Süre sütunları her "
-                  << BenchVMTrace::kSampleStride << " talimatta bir alınan\n"
-                  << "  örneklemden türetilmiş tahminlerdir; \"—\" o opcode'un "
-                  << "hiç örneklenmediğini gösterir.\n\n";
+        std::cout << "  Note: counts are exact. Timing columns are estimates from one sample\n"
+                  << "  every " << BenchVMTrace::kSampleStride << " instructions; \"—\" means the opcode "
+                  << "was never sampled.\n\n";
     } else if (!compileOnly && p.jitUsed) {
-        std::cout << "└─ (Opcode profili atlandı — JIT modunda kullanılamaz)\n\n";
+        std::cout << "└─ (Opcode profile skipped: not available in JIT mode)\n\n";
     } else if (compileOnly) {
-        std::cout << "└─ (Çalıştırma atlandı — opcode profili yok)\n\n";
+        std::cout << "└─ (Execution skipped: no opcode profile)\n\n";
     }
 }
