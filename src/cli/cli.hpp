@@ -72,6 +72,7 @@ public:
     }
 
     void printHelp() const {
+        std::cout << "saQut " << SAQUT_VERSION << "\n\n";
         std::cout << "Usage: saqut [options] <command> [arguments]\n\n";
         std::cout << "Global options:\n";
         std::cout << "  -h, --help                 Display this help message\n";
