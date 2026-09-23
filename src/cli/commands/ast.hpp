@@ -108,8 +108,10 @@ inline int cmdAst(const CliArgs& args) {
         }
         *out << "  ]\n}\n";
     } else {
+        // Metin modu her zaman stdout'a yazar (log() std::cout kullanır);
+        // -o yalnız JSON çıktısını etkiler — metin/JSON ayrışmasını önler.
         for (size_t i = 0; i < display.size(); ++i) {
-            *out << "// ==== " << graph.units[i].filePath << " ====\n";
+            std::cout << "// ==== " << graph.units[i].filePath << " ====\n";
             display[i]->log(0);
         }
     }
