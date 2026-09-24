@@ -126,3 +126,16 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   `lock` (std::mutex) beklemesi dedektörde sayılmaz ve stop ile kesilemez
   (bilinen kısıt; `lock a, b` sıralı alındığı için kilit-kilit deadlock'u
   statik olarak önlenir). | — | Sembol başına bekleyen listeleri (TODO).
+- **[2-c] PLAN B** Serileştirme tip yönlü değil **yapısal**:
+  `serialize(const Value&, MessageBuffer&)` / `deserialize(MessageBuffer&,
+  Heap&)`. Value kind'ı + nesne başlığı (Array+elemKind / Struct / String /
+  Decimal) yeterli; runtime tip tablosu gerekmedi. Graph kopyası: ilk görüşte
+  nesneye indeks, sonra geri-ref (aliasing + döngü); deserialize nesneyi
+  çocuklarından önce indeksler. Struct alan adları (`fieldNames`, değişmez
+  `shared_ptr`) mesajda paylaşımlı referans olarak taşınır — heap nesnesi
+  değil, refcount atomik. String için `Value::fromStringObject` fabrikası
+  eklendi (alıcı heap'e doğrudan tahsis). Özyinelemeli; çok derin bağlı
+  yapılarda native yığın riski (bilinen kısıt). | Tip bilgisi zaten derleme
+  zamanında gönderilebilirlik denetimi için kullanılıyor; runtime'da nesne
+  başlığı eşdeğer bilgiyi taşıyor. | Tip yönlü serileştirme + CompiledProgram
+  tip tablosu.
