@@ -1870,9 +1870,6 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         bool tgtIsBool = targetBase.isPrimitive() && targetBase.prim == PrimitiveKind::Bool;
 
         // bool↔int/float forbidden (ADR-026: "keep forbidden from start for safety")
-        bool srcIsNumeric = srcType.isPrimitive() && !srcIsBool;
-        bool tgtIsNumeric = targetBase.isPrimitive() && !tgtIsBool;
-
         if (tgtIsBool && !srcIsBool && !srcType.isError()) {
             // Hint KAYNAK TİPE göre ayrışır. Genel "value != 0" önerisi string
             // için çalışmaz: `s != 0` derlenir ama anlamlı bir sonuç vermez,

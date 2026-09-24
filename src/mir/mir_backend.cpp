@@ -1539,15 +1539,18 @@ std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
     MIR_module_t  mod = MIR_new_module(ctx, "saqut_jit_dilim1");
 
     // ── print/fatal-hata trampolinleri (dış C fonksiyonları) ────────────
-    MIR_item_t printProto      = MIR_new_proto(ctx, "print_proto", 0, nullptr, 1, MIR_T_I64, "v");
-    MIR_item_t printImport     = MIR_new_import(ctx, "rt_jit_print_int");
-    MIR_item_t printFProto     = MIR_new_proto(ctx, "print_f_proto", 0, nullptr, 1, MIR_T_D, "v");
-    MIR_item_t printFImport    = MIR_new_import(ctx, "rt_jit_print_float");
+    // print_* öğeleri artık lowering'de doğrudan kullanılmıyor (print host
+    // çağrısı üzerinden gider) ama MIR modülüne proto/import olarak kaydolurlar;
+    // kayıt yan etkisini değiştirmemek için tutulur.
+    [[maybe_unused]] MIR_item_t printProto     = MIR_new_proto(ctx, "print_proto", 0, nullptr, 1, MIR_T_I64, "v");
+    [[maybe_unused]] MIR_item_t printImport    = MIR_new_import(ctx, "rt_jit_print_int");
+    [[maybe_unused]] MIR_item_t printFProto    = MIR_new_proto(ctx, "print_f_proto", 0, nullptr, 1, MIR_T_D, "v");
+    [[maybe_unused]] MIR_item_t printFImport   = MIR_new_import(ctx, "rt_jit_print_float");
     // ADR-040: float32 print (arg F2D ile double'a genişletilir → MIR_T_D)
-    MIR_item_t printF32Proto   = MIR_new_proto(ctx, "print_f32_proto", 0, nullptr, 1, MIR_T_D, "v");
-    MIR_item_t printF32Import  = MIR_new_import(ctx, "rt_jit_print_float32");
-    MIR_item_t printSProto     = MIR_new_proto(ctx, "print_s_proto", 0, nullptr, 1, MIR_T_I64, "v");
-    MIR_item_t printSImport    = MIR_new_import(ctx, "rt_jit_print_str");
+    [[maybe_unused]] MIR_item_t printF32Proto  = MIR_new_proto(ctx, "print_f32_proto", 0, nullptr, 1, MIR_T_D, "v");
+    [[maybe_unused]] MIR_item_t printF32Import = MIR_new_import(ctx, "rt_jit_print_float32");
+    [[maybe_unused]] MIR_item_t printSProto    = MIR_new_proto(ctx, "print_s_proto", 0, nullptr, 1, MIR_T_I64, "v");
+    [[maybe_unused]] MIR_item_t printSImport   = MIR_new_import(ctx, "rt_jit_print_str");
     // STRING_CONCAT / string ==,!= runtime call'ları (ret I64 pointer/bool, 2×I64 arg)
     MIR_type_t i64Ret          = MIR_T_I64;
     MIR_var_t  strConcatArgs[2] = {{MIR_T_I64, "a", 0}, {MIR_T_I64, "b", 0}};
@@ -1719,8 +1722,8 @@ std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
     MIR_item_t globalStorePProto = MIR_new_proto_arr(ctx, "global_store_p_proto", 0, nullptr, 2, globalIVars);
     MIR_item_t globalStorePImport = MIR_new_import(ctx, "rt_jit_global_store_p");
 
-    MIR_item_t printDProto     = MIR_new_proto(ctx, "print_d_proto", 0, nullptr, 1, MIR_T_I64, "v");
-    MIR_item_t printDImport    = MIR_new_import(ctx, "rt_jit_print_decimal");
+    [[maybe_unused]] MIR_item_t printDProto  = MIR_new_proto(ctx, "print_d_proto", 0, nullptr, 1, MIR_T_I64, "v");
+    [[maybe_unused]] MIR_item_t printDImport = MIR_new_import(ctx, "rt_jit_print_decimal");
     MIR_var_t  zeroErrVars[2]  = {{MIR_T_I64, "line", 0}, {MIR_T_I64, "col", 0}};
     MIR_item_t divZeroProto    = MIR_new_proto_arr(ctx, "divzero_proto", 0, nullptr, 2, zeroErrVars);
     MIR_item_t divZeroImport   = MIR_new_import(ctx, "rt_jit_div_zero");

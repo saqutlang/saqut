@@ -417,6 +417,15 @@ static void walkAST(ASTNode* node, ASTStats& out) {
             walkAST(static_cast<ExpressionStatementNode*>(node)->expression, out);
             break;
         }
+        // ── ADR-045 threading ─────────────────────────────────────────────────
+        case ASTKind::LockStatement:
+            ++out.statements;
+            walkList(static_cast<LockStatementNode*>(node)->targets, out);
+            break;
+        case ASTKind::WaitStatement:
+            ++out.statements;
+            walkAST(static_cast<WaitStatementNode*>(node)->condition, out);
+            break;
 
         // ── Expressions ───────────────────────────────────────────────────────
         case ASTKind::BinaryExpression: {
@@ -471,6 +480,11 @@ static void walkAST(ASTNode* node, ASTStats& out) {
             walkList(static_cast<ScopeCallNode*>(node)->arguments, out);
             break;
         }
+        case ASTKind::ThreadExpr:
+            ++out.expressions;
+            walkAST(static_cast<ThreadExprNode*>(node)->body, out);
+            break;
+        case ASTKind::CollectionNew:   // Pool(T)/List(T): argüman tip adıdır, alt düğüm yok
         case ASTKind::Literal:
         case ASTKind::Identifier:
             ++out.expressions;

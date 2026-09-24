@@ -107,69 +107,84 @@ ObjectT* Heap::track(ObjectT* object, long long byteSize) {
     return object;
 }
 
-ArrayObject* Heap::allocArray(int capacity, ArrayElemKind elemKind) {
-    auto* array = new ArrayObject(capacity, elemKind);
-    return track(array, estimateBytes(array));
-}
-
-StructObject* Heap::allocStruct(int fieldCount) {
-    auto* structObject = new StructObject(fieldCount);
-    return track(structObject, estimateBytes(structObject));
-}
-
-StringObject* Heap::allocString(std::string text) {
-    auto* stringObject = new StringObject(std::move(text));
-    return track(stringObject, estimateBytes(stringObject));
-}
-
-DecimalObject* Heap::allocDecimal(const DecimalValue& value) {
-    auto* decimalObject = new DecimalObject(value);
-    return track(decimalObject, estimateBytes(decimalObject));
-}
-
 // ── Ayak izi tahmini ────────────────────────────────────────────────────────
 //
 // Tempo kararı için kullanılır, muhasebe için değil: mantıksal boyut sayılır
 // (vector'ün ayırdığı fazladan kapasite değil). Mertebe doğruluğu yeterlidir
 // ve tahsis yolunda ucuz kalması önemlidir.
+//
+// Tür başına ayrı fonksiyonlar: tahsis yolları statik türü bildiği için
+// doğrudan bunları çağırır. (Tür etiketi üzerinden switch inline edildiğinde
+// GCC 14+, yeni kurulan StructObject'i ArrayObject dalından okuyan ölü bir
+// yol görüp -Warray-bounds veriyordu; etiket constructor'da set edildiği için
+// yanlış alarmdı.)
+
+namespace {
+
+long long estimateArrayBytes(const ArrayObject* array) {
+    long long base = (long long)sizeof(ArrayObject);
+    switch (array->elemKind) {
+        case ArrayElemKind::Ref:
+            return base + (long long)(array->elements.size() * sizeof(Value));
+        case ArrayElemKind::Byte:
+            return base + (long long)array->bytes.size();
+        case ArrayElemKind::Int:
+            return base + (long long)(array->ints.size() * sizeof(int32_t));
+        case ArrayElemKind::LongInt:
+            return base + (long long)(array->longs.size() * sizeof(int64_t));
+        case ArrayElemKind::Float32:
+            return base + (long long)(array->f32s.size() * sizeof(float));
+        case ArrayElemKind::Float64:
+            return base + (long long)(array->f64s.size() * sizeof(double));
+        case ArrayElemKind::Decimal:
+            return base + (long long)(array->decimals.size() * sizeof(DecimalValue));
+    }
+    return base;
+}
+
+long long estimateStructBytes(const StructObject* structObject) {
+    return (long long)sizeof(StructObject) +
+           (long long)(structObject->fields.size() * sizeof(Value));
+}
+
+long long estimateStringBytes(const StringObject* stringObject) {
+    return (long long)sizeof(StringObject) + (long long)stringObject->data.size();
+}
+
+long long estimateDecimalBytes(const DecimalObject*) {
+    return (long long)sizeof(DecimalObject);
+}
+
+}  // namespace
 
 long long Heap::estimateBytes(const Object* object) {
     switch (object->type) {
-        case ObjectType::Array: {
-            const auto* array = static_cast<const ArrayObject*>(object);
-            long long   base  = (long long)sizeof(ArrayObject);
-            switch (array->elemKind) {
-                case ArrayElemKind::Ref:
-                    return base + (long long)(array->elements.size() * sizeof(Value));
-                case ArrayElemKind::Byte:
-                    return base + (long long)array->bytes.size();
-                case ArrayElemKind::Int:
-                    return base + (long long)(array->ints.size() * sizeof(int32_t));
-                case ArrayElemKind::LongInt:
-                    return base + (long long)(array->longs.size() * sizeof(int64_t));
-                case ArrayElemKind::Float32:
-                    return base + (long long)(array->f32s.size() * sizeof(float));
-                case ArrayElemKind::Float64:
-                    return base + (long long)(array->f64s.size() * sizeof(double));
-                case ArrayElemKind::Decimal:
-                    return base + (long long)(array->decimals.size() * sizeof(DecimalValue));
-            }
-            return base;
-        }
-        case ObjectType::Struct: {
-            const auto* structObject = static_cast<const StructObject*>(object);
-            return (long long)sizeof(StructObject) +
-                   (long long)(structObject->fields.size() * sizeof(Value));
-        }
-        case ObjectType::String: {
-            const auto* stringObject = static_cast<const StringObject*>(object);
-            return (long long)sizeof(StringObject) +
-                   (long long)stringObject->data.size();
-        }
-        case ObjectType::Decimal:
-            return (long long)sizeof(DecimalObject);
+        case ObjectType::Array:   return estimateArrayBytes(static_cast<const ArrayObject*>(object));
+        case ObjectType::Struct:  return estimateStructBytes(static_cast<const StructObject*>(object));
+        case ObjectType::String:  return estimateStringBytes(static_cast<const StringObject*>(object));
+        case ObjectType::Decimal: return estimateDecimalBytes(static_cast<const DecimalObject*>(object));
     }
     return (long long)sizeof(Object);
+}
+
+ArrayObject* Heap::allocArray(int capacity, ArrayElemKind elemKind) {
+    auto* array = new ArrayObject(capacity, elemKind);
+    return track(array, estimateArrayBytes(array));
+}
+
+StructObject* Heap::allocStruct(int fieldCount) {
+    auto* structObject = new StructObject(fieldCount);
+    return track(structObject, estimateStructBytes(structObject));
+}
+
+StringObject* Heap::allocString(std::string text) {
+    auto* stringObject = new StringObject(std::move(text));
+    return track(stringObject, estimateStringBytes(stringObject));
+}
+
+DecimalObject* Heap::allocDecimal(const DecimalValue& value) {
+    auto* decimalObject = new DecimalObject(value);
+    return track(decimalObject, estimateDecimalBytes(decimalObject));
 }
 
 // ── Kök sağlayıcı kaydı ─────────────────────────────────────────────────────
