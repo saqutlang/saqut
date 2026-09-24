@@ -23,7 +23,9 @@
 #include <atomic>
 #include <deque>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "runtime/const_pool.hpp"
@@ -42,6 +44,12 @@ struct CompiledProgram {
 
     // Global slot sayısı (her isolate kendi global kopyasını bu boyutta kurar).
     int globalCount = 0;
+
+    // ADR-045 (Faz 3-f): fonksiyon giriş tablosu (THREAD_SPAWN hedefi
+    // __thread_* fonksiyonları dahil), shared slot tanımları, thread bayrağı.
+    std::unordered_map<std::string, void*>   entries;
+    std::vector<std::pair<int, std::string>> sharedSlots;   // (kind, ad)
+    bool                                     usesThreads = false;
 
     // STRUCT_NEW metadata'sı. Koda metaId (indeks) olarak gömülür, eleman
     // pointer'ı değil — vektörün derleme sırasında yeniden tahsisi güvenlidir.

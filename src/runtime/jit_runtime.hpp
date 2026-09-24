@@ -95,6 +95,17 @@ struct JitRuntime {
     bool    castNullable = false;
     int64_t castNull     = 0;
 
+    // ── ADR-045 (Faz 3-f): izole thread modeli ──────────────────────────────
+    // Bu thread'in başlangıç argümanları (yakalananlar; THREAD_ARG okur) —
+    // koşu heap'ine açılır, GC kökü.
+    std::vector<Value> threadArgs;
+    // THREAD_SPAWN'ın hazırlanmakta olan argüman tamponu (rt_jit_spawn_arg_*)
+    // — commit'te tek mesaja serileştirilir. GC kökü.
+    std::vector<Value> spawnArgs;
+    // Son POOL_POP / LIST_GET / THREAD_ARG sonucunun null olup olmadığı
+    // (nullable hedefin isNull bayrağı için).
+    int64_t threadLastNull = 0;
+
     // jitNewString/jitBoxDecimal'in heap bağlı değilken (test/izole
     // kullanım) sızdırmadan çalışması için yedek havuzlar — normal yol
     // heap->allocString/allocDecimal'dir.

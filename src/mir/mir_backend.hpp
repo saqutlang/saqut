@@ -34,6 +34,7 @@
 
 struct CompiledProgram;
 struct Isolate;
+namespace saqut::threading { struct MessageBuffer; }
 
 namespace mir_backend {
 
@@ -59,13 +60,18 @@ std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
                                                 UnsupportedReason& outReason,
                                                 Profiling::StageTimer* profiler = nullptr);
 
+// ADR-045 (Faz 3-f): entryName/startMsg — spawn edilen thread'in isolate'i
+// main yerine __thread_* giriş fonksiyonunu koşar; startMsg (yakalananlar)
+// bu thread'in koşu heap'ine açılır. Varsayılan: main, mesaj yok.
 bool runOnIsolate(const CompiledProgram& compiled, Isolate& iso, int& outExitCode,
                   const std::vector<std::string>& programArgs,
                   Profiling::StageTimer* profiler = nullptr,
                   JitCallCounters* counters = nullptr,
                   int executionRuns = 1,
                   std::vector<long long>* executionSamplesUs = nullptr,
-                  const std::function<void(int, int)>& executionProgress = {});
+                  const std::function<void(int, int)>& executionProgress = {},
+                  const std::string& entryName = "main",
+                  const saqut::threading::MessageBuffer* startMsg = nullptr);
 
 // Programın TAMAMINI MIR ile native koda derleyip main()'i gerçekten
 // çalıştırmayı dener. Başarılıysa true döner, outExitCode main'in RETURN

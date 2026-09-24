@@ -213,3 +213,29 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   etkisiz sayar (yol-bağımlı açık unlock'ta sızıntı olmaz). Pool/List'e
   giren int değer eleman tipine (float/double/decimal/longint) açıkça
   genişletilir.
+- **[3-e]** VM: spawn = `ThreadTable::spawn` + yeni thread'de kendi
+  `Isolate`'i ve kendi `Interpreter`'ı (IRProgram paylaşılır); başlangıç
+  mesajı alıcı heap'e açılır ve `threadArgs_` GC köküdür. Bloklayan opcode
+  stop ile dönerse `ThreadStopRequested` C++ istisnası; thread girişi yakalar.
+  Thread'de yakalanmayan hata: "runtime error in thread#N @ f:l: msg" +
+  `_Exit(1)`. main'de yakalanmayan hata (thread programı): mesaj +
+  `_Exit(70)` (statik yıkım koşan thread'leri beklerken asılırdı). Ana
+  Interpreter program başını (`programBegin`) initForDebug'da kurar.
+- **[3-f] JIT tam destek (Plan B gerekmedi, doğrulama Bölüm 7'de):** tüm
+  thread opcode'ları `rt_jit_*` trampolinlerine iner (değer türüne göre
+  i/d/p varyantları; Float32 hedef D2F; nullable hedef için
+  `rt_jit_thread_last_null`). Spawn: `rt_jit_spawn_begin/arg_*/commit`
+  (değişken sayıda argüman sabit tampona yazılır, commit tek mesaja
+  serileştirir); giriş fonksiyonu `CompiledProgram::entries`'ten, yeni
+  thread `runOnIsolate(..., entryName, startMsg)` ile aynı makine kodunu
+  koşar. Stop: ölümsüz bir "stop nöbetçisi" `pendingError`'a konur; thread
+  programlarında her catch dalının önüne `rt_jit_error_catchable` kontrolü
+  üretilir (nöbetçi catch'e girmez, yayılır); `runOnIsolate` thread
+  girişinde nöbetçiyi temiz çıkış sayar. Mesaj değerleri JIT kuralıyla
+  (int → LongInt Value, float → Float Value) üretilir; aynı programın tüm
+  thread'leri aynı backend'de koştuğundan tutarlıdır.
+- **[3-g]** Geri kenar yoklaması: VM'de `pollFlags_` bağlıyken (yalnız
+  thread programı) geri JMP/JIF'lerde; JIT'te thread programlarında geri
+  atlamalardan önce `rt_jit_poll` (stop → nöbetçi + yay). Tek thread
+  programlarında kod ve performans değişmez. Ayrı commit yok: VM kısmı
+  `c5d2140` (3-e), JIT kısmı 3-f commit'inde. bit1 (DAP duraklatma) Faz 4.
