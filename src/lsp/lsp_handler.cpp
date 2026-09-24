@@ -649,7 +649,9 @@ static const std::vector<std::string> kKeywords = {
     "true","false","null",
     "struct","enum","import","export",
     "break","continue","throw","try","catch",
-    "switch","case","default","as"
+    "switch","case","default","as",
+    // ADR-045 threading
+    "shared","thread","lock","unlock","wait","Pool","List","Thread"
 };
 
 // CompletionItemKind: Function=3, Variable=6, Field=5, Struct=22, Enum=13, EnumMember=20, Keyword=14
@@ -930,6 +932,39 @@ static nlohmann::json builtinMethodItem(const DataMethod* m) {
     };
 }
 
+// ADR-045: Pool/List/Thread metotları (TypeChecker::checkThreadIntrinsic ile
+// aynı liste; BuiltinMethodRegistry'de değiller). Receiver başka tipse boş.
+static nlohmann::json threadMethodsForType(const Type& t) {
+    struct M { const char* name; const char* detail; const char* snippet; };
+    static const M kPool[] = {
+        {"push",   "void push(T value) — kuyruk doluysa bekler", "push(${1:value})"},
+        {"pop",    "T pop() — kuyruk boşsa bekler",               "pop()"},
+        {"setMax", "void setMax(int n) — kapasite sınırı",       "setMax(${1:n})"},
+        {"length", "int length()",                                 "length()"},
+    };
+    static const M kList[] = {
+        {"append", "void append(T value)", "append(${1:value})"},
+        {"get",    "T get(int index)",     "get(${1:index})"},
+        {"length", "int length()",         "length()"},
+    };
+    static const M kThread[] = {
+        {"join",    "void join() — thread bitene kadar bekler", "join()"},
+        {"stop",    "void stop() — durdurma ister, beklemez",   "stop()"},
+        {"running", "bool running()",                          "running()"},
+    };
+    nlohmann::json items = nlohmann::json::array();
+    auto add = [&](const M* b, const M* e) {
+        for (const M* m = b; m != e; ++m)
+            items.push_back({{"label", m->name}, {"kind", 2},  // Method
+                             {"detail", m->detail},
+                             {"insertText", m->snippet}, {"insertTextFormat", 2}});
+    };
+    if (t.isPool())        add(std::begin(kPool),   std::end(kPool));
+    else if (t.isList())   add(std::begin(kList),   std::end(kList));
+    else if (t.isThread()) add(std::begin(kThread), std::end(kThread));
+    return items;
+}
+
 // Verilen tip için BuiltinMethodRegistry'deki uygun metodları döndürür.
 // Kategori filtrelemesi: Array metodları yalnızca array receiver için,
 // StringVal metodları yalnızca string için, StructVal metodları yalnızca struct için.
@@ -1043,6 +1078,8 @@ nlohmann::json LspHandler::handleCompletion(const nlohmann::json& id,
             items = builtinMethodsForType(targetType, "");
             return JsonRpc::makeResponse(id, items);
         }
+        if (targetType.isPool() || targetType.isList() || targetType.isThread())
+            return JsonRpc::makeResponse(id, threadMethodsForType(targetType));
         if (!targetType.isStruct()) return JsonRpc::makeResponse(id, items);
 
         // Struct: alanlar + struct builtin metodları (toJson/dump — ADR-033)

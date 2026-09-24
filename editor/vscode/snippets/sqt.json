@@ -238,5 +238,32 @@
       "}"
     ],
     "description": "loop over program arguments (needs: import { args } from sys;)"
+  },
+  "thread": {
+    "prefix": "thread",
+    "body": [
+      "Thread ${1:t} = thread {",
+      "\t$0",
+      "};",
+      "$1.join();"
+    ],
+    "description": "start a thread (ADR-045) and join it"
+  },
+  "lock": {
+    "prefix": "lock",
+    "body": [
+      "{",
+      "\tlock ${1:sharedVar};",
+      "\t$0",
+      "}"
+    ],
+    "description": "lock a shared variable for the rest of the block (released automatically)"
+  },
+  "wait": {
+    "prefix": "wait",
+    "body": [
+      "wait(${1:sharedVar} ${2:>=} ${3:value});$0"
+    ],
+    "description": "block until a condition over shared variables becomes true"
   }
 }
