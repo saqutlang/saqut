@@ -152,8 +152,26 @@ komutlarında (`a7e6c71`, c4), Interpreter isolate bağı + salt okunur
 IRProgram (`df884c1`, d), FileRegistry freeze (`e2c0848`, e), print mutex'i
 (`5fecf75`, f), `__init_globals` üreticisi (`ff30dac`, g — Plan B), JIT GC
 sayaç global'leri (`f538915`), isolate eşzamanlılık testi (`03a7f32`, h).
-Faz 1 kodu **Uygulandı** durumundadır; toplu doğrulama (Debug assert'leri,
-GC stres, TSan, benchmark) henüz koşulmadı → "Test Edildi" değil.
+
+Faz 2 (runtime primitifleri, `src/runtime/threading/`): ThreadTable + park
+katmanı + deadlock dedektörü (`e82e37f`), yapısal mesaj serileştirme
+(`cfe05fd`, Plan B), native handle araştırması (`e909197`), PoolCore
+(`1458c88`), ListCore (`badd174`), SharedSlots (`7f208e6`), birim testleri
+(`6d968a1`). Faz 3 (dil yüzeyi): lexer/parser (`e3f5e05`), semantik
+(`46f8c35`), IR opcode'ları + lambda lifting (`6c3ab80`), Interpreter
+(`c5d2140`), JIT (`0b8eded`), örnekler/negatif testler/rehber (`093459a`).
+Faz 4 (DAP): thread listesi/olayları, all-stop, işçi inceleme, Shared scope
+(`19b99aa`, breakpoint/step yalnız main — Plan B). Debug assert ölüm
+testleri (`1944305`).
+
+**Durum: Uygulandı + Test Edildi (dal içinde), Release Edilmedi.** Toplu
+doğrulama (handoff Bölüm 7.1) koşuldu: Release ve Debug `tests/run.sh`
+yeşil, Debug assert ölüm testleri 8/8, GC stres (VM+JIT) yeşil, TSan
+(primitifler, isolate testi, tüm `examples/threading` VM+JIT) 0 uyarı,
+negatif testler yeşil, `saqut bench`/`--profile` ve DAP thread senaryosu
+duman testleri geçti. Tek thread VM'de heavy benchmark'ta ~%5–9 gerileme
+ölçüldü (JIT'te yok); ayrıntı ve açık soru `docs/threading-decisions.md`
+"Bölüm 7".
 
 Global başlatma kararı (Plan B, `docs/threading-decisions.md` [1-g]):
 main'in başındaki global init prelude'u korunur; thread kullanan programlarda

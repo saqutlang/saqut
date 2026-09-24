@@ -287,3 +287,47 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
 - **[4] Yaşam döngüsü:** main bitince işçiler beklenir (CLI ile aynı);
   terminate/disconnect'te işçilere stop istenir ve join edilir (IRProgram
   yıkılmadan önce).
+
+## Bölüm 7 — toplu doğrulama sonuçları
+
+- **7.1.1 Release `tests/run.sh`:** rc=0 (golden 163, uyarı 2, diff 132 + 1
+  önceden de atlanan, gc, opt 360; `examples/threading` VM+JIT).
+- **7.1.2 Debug `tests/run.sh`:** rc=0. `threading_asserts_test` 8/8; 4
+  assert'in (isolate'siz `current()`, üyelik dışı `embedProgramPtr`,
+  frozen FileRegistry'e yazma, yanlış isolate'in programı) Debug'da SIGABRT
+  ile tetiklendiği gösterildi.
+- **7.1.3 GC stres (Debug):** tüm örnekler VM+JIT `--gc-stress` yeşil;
+  `isolate_concurrency_test` normal + `--gc-stress` yeşil.
+- **7.1.4 TSan:** `threading_primitives_test`, `isolate_concurrency_test`
+  (iki mod), tüm `examples/threading` VM+JIT (+gc-stress) → 0 uyarı. Not:
+  MIR'in ürettiği makine kodu enstrümante değildir; JIT'te yalnız C++
+  runtime yolları denetlenir.
+- **7.1.5 Negatif testler:** `tests/golden/threading_errors/` +
+  `deadlock.runtime_error` `run.sh` içinde yeşil; 30 tekrar kararlılık
+  koşusu 0 hata.
+- **7.1.6 Benchmark** (fib(30) + struct/string/dizi döngüleri, dönüşümlü
+  koşu, 15–25 tekrar medyanı; ölçüm gürültüsü A-vs-A ile ±%1, ardışık
+  çiftlerde ±%4'e kadar):
+  - JIT: a-öncesi (`8787176`) → HEAD **−%2.9** (eşik içi).
+  - VM: a-öncesi → HEAD **+%8.6 / +%10.3** (iki koşu). Ardışık çiftler:
+    `f6a5e90`→`1bed05a` +%4.7; `1bed05a`→`c5d2140` −%1.6;
+    `c5d2140`→HEAD +%0.6. Faz 1 içinde tutarlı tek sıçrama
+    `5fecf75`→`1bed05a` (+%4.5, ters sırada −%3.6); bu aralıkta VM sıcak
+    yoluna dokunan değişiklik yok (`__init_globals` üreticisi, JIT GC sayaç
+    atomic'i, CMake'te `saqut_core` OBJECT kütüphanesi).
+  - TLS kontrolü: Release ikili statik, `__tls_get_addr` çağrısı yok
+    (local-exec); glibc 2.39'da pthread libc içinde, link satırı değişmedi.
+    `rt()`/`Isolate::current()` maliyeti ölçülebilir değil (c2 vs c1 −%0.7).
+  - Sonuç: gerileme kaynak düzeyinde bir sıcak yol maliyetine
+    bağlanamadı; en olası neden OBJECT kütüphanesine geçişin ve
+    Faz 3'te büyüyen interpreter switch'inin kod yerleşimi etkisi.
+    HostCallFrame ile Isolate* geçirme TLS maliyeti olmadığı için
+    uygulanmadı. Açık soru olarak ürün sahibine iletildi.
+- **7.1.7 Duman testleri:** `saqut bench` (VM/JIT, tek thread + thread
+  örneği) ve `run --profile` (VM/JIT) rc=0. DAP senaryosu
+  (`producer_consumer.sqt:37` breakpoint → `threads` 4 thread → işçi
+  `stackTrace` "[bekliyor: pop jobs] consume" + Locals/Shared scope →
+  `continue` → çıktı 2001000/2000, exit 0) geçti.
+  **Kısıt:** `thread` started/exited olayları ThreadTable anlık görüntü
+  farkından üretildiği için iki koşu turu arasında başlayıp biten işçiler
+  (örnekte thread#2/#3) için olay gönderilmez.

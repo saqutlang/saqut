@@ -8,6 +8,15 @@ zorunlu referans: `docs/adr/ADR-045-isolate-threading.md` ve
 
 ## A) Şu anki durum (tamamlanan adımlar + commit hash'leri)
 
+**SON DURUM (otonom tur sonu):** Faz 1–4 uygulandı ve Bölüm 7 toplu
+doğrulaması koşuldu. Commit listesi ve durum: ADR-045 "Uygulama durumu";
+kararlar, Plan B'ler, ölçümler ve bilinen kısıtlar:
+`docs/threading-decisions.md` (özellikle "Bölüm 7"); kullanıcı rehberi:
+`docs/threading-guide.md`. Aşağıdaki D/E bölümleri tarihsel kayıttır —
+açık kalan işler: (1) tek thread VM ~%5–9 gerileme sorusu, (2) işçi
+thread'lerde breakpoint/adım (DAP Plan B), (3) kısa ömürlü işçiler için
+DAP thread olayları, (4) Release/sürüm kararı ürün sahibinde.
+
 Dal: **`v1.0.1-multithread`**. Her adımda `bash tests/run.sh` **rc=0** tutuldu.
 
 - **1.1 + 1.2** → commit **`8787176`**: ADR-045 yazıldı; ucontext maddesi

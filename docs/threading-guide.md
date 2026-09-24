@@ -153,6 +153,16 @@ int n = log.length();
 - `print` çağrı başına atomiktir (iki thread'in çıktısı bir çağrının ortasında
   karışmaz; sıraları karışabilir).
 
+## Debugger (DAP) ile
+
+- Program bir breakpoint'te durunca bütün thread'ler durur; `continue` hepsini
+  sürdürür. Thread listesinde işçiler `thread#N @ dosya:satır` adıyla görünür.
+- Bir işçinin çağrı yığını ve yerelleri durduğu yerden okunabilir; bekleyen
+  işçinin üst çerçevesi ne beklediğini yazar (ör. `[bekliyor: pop jobs]`).
+  "Shared" bölümü shared değişkenleri ve Pool/List uzunluklarını gösterir.
+- v1 kısıtları: breakpoint ve adımlama yalnız **main** thread'de çalışır;
+  çok kısa ömürlü işçiler için başladı/bitti olayı görünmeyebilir.
+
 ## Örnekler
 
 `examples/threading/`: üretici-tüketici, ekle-yalnız List, stop, lock ile iki
