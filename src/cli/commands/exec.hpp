@@ -28,6 +28,8 @@
 #include "ir/ir_generator.hpp"
 #include "vm/interpreter.hpp"
 #include "mir/mir_backend.hpp"
+#include "runtime/compiled_program.hpp"
+#include "runtime/isolate.hpp"
 
 // startsWithStatement — Kullanıcı girdisinin bir DEYİM mi (for/while/if/
 // değişken tanımı ...) yoksa bir İFADE mi (call/literal/aritmetik ...) ile
@@ -143,8 +145,15 @@ inline int cmdExec(const CliArgs& args) {
         if (args.useJit) {
             int jitResult = 0;
             mir_backend::UnsupportedReason reason;
-            bool jitOk = mir_backend::tryCompileAndRunProgram(
-                program, jitResult, reason, args.programArgs);
+            // c4: CompiledProgram'ın sahibi komut; kapsam sonunda yıkılır.
+            std::unique_ptr<CompiledProgram> compiled =
+                mir_backend::compileProgram(program, reason);
+            bool jitOk = compiled != nullptr;
+            if (jitOk) {
+                Isolate&     iso = Isolate::current();
+                IsolateGuard guard(iso, compiled.get());
+                mir_backend::runOnIsolate(*compiled, iso, jitResult, args.programArgs);
+            }
             if (jitOk) {
                 exitCode = jitResult;
             } else {

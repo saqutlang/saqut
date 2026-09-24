@@ -22,6 +22,8 @@
 #include "ir/ir_generator.hpp"
 #include "vm/interpreter.hpp"
 #include "mir/mir_backend.hpp"
+#include "runtime/compiled_program.hpp"
+#include "runtime/isolate.hpp"
 #include "profiling/stage_timer.hpp"
 
 inline int cmdRun(const CliArgs& args) {
@@ -128,8 +130,18 @@ inline int cmdRun(const CliArgs& args) {
         // + native derleme) ve "jit-exec" (yalnizca calistirma) mir_backend
         // TARAFINDAN ayri ayri raporlanir, burada tek bir "vm/jit" ile
         // sarilmiyor (kullanici talimati: bu ikisi karistirilmasin).
-        bool jitOk = mir_backend::tryCompileAndRunProgram(
-            program, jitResult, reason, args.programArgs, profilerPtr);
+        // ADR-045 (c4): CompiledProgram'ın sahibi run komutudur. Yıkım sırası:
+        // (thread'ler join) → koşu isolate'i serbest → CompiledProgram yıkımı
+        // (MIR_gen_finish/MIR_finish) — unique_ptr kapsam sonunda.
+        std::unique_ptr<CompiledProgram> compiled =
+            mir_backend::compileProgram(program, reason, profilerPtr);
+        bool jitOk = compiled != nullptr;
+        if (jitOk) {
+            Isolate&     iso = Isolate::current();
+            IsolateGuard guard(iso, compiled.get());
+            mir_backend::runOnIsolate(*compiled, iso, jitResult, args.programArgs,
+                                      profilerPtr);
+        }
         if (jitOk) {
             if (args.verbose) std::cerr << "[jit] whole program ran on the JIT (VM not used)\n";
             // --gc-stats: VM ve JIT AYNI formatta raporlar — iki backend aynı

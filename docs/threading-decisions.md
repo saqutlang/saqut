@@ -28,3 +28,11 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   doğrular. | Gömülü her adres tek bir sahibe (CompiledProgram) bağlanır;
   IRProgram ömrüne bağımlılık kalkar; O(1) denetim. | IRProgram adres
   aralığı kaydı (IRProgram'ın dağınık std::string'leri için aralık yok).
+- **[1-c4]** `run`, `exec` ve `bench` komutları `compileProgram` →
+  `IsolateGuard` → `runOnIsolate` dizisini kendileri kurar; `unique_ptr`
+  sahipliği komuttadır. Bench için Plan B gerekmedi (tekrar döngüsü zaten
+  `runOnIsolate`'in `executionRuns` parametresinde). Bench'te
+  `compiled.reset()` ölçüm aralığının içinde tutuldu (eskiden MIR_finish
+  `tryCompileAndRunProgram` içindeydi). `tryCompileAndRunProgram` API olarak
+  kaldı, CLI kullanmıyor. | Sahiplik ADR-045 "CompiledProgram ömrü"ne göre
+  koşu komutunda. | Yalnız run.hpp'yi taşımak (Plan B).

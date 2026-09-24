@@ -45,6 +45,8 @@
 #include "ir/instruction.hpp"
 #include "vm/interpreter.hpp"
 #include "mir/mir_backend.hpp"
+#include "runtime/compiled_program.hpp"
+#include "runtime/isolate.hpp"
 
 namespace fs = std::filesystem;
 
@@ -287,16 +289,26 @@ static bool runPipeline(
             Profiling::StageTimer           stageTimer;
 
             auto ta = BClock::now();
-            bool jitOk = mir_backend::tryCompileAndRunProgram(
-                program, jitResult, reason, programArgs, &stageTimer,
-                profile ? &counters : nullptr,
-                jitExecutionRuns, &out.jitExecSamples,
-                (profile == nullptr && jitExecutionRuns > 1)
-                    ? std::function<void(int, int)>([](int run, int total) {
-                          std::cerr << "\r[bench] timing " << run << "/" << total
-                                    << "  " << std::flush;
-                      })
-                    : std::function<void(int, int)>{});
+            // c4: CompiledProgram'ın sahibi komut; ısınma + tekrar döngüsü
+            // runOnIsolate içindedir (executionRuns), derleme bir kez.
+            std::unique_ptr<CompiledProgram> compiled =
+                mir_backend::compileProgram(program, reason, &stageTimer);
+            bool jitOk = compiled != nullptr;
+            if (jitOk) {
+                Isolate&     iso = Isolate::current();
+                IsolateGuard guard(iso, compiled.get());
+                mir_backend::runOnIsolate(
+                    *compiled, iso, jitResult, programArgs, &stageTimer,
+                    profile ? &counters : nullptr,
+                    jitExecutionRuns, &out.jitExecSamples,
+                    (profile == nullptr && jitExecutionRuns > 1)
+                        ? std::function<void(int, int)>([](int run, int total) {
+                              std::cerr << "\r[bench] timing " << run << "/" << total
+                                        << "  " << std::flush;
+                          })
+                        : std::function<void(int, int)>{});
+            }
+            compiled.reset();  // eskisi gibi: MIR yıkımı zaman ölçümünün içinde
             auto tb = BClock::now();
             // Warmup (derleme) süresi ayrı tutulur — timing tablosundaki
             // jit-execute yalnızca native çalıştırmayı göstersin (VM'deki
