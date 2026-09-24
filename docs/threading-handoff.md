@@ -306,7 +306,10 @@ Sonra uygula:
 
 ## E) Sıradaki adım
 
-**c1** (compileProgram/runOnIsolate mekanik bölmesi + crossing-locals tablosu)
-→ **c2** → **d** → **e** → **f** → **g** → **h**; her adım ayrı commit, her
+**c1** (compileProgram/runOnIsolate mekanik bölmesi + crossing-locals tablosu;
+structMeta codegen'de doğrudan CompiledProgram'a yazılır, runtime
+`Isolate::current().program->structMeta`'dan okur — thread başına kopya yok)
+→ **c2** → **c3** (ConstPool'un süreç-global tekilden CompiledProgram üyesine
+taşınması; S2) → **d** → **e** → **f** → **g** → **h**; her adım ayrı commit, her
 adımda `tests/run.sh` yeşil. Faz 1 sonunda tam rapor (Bölüm 7 formatı + MIR
 arayüz kontrolü + benchmark). Faz 2'ye geçme.
