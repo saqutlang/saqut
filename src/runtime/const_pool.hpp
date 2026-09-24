@@ -46,9 +46,32 @@ public:
         return obj;
     }
 
+    // Decimal literalleri: değere göre tekilleştirilmiş, immortal (ADR-045).
+    // LOAD_DECIMAL codegen'i artık heap'e dokunmaz; gömülen adres program-
+    // ömürlü ve immutable olur.
+    DecimalObject* internDecimal(const DecimalValue& v) {
+        const std::string key = v.toString();
+        auto it = decIndex_.find(key);
+        if (it != decIndex_.end()) return it->second;
+        decimals_.push_back(std::make_unique<DecimalObject>(v));
+        DecimalObject* obj = decimals_.back().get();
+        obj->immortal = true;
+        decIndex_.emplace(key, obj);
+        return obj;
+    }
+
+    // p, bu havuzun sahip olduğu bir nesne mi? (embedProgramPtr debug assert'i)
+    bool owns(const void* p) const {
+        for (const auto& s : strings_)  if (s.get() == p) return true;
+        for (const auto& d : decimals_) if (d.get() == p) return true;
+        return false;
+    }
+
 private:
     std::vector<std::unique_ptr<StringObject>>      strings_;
     std::unordered_map<std::string, StringObject*>  index_;
+    std::vector<std::unique_ptr<DecimalObject>>      decimals_;
+    std::unordered_map<std::string, DecimalObject*>  decIndex_;
 };
 
 #endif // SAQUT_RUNTIME_CONST_POOL

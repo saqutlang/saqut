@@ -37,7 +37,14 @@ sınırda kopyalanan" bir paylaşım modeli seçilmiştir.
 6. **Koda gömülü adres kuralı:** bir adres makine koduna yalnızca işaret
    ettiği veri **immutable ise** VE **tüm isolate'lerden uzun yaşıyorsa**
    gömülebilir (program ömürlü veri). **Heap nesnesi adresi asla gömülmez.**
-   ConstPool string'leri ve `structMeta` bu kurala uyar.
+   ConstPool string/decimal literalleri ve `structMeta` bu kurala uyar.
+   **Zorlama:** her gömme `embedProgramPtr` yardımından geçer (debug'da
+   non-null assert); `compileProgram` hiçbir isolate bağlı değilken çalışır,
+   dolayısıyla codegen sırasında yanlışlıkla bir heap erişimi olursa `rt()`
+   assert'i patlar. **Immutability kapsamı:** bu şart yalnız **paylaşılan**
+   (ConstPool) nesneler içindir; **scratch** nesneler isolate'e özel olduğu ve
+   dışarı sızmadığı sürece değiştirilebilir (ör. `HostRetOwner::decimal`,
+   `src/ffi/host_bridge.hpp:91`).
 7. MIR derlemesi **eager**'dir (`MIR_set_gen_interface`); koşu sırasında hiçbir
    `MIR_*` API çağrılmaz. Birden çok thread aynı `MIR_context`'inde kod üretmez.
 

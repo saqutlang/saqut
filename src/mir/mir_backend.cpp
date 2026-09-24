@@ -16,6 +16,7 @@
 #include <sys/resource.h>
 #include "mir/mir_backend.hpp"
 
+#include <cassert>
 #include <cstring>
 #include <cstddef>  // offsetof — JIT direct-memory view alanları (Aşama 0 spike)
 #include <chrono>
@@ -58,6 +59,18 @@
 namespace mir_backend {
 
 namespace {
+
+// Program-ömürlü (immortal) veriye gömülü adres. ADR-045 kuralı: makine koduna
+// yalnızca işaret ettiği veri immutable VE tüm isolate'lerden uzun yaşarsa
+// gömülebilir. Debug'da non-null assert; ConstPool nesneleri için ek denetim
+// çağrı yerlerinde ConstPool::owns ile yapılır (trace name/file IRProgram
+// ömürlüdür, bu havuzun dışındadır).
+static MIR_op_t embedProgramPtr(MIR_context_t ctx, const void* p) {
+#ifndef NDEBUG
+    assert(p != nullptr);
+#endif
+    return MIR_new_int_op(ctx, reinterpret_cast<int64_t>(p));
+}
 
 // JIT çalışma bağlamı (JitRuntime) artık Isolate üyesidir (ADR-045, Faz 1).
 // Tanım: src/runtime/jit_runtime.hpp. Erişim: rt() -> Isolate::current().jit.
@@ -1760,8 +1773,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                 program.moduleRegistry.filePath(fn.moduleId);
             MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 4,
                 MIR_new_ref_op(ctx, traceEnterProto), MIR_new_ref_op(ctx, traceEnterImport),
-                MIR_new_int_op(ctx, reinterpret_cast<int64_t>(fn.name.c_str())),
-                MIR_new_int_op(ctx, reinterpret_cast<int64_t>(file.c_str()))));
+                embedProgramPtr(ctx, fn.name.c_str()),
+                embedProgramPtr(ctx, file.c_str())));
         }
 
         auto R = [&](int slot) { return MIR_new_reg_op(ctx, regs[static_cast<size_t>(slot)]); };
@@ -2048,7 +2061,7 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     StringObject* obj = ConstPool::instance().internString(instr.stringValue);
                     MIR_append_insn(ctx, func,
                         MIR_new_insn(ctx, MIR_MOV, R(instr.dest),
-                            MIR_new_int_op(ctx, reinterpret_cast<int64_t>(obj))));
+                            embedProgramPtr(ctx, obj)));
                     break;
                 }
                 case Opcode::STRING_CONCAT:
@@ -2178,10 +2191,14 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     break;
                 // ── Decimal (Dilim 3) — kutulu; sabit derleme zamanı, aritmetik call ──
                 case Opcode::LOAD_DECIMAL: {
-                    DecimalObject* obj = jitBoxDecimal(instr.decimalValue);
+                    // Decimal literali program-ömürlü ConstPool'a (ADR-045):
+                    // heap'e dokunmaz, gömülen adres immortal (immutability
+                    // şartı yalnız PAYLAŞILAN nesneler için; scratch owner
+                    // hariç, bkz. ADR-045).
+                    DecimalObject* obj = ConstPool::instance().internDecimal(instr.decimalValue);
                     MIR_append_insn(ctx, func,
                         MIR_new_insn(ctx, MIR_MOV, R(instr.dest),
-                            MIR_new_int_op(ctx, reinterpret_cast<int64_t>(obj))));
+                            embedProgramPtr(ctx, obj)));
                     break;
                 }
                 case Opcode::DADD:
