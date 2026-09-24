@@ -60,6 +60,12 @@ void serialize(const Value& v, MessageBuffer& buf);
 // dönen değer çağıranın köküne bağlanana kadar güvendedir.
 Value deserialize(const MessageBuffer& buf, Heap& heap);
 
+// Çok değerli mesaj (thread başlangıç argümanları): tüm değerler TEK graph
+// kopyasıdır — iki yakalanan değişken aynı nesneyi gösteriyorsa alıcıda da
+// aynı nesneyi gösterir.
+void serializeValues(const std::vector<Value>& values, MessageBuffer& buf);
+std::vector<Value> deserializeValues(const MessageBuffer& buf, Heap& heap);
+
 // Kolaylık: tek değerlik mesaj.
 inline MessageBuffer makeMessage(const Value& v) {
     MessageBuffer m;

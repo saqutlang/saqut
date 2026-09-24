@@ -38,13 +38,14 @@ ThreadCore& ThreadTable::registerMain() {
     return *core;
 }
 
-ThreadCore& ThreadTable::spawn(std::string name, std::function<void(ThreadCore&)> body) {
+ThreadCore& ThreadTable::spawn(std::string location, std::function<void(ThreadCore&)> body) {
     ThreadCore* core = nullptr;
     {
         std::lock_guard<std::mutex> lk(mu_);
         auto c  = std::make_unique<ThreadCore>();
         c->id   = nextId_++;
-        c->name = name.empty() ? "thread#" + std::to_string(c->id) : std::move(name);
+        c->name = "thread#" + std::to_string(c->id) +
+                  (location.empty() ? std::string() : " @ " + location);
         core    = c.get();
         threads_.push_back(std::move(c));
     }

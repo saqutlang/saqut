@@ -56,6 +56,17 @@ double SharedSlots::addFloat(int index, double delta) {
     return prev + delta;
 }
 
+double SharedSlots::addFloat32(int index, double delta) {
+    auto&  a    = at(index).d;
+    double prev = a.load(std::memory_order_seq_cst);
+    double next = 0.0;
+    do {
+        next = static_cast<double>(static_cast<float>(prev + delta));
+    } while (!a.compare_exchange_weak(prev, next, std::memory_order_seq_cst));
+    notifyShared();
+    return next;
+}
+
 bool SharedSlots::loadBool(int index) {
     return at(index).b.load(std::memory_order_seq_cst);
 }

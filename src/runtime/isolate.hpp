@@ -67,6 +67,10 @@ struct Isolate {
     Heap*               heap        = nullptr;
     std::vector<Value>* globalSlots = nullptr;
 
+    // ADR-045 (Faz 3-h): bu isolate'in tuttuğu shared kilitler (slot, etiket).
+    // Thread sonunda (normal/stop/hata) hepsi bırakılır.
+    std::vector<std::pair<int, int>> heldLocks;
+
     // JIT host çağrılarının ortamı (programArgs, koşu heap'i). runOnIsolate
     // doldurur ve rt().hostEnv'e bağlar (önce süreç-global static'ti).
     HostEnv jitEnv;

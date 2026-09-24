@@ -198,3 +198,18 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   kilitler bırakılır; thread sonunda (normal/stop/hata) kalan tüm kilitler
   bırakılır. JIT'te catch'e unwind edilirken kilit bırakma YOK (**PLAN B**,
   bilinen kısıt — thread sonunda yine bırakılır).
+
+## Faz 3 — uygulama
+
+- **[3-c+3-d]** Tek commit (`6c3ab80`): lifting yeni opcode'ları
+  (THREAD_SPAWN/ARG) üretmeden var olamaz. Spec listesine ek opcode'lar:
+  `SHARED_EPOCH` (wait döngüsü), `THREAD_ARG` (yakalanan argüman).
+  `SHARED_RMW`'nin işlem kodu `int64Value`'da (liveness `left`'i okunan slot
+  sayar). shared `++`/`--` de atomik RMW'dir (spec yalnız `+=`/`-=`
+  diyordu; `x++`'ı atomik olmayan yükle+yaz yapıp uyarmak yerine doğal
+  atomik semantik seçildi). saQut `float`'ı 32-bit olduğu için shared float
+  slotu `SlotType::Float32`. `unlock a;` derleme zamanı kilit kaydını
+  silmez; blok sonu yine UNLOCK üretir, runtime tutulmayan kilidi bırakmayı
+  etkisiz sayar (yol-bağımlı açık unlock'ta sızıntı olmaz). Pool/List'e
+  giren int değer eleman tipine (float/double/decimal/longint) açıkça
+  genişletilir.

@@ -69,6 +69,8 @@ public:
     double  loadFloat(int index);
     void    storeFloat(int index, double v);
     double  addFloat(int index, double delta);
+    // saQut `float` 32-bit'tir: toplam her adımda float'a yuvarlanır (CAS döngüsü)
+    double  addFloat32(int index, double delta);
     bool    loadBool(int index);
     void    storeBool(int index, bool v);
 

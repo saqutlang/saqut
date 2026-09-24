@@ -67,8 +67,9 @@ public:
 
     // Yeni OS thread'i başlatır; body yeni thread'de koşar. Gövdenin
     // bitişi (normal, stop, hata) tablo tarafından `finished` işaretlenir ve
-    // park katmanına bildirilir. name boşsa "thread#N" kullanılır.
-    ThreadCore& spawn(std::string name, std::function<void(ThreadCore&)> body);
+    // park katmanına bildirilir. Ad: "thread#N" + (location boş değilse
+    // " @ " + location), ör. "thread#3 @ main.sqt:12" (Faz 4 DAP adı).
+    ThreadCore& spawn(std::string location, std::function<void(ThreadCore&)> body);
 
     ThreadCore* find(int id);
 

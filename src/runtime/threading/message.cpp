@@ -271,4 +271,16 @@ Value deserialize(const MessageBuffer& buf, Heap& heap) {
     return r.value();
 }
 
+void serializeValues(const std::vector<Value>& values, MessageBuffer& buf) {
+    Writer w{buf, {}, {}, 0};
+    for (const Value& v : values) w.value(v);
+}
+
+std::vector<Value> deserializeValues(const MessageBuffer& buf, Heap& heap) {
+    Reader r{buf, heap, {}, 0};
+    std::vector<Value> out;
+    while (r.pos < buf.bytes.size()) out.push_back(r.value());
+    return out;
+}
+
 }  // namespace saqut::threading

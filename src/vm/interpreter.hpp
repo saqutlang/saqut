@@ -13,6 +13,7 @@
 #ifndef SAQUT_VM_INTERPRETER
 #define SAQUT_VM_INTERPRETER
 
+#include <atomic>
 #include <vector>
 #include <optional>
 #include <functional>
@@ -80,6 +81,7 @@ public:
     // (yalnızca ~Heap temizler — eski arena davranışı).
     // n > 0 → toplama eşiği (canlı ayak izi, bayt); n <= 0 → toplama kapalı.
     void setGCThreshold(int n) {
+        gcThreshold_ = n;   // ADR-045: spawn edilen thread'lere aktarılır
         if (n > 0) heap_.setMinCollectBytes(n);
         else       heap_.setCollectionEnabled(false);
     }
@@ -88,6 +90,18 @@ public:
     // #90: `--` sonrası argümanlar — sys::args() ile programa geçirilir.
     void setProgramArgs(std::vector<std::string> a) { programArgs_ = std::move(a); }
     const std::vector<std::string>& programArgs() const { return programArgs_; }
+
+    // ── ADR-045 (Faz 3-e): izole thread'ler ──────────────────────────────────
+    // Yeni thread'in Interpreter'ı: main yerine sentetik __thread_* giriş
+    // fonksiyonunu koşar; başlangıç mesajı (yakalananlar) bu heap'e açılır ve
+    // THREAD_ARG ile okunur. Ana olmayan Interpreter program başı/sonu
+    // (SharedSlots kurulumu, joinAll) yapmaz.
+    void setThreadEntry(const std::string& function, const std::vector<Value>& args) {
+        entryFunction_     = function;
+        threadArgs_        = args;
+        isMainInterpreter_ = false;
+    }
+    Heap& heap() { return heap_; }
 
     // ── DAP API ───────────────────────────────────────────────────────────────
     enum class RunState { Running, Paused, Finished };
@@ -141,6 +155,15 @@ public:
 
 private:
     const IRProgram&       program_;
+    // ADR-045 (Faz 3-e)
+    std::string            entryFunction_     = "main";
+    std::vector<Value>     threadArgs_;          // GC kökü (collectRoots)
+    bool                   isMainInterpreter_ = true;
+    bool                   threadingActive_   = false;   // program_.usesThreads
+    std::atomic<uint32_t>* pollFlags_         = nullptr; // geri kenar yoklaması
+    int                    gcThreshold_       = 0;
+    void pollBackEdge();
+    void executeThreadOp(const Instruction& instr, CallFrame& frame);
     // Kurucuda bağlı isolate'in önceki heap/globalSlots bağı (yıkıcı geri koyar).
     Heap*                  prevIsolateHeap_    = nullptr;
     std::vector<Value>*    prevIsolateGlobals_ = nullptr;

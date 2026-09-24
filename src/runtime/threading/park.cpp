@@ -94,6 +94,12 @@ void notifyShared() {
     s.cv.notify_all();
 }
 
+bool parkUntilEpochChanges(uint64_t seen, std::stop_token stop, const std::string& where) {
+    // pred park mutex'i altında çalışır → epoch'u doğrudan (kilitsiz) okur.
+    auto& s = state();
+    return park([&s, seen] { return s.epoch != seen; }, stop, where);
+}
+
 uint64_t sharedEpoch() {
     auto& s = state();
     std::lock_guard<std::mutex> lk(s.mu);

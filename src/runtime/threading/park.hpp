@@ -55,6 +55,10 @@ bool park(const std::function<bool()>& pred, std::stop_token stop,
 // Shared mutasyon bildirimi: epoch++ (park mutex'i altında) + notify_all.
 void notifyShared();
 
+// `wait(koşul)` döngüsü (Faz 3): epoch `seen`'den farklı olana dek bekler
+// (deadlock'a sayılır). true: epoch değişti; false: stop istendi.
+bool parkUntilEpochChanges(uint64_t seen, std::stop_token stop, const std::string& where);
+
 // Test/teşhis: mevcut epoch.
 uint64_t sharedEpoch();
 
