@@ -239,3 +239,51 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   atlamalardan önce `rt_jit_poll` (stop → nöbetçi + yay). Tek thread
   programlarında kod ve performans değişmez. Ayrı commit yok: VM kısmı
   `c5d2140` (3-e), JIT kısmı 3-f commit'inde. bit1 (DAP duraklatma) Faz 4.
+- **[3-h]** Ayrı commit yok; parçaları: sözcüksel UNLOCK'lar (3-d,
+  `6c3ab80`), VM catch unwind'da try-etiketli kilit bırakma ve thread
+  sonunda tümünü bırakma (3-e, `c5d2140`), JIT thread sonunda bırakma
+  (3-f). JIT'te catch'e unwind'da bırakma yok (**PLAN B**, [3-h] mimari
+  kaydı). `lock` beklemesi (std::mutex) stop ile kesilemez ve deadlock
+  dedektöründe sayılmaz (bilinen kısıt).
+
+## Faz 4 — DAP
+
+- **[4 araştırma]** DAP yalnız **VM** ile çalışır (`src/dap/dap_handler.cpp`,
+  `vm_ = std::make_unique<Interpreter>`); ana thread'in Interpreter'ı DAP
+  thread'inde bütçeli `runUntilEvent` turlarıyla koşar. Breakpoint/adım
+  kancaları Interpreter'dadır (`isBreakpoint`, `stepStartLine_`,
+  `runUntilEvent`). Tek thread varsayımları: `threadId: 1` sabitleri,
+  `threads` yanıtında yalnız main, `vm_` tekilliği, `evaluate`'in yalnız
+  `vm_`'e bakması, frame id = derinlik. İşçi thread'ler DAP'ın dışında
+  kendi `Interpreter::run()`'larıyla koşar.
+- **[4] All-stop:** ana thread durduğunda (breakpoint/adım/pause/entry/
+  exception) DAP tüm işçilere `kDebugPause` bitini koyar; VM işçisi bir
+  sonraki geri kenarda ya da bloklayan bir çağrıdan (pop/push/wait/join)
+  dönüşte, kullanıcı koduna geçmeden park eder (deadlock'a sayılmaz).
+  `stopped` olayı `allThreadsStopped: true` taşır. continue/next/stepIn/
+  stepOut önce bitleri kaldırır (hepsi sürer); `supportsSingleThreadExecution
+  Requests: false`.
+- **[4] Thread listesi/olaylar:** `threads` = main + canlı işçiler
+  ("thread#N @ dosya:satır"); `thread` started/exited olayları DAP
+  thread'inde her koşu turu ve durma noktasında ThreadTable farkından.
+- **[4] İnceleme:** frame id = derinlik (main) / `T*100 + derinlik` (işçi
+  T). İşçinin çerçeveleri yalnız park'tayken (duraklatılmış ya da
+  bloklanmış) okunur; bloklanmış thread'in üst frame adı
+  "[bekliyor: pop jobs]". Park'ta değilse tek bir yapay frame
+  ("[çalışıyor]"). Ek "Shared" scope: shared primitifler ve Pool/List
+  uzunlukları.
+- **[4] PLAN B (kısmi):** breakpoint'ler ve adımlama yalnız **ana
+  thread**'de (işçi thread'de breakpoint tetiklenmez; threadId≠1 adım
+  isteği hata yanıtı). `evaluate` yalnız ana thread çerçevelerinde. Tam
+  per-thread breakpoint/step her işçi Interpreter'ının DAP olay döngüsüne
+  bağlanmasını gerektirir (ayrı tur). Ana-thread DAP davranışı birebir.
+- **[4] İşçi çıktısı:** işçilerin `print`'i protokol akışına doğrudan
+  yazmaz (DAP thread'inin yazdığı çerçevelerle karışırdı); kuyruğa girer,
+  DAP thread'i tur aralarında `output` olayı olarak boşaltır.
+- **[4] Deadlock (debugger altında):** park katmanının işleyicisi süreci
+  öldürmek yerine `stopped` (reason "exception", açıklama + rapor) gönderir
+  ve istekleri yanıtlamaya devam eder; ilerleme istekleri reddedilir,
+  terminate/disconnect süreci 70 ile sonlandırır.
+- **[4] Yaşam döngüsü:** main bitince işçiler beklenir (CLI ile aynı);
+  terminate/disconnect'te işçilere stop istenir ve join edilir (IRProgram
+  yıkılmadan önce).

@@ -16,6 +16,11 @@
 #include <ostream>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <set>
+#include <string>
+#include <thread>
+#include <vector>
 #include <unordered_map>
 
 class DapHandler {
@@ -107,6 +112,33 @@ private:
     // Faz 8 (#105): bütçe turu boyutu — tur arası pause gecikmesinin üst sınırı.
     static constexpr int kRunBudgetChunk = 100000;
     std::deque<nlohmann::json> pendingRequests_;
+
+    // ── ADR-045 Faz 4: çok thread'li programlar ─────────────────────────────
+    // Frame id kodlaması: ana thread (id 1) derinlik d → d (0..99); diğer
+    // thread T → T*100 + d. Locals scope ref'i 1000 + frameId; "Shared"
+    // scope ref'i kSharedScopeRef (child ref aralığı 100000+'dan önce).
+    static constexpr int kSharedScopeRef = 99999;
+    bool          usesThreads_ = false;
+    std::set<int> knownThreads_;           // thread olayları için (started/exited)
+    // İşçi thread'lerin print çıktısı: protokol akışına yalnız DAP thread'i
+    // yazar; işçiler kuyruğa koyar, DAP thread'i tur aralarında boşaltır.
+    std::thread::id          dapThread_ = std::this_thread::get_id();
+    std::mutex               workerOutMu_;
+    std::vector<std::string> workerOut_;
+    void drainWorkerOutput();
+public:
+    // Deadlock işleyicisi (park katmanı çağırır): süreci öldürmek yerine
+    // stopped(exception) olayı + istekleri yanıtlama döngüsü (all-stop).
+    void serveDeadlock(const std::string& report);
+private:
+    void syncThreadEvents();               // ThreadTable ile fark → thread olayları
+    void pauseWorkers(bool on);            // all-stop: işçi thread'lere duraklatma biti
+    void sendStopped(nlohmann::json body); // allThreadsStopped + işçileri durdur
+    void finishProgram();                  // main bitti: işçileri bırak + join
+    void shutdownThreads();                // terminate/disconnect: stop + join
+    // frameId → (Interpreter, derinlik); işçi thread yalnız park'tayken okunur.
+    Interpreter* frameInterpreter(int frameId, int& depth) const;
+    nlohmann::json sharedVariables() const;
 };
 
 #endif // SAQUT_DAP_HANDLER

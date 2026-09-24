@@ -100,6 +100,24 @@ bool parkUntilEpochChanges(uint64_t seen, std::stop_token stop, const std::strin
     return park([&s, seen] { return s.epoch != seen; }, stop, where);
 }
 
+ParkInfo parkInfoOf(const ThreadCore& t) {
+    auto& s = state();
+    std::lock_guard<std::mutex> lk(s.mu);
+    ParkInfo info;
+    info.parked = t.state.load(std::memory_order_acquire) == ThreadState::Parked;
+    info.where  = t.waitingOn;
+    return info;
+}
+
+void setDebugPauseAll(bool on) {
+    for (ThreadCore* t : ThreadTable::instance().snapshot()) {
+        if (t->id == 1 || t->finished()) continue;
+        if (on) t->pollFlags.fetch_or(pollbits::kDebugPause, std::memory_order_acq_rel);
+        else    t->pollFlags.fetch_and(~pollbits::kDebugPause, std::memory_order_acq_rel);
+    }
+    if (!on) notifyShared();   // duraklatma park'ında bekleyenleri uyandır
+}
+
 uint64_t sharedEpoch() {
     auto& s = state();
     std::lock_guard<std::mutex> lk(s.mu);

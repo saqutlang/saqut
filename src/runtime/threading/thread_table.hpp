@@ -45,6 +45,9 @@ struct ThreadCore {
     std::jthread thread;           // main için boş (ana OS thread'i)
     std::stop_source stopSource;   // main için kullanılır; spawn'da jthread'inki
     Isolate*    isolate = nullptr; // gövde bağlar; yalnız duraklatılmışken okunur
+    // DAP (Faz 4): bu thread'i koşan Interpreter (VM). Runtime katmanı VM'i
+    // tanımaz → opak işaretçi; yalnız DAP, thread park etmişken okur.
+    void*       debugTarget = nullptr;
 
     std::atomic<ThreadState> state{ThreadState::Running};
     std::atomic<uint32_t>    pollFlags{0};

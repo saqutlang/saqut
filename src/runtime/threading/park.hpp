@@ -62,6 +62,18 @@ bool parkUntilEpochChanges(uint64_t seen, std::stop_token stop, const std::strin
 // Test/teşhis: mevcut epoch.
 uint64_t sharedEpoch();
 
+// DAP (Faz 4): bir thread'in park durumu, park mutex'i altında tutarlı okunur.
+// parked: şu an park'ta mı; where: beklediği yer ("pop jobs", "debug pause"...).
+struct ParkInfo {
+    bool        parked = false;
+    std::string where;
+};
+ParkInfo parkInfoOf(const struct ThreadCore& t);
+
+// DAP all-stop: ana thread dışındaki tüm canlı thread'lere duraklatma bitini
+// koyar (on) ya da kaldırıp bekleyenleri uyandırır (off).
+void setDebugPauseAll(bool on);
+
 // Park etmeden önce bağlı isolate'in heap'inde "yarım eşik" toplaması
 // (Heap::collectBeforePark). Backend bağlar; null ise atlanır.
 using BeforeParkHook = void (*)();

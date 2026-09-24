@@ -1633,7 +1633,26 @@ void Interpreter::pollBackEdge() {
     const uint32_t flags = pollFlags_->load(std::memory_order_acquire);
     if (flags & saqut::threading::pollbits::kStop)
         throw saqut::threading::ThreadStopRequested{};
-    // kDebugPause: Faz 4 (DAP all-stop) bağlar.
+    if (flags & saqut::threading::pollbits::kDebugPause)
+        debugPausePoint();
+}
+
+// Faz 4 (DAP all-stop): duraklatma biti kalkana dek park et (deadlock'a
+// sayılmaz). Geri kenarlarda ve bloklayan bir çağrıdan dönüşte — kullanıcı
+// koduna geçmeden — çağrılır. Park'tayken DAP bu thread'in çerçevelerini
+// güvenle okur.
+void Interpreter::debugPausePoint() {
+    if (!pollFlags_) return;
+    std::atomic<uint32_t>* flags = pollFlags_;
+    if (!(flags->load(std::memory_order_acquire) & saqut::threading::pollbits::kDebugPause))
+        return;
+    const bool resumed = saqut::threading::park(
+        [flags] {
+            return (flags->load(std::memory_order_acquire) &
+                    saqut::threading::pollbits::kDebugPause) == 0;
+        },
+        saqut::threading::currentStopToken(), "debug pause", /*countsForDeadlock=*/false);
+    if (!resumed) throw saqut::threading::ThreadStopRequested{};
 }
 
 namespace {
@@ -1653,6 +1672,11 @@ void runVmThread(const IRProgram* program, const std::string& entry,
         vm.setProgramArgs(programArgs);
         if (sink) vm.setOutputSink(sink);
         vm.setThreadEntry(entry, saqut::threading::deserializeValues(*startMsg, vm.heap()));
+        self.debugTarget = &vm;   // Faz 4: DAP bu thread'i park'ta okuyabilir
+        struct DebugTargetReset {
+            saqut::threading::ThreadCore& t;
+            ~DebugTargetReset() { t.debugTarget = nullptr; }
+        } debugTargetReset{self};
         vm.run();
     } catch (const saqut::threading::ThreadStopRequested&) {
         // t.stop(): temiz çıkış (kilitler aşağıda bırakılır).
@@ -1805,6 +1829,18 @@ void Interpreter::executeThreadOp(const Instruction& instr, CallFrame& frame) {
     }
     default:
         break;
+    }
+    // Faz 4 (DAP all-stop): bloklayan bir çağrıdan uyanan thread, kullanıcı
+    // koduna geçmeden duraklatma bitini denetler.
+    if (pollFlags_) {
+        switch (instr.opcode) {
+            case Opcode::POOL_PUSH: case Opcode::POOL_POP:
+            case Opcode::WAIT: case Opcode::THREAD_JOIN:
+                debugPausePoint();
+                break;
+            default:
+                break;
+        }
     }
 }
 

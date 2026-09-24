@@ -163,6 +163,7 @@ private:
     std::atomic<uint32_t>* pollFlags_         = nullptr; // geri kenar yoklaması
     int                    gcThreshold_       = 0;
     void pollBackEdge();
+    void debugPausePoint();   // Faz 4: DAP all-stop park noktası
     void executeThreadOp(const Instruction& instr, CallFrame& frame);
     // Kurucuda bağlı isolate'in önceki heap/globalSlots bağı (yıkıcı geri koyar).
     Heap*                  prevIsolateHeap_    = nullptr;
