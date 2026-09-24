@@ -762,7 +762,7 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
         case Opcode::THREAD_STOP:
         case Opcode::THREAD_JOIN:
         case Opcode::THREAD_RUNNING:
-            executeThreadOp(instr, frame);
+            executeThreadOp(instr);
             break;
 
         // ── Fonksiyon çağrısı ─────────────────────────────────────────────
@@ -1699,7 +1699,11 @@ std::string threadLocation(const IRProgram& program, const CallFrame& frame, con
 
 }  // namespace
 
-void Interpreter::executeThreadOp(const Instruction& instr, CallFrame& frame) {
+void Interpreter::executeThreadOp(const Instruction& instr) {
+    // Çerçeve burada yeniden alınır: dispatch döngüsündeki `frame`
+    // referansının adresi dışarı kaçarsa derleyici onu her komutta
+    // bellekten yeniden yükler (S1 ölçümü: ~%1.7 fazla komut).
+    CallFrame& frame = callStack_.back();
     using namespace saqut::threading;
     auto& shared = SharedSlots::instance();
     const int idx = instr.intValue;

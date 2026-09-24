@@ -164,7 +164,9 @@ private:
     int                    gcThreshold_       = 0;
     void pollBackEdge();
     void debugPausePoint();   // Faz 4: DAP all-stop park noktası
-    void executeThreadOp(const Instruction& instr, CallFrame& frame);
+    // Çerçeveyi kendisi alır (callStack_.back()); dispatch döngüsünün `frame`
+    // referansı dışarı kaçmasın diye — S1, docs/threading-decisions.md.
+    [[gnu::noinline]] void executeThreadOp(const Instruction& instr);
     // Kurucuda bağlı isolate'in önceki heap/globalSlots bağı (yıkıcı geri koyar).
     Heap*                  prevIsolateHeap_    = nullptr;
     std::vector<Value>*    prevIsolateGlobals_ = nullptr;
