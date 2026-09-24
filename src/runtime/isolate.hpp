@@ -18,7 +18,9 @@
 // c1: compile/run ayrımı (CompiledProgram + runOnIsolate); JIT HostEnv
 // isolate üyesi oldu (önce mir_backend.cpp'de `static HostEnv jitEnv`).
 //
-// HENÜZ TAŞINMADI (faz1 devamı): ConstPool (c3), Interpreter globalSlots_/Heap, FileRegistry/
+// c3: ConstPool CompiledProgram üyesi (program-ömürlü).
+//
+// HENÜZ TAŞINMADI (faz1 devamı): Interpreter globalSlots_/Heap, FileRegistry/
 // FfiCatalog freeze(). Tek iş parçacıklı davranış bu adımda birebir korunur:
 // tek thread'de tek Isolate oluşur ve alanlar eskisi gibi çalışır.
 // ============================================================================

@@ -12,15 +12,21 @@
 // bitirir (activeIsolates == 0) → MIR_gen_finish → MIR_finish. Yıkıcı
 // mir_backend.cpp'dedir (MIR başlıkları burada açılmaz).
 //
-// HENÜZ TAŞINMADI: ConstPool (c3), sahipliğin run.hpp'ye alınması (D5).
+// Koda gömülebilen her adres (ADR-045 §RUNTIME 6) bu nesnenin sahip olduğu
+// veriye işaret eder: ConstPool nesneleri ve programStrings. Kayıt defteri
+// (embeddable_) embedProgramPtr'nin debug üyelik assert'ini besler (c3).
 // ============================================================================
 
 #ifndef SAQUT_RUNTIME_COMPILED_PROGRAM
 #define SAQUT_RUNTIME_COMPILED_PROGRAM
 
 #include <atomic>
+#include <deque>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
+#include "runtime/const_pool.hpp"
 #include "runtime/jit_runtime.hpp"   // JitStructMeta
 
 struct MIR_context;   // mir.h: typedef struct MIR_context *MIR_context_t;
@@ -44,10 +50,39 @@ struct CompiledProgram {
     // Bu programı koşan isolate sayısı; yıkıcı sıfır olmasını assert eder.
     mutable std::atomic<int> activeIsolates{0};
 
+    // String/decimal literalleri (immortal, program-ömürlü; c3).
+    ConstPool constPool;
+
+    // Koda gömülen C-string'ler (trace fn.name/dosya). IRProgram'a değil bu
+    // nesneye aittir; deque eleman adresleri push_back'te değişmez.
+    std::deque<std::string> programStrings;
+
+    StringObject* internString(const std::string& s) {
+        StringObject* o = constPool.internString(s);
+        embeddable_.insert(o);
+        return o;
+    }
+    DecimalObject* internDecimal(const DecimalValue& v) {
+        DecimalObject* o = constPool.internDecimal(v);
+        embeddable_.insert(o);
+        return o;
+    }
+    const char* internProgramString(const std::string& s) {
+        programStrings.push_back(s);
+        const char* p = programStrings.back().c_str();
+        embeddable_.insert(p);
+        return p;
+    }
+    // p koda gömülebilir mi (bu programın sahip olduğu veri mi)?
+    bool ownsEmbeddable(const void* p) const { return embeddable_.count(p) != 0; }
+
     CompiledProgram() = default;
     ~CompiledProgram();
     CompiledProgram(const CompiledProgram&)            = delete;
     CompiledProgram& operator=(const CompiledProgram&) = delete;
+
+private:
+    std::unordered_set<const void*> embeddable_;
 };
 
 #endif // SAQUT_RUNTIME_COMPILED_PROGRAM

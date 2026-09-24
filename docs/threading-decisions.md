@@ -20,3 +20,11 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   ayırır (t_isolate = nullptr). | ADR-045 §RUNTIME 6 "compileProgram hiçbir
   isolate bağlı değilken çalışır" zorlaması; çağıranın ana isolate'i bağlı
   olsa bile. | Çağıranlara "compile'dan önce guard açma" sözleşmesi (zorlanamaz).
+- **[1-c3]** ConstPool `CompiledProgram::constPool` oldu (Plan B gerekmedi:
+  runtime'dan ConstPool'a erişen yol yok). Trace çerçevesinin `fn.name`/dosya
+  C-string'leri artık IRProgram'dan değil `CompiledProgram::programStrings`
+  (deque, sabit adres) kopyalarından gömülür. `embedProgramPtr` debug'da
+  `CompiledProgram::ownsEmbeddable` (unordered_set kaydı) ile üyelik
+  doğrular. | Gömülü her adres tek bir sahibe (CompiledProgram) bağlanır;
+  IRProgram ömrüne bağımlılık kalkar; O(1) denetim. | IRProgram adres
+  aralığı kaydı (IRProgram'ın dağınık std::string'leri için aralık yok).

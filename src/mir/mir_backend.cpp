@@ -63,13 +63,13 @@ namespace {
 
 // Program-ömürlü (immortal) veriye gömülü adres. ADR-045 kuralı: makine koduna
 // yalnızca işaret ettiği veri immutable VE tüm isolate'lerden uzun yaşarsa
-// gömülebilir. Debug'da non-null assert; ConstPool nesneleri için ek denetim
-// çağrı yerlerinde ConstPool::owns ile yapılır (trace name/file IRProgram
-// ömürlüdür, bu havuzun dışındadır).
-static MIR_op_t embedProgramPtr(MIR_context_t ctx, const void* p) {
-#ifndef NDEBUG
+// gömülebilir. Debug'da: non-null VE CompiledProgram'ın sahip olduğu veri
+// (ConstPool nesnesi ya da programStrings; c3 üyelik kaydı).
+static MIR_op_t embedProgramPtr(MIR_context_t ctx, const CompiledProgram& cp,
+                                const void* p) {
     assert(p != nullptr);
-#endif
+    assert(cp.ownsEmbeddable(p) && "embedProgramPtr: program-ömürlü olmayan adres");
+    (void)cp;
     return MIR_new_int_op(ctx, reinterpret_cast<int64_t>(p));
 }
 
@@ -1502,11 +1502,11 @@ std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
     MIR_item_t traceLeaveProto = MIR_new_proto(ctx, "trace_leave_proto", 0, nullptr, 0);
     MIR_item_t traceLeaveImport = MIR_new_import(ctx, "rt_jit_trace_leave");
 
-    // ── String sabitleri: süreç-ömrü immortal ConstPool (ADR-045, Faz 1).
-    // LOAD_STRING'in kutuladığı StringObject* pointer'ı native koda int
-    // sabiti olarak gömülür (JIT in-process, pointer geçerli). ConstPool
-    // nesneleri immortal işaretlenir; GC onları işaretlemez/süpürmez ve koşu
-    // bitince serbest bırakılmaz. intern, aynı içeriği tek nesneye indirger →
+    // ── String sabitleri: program-ömürlü immortal ConstPool (ADR-045, c3:
+    // CompiledProgram::constPool). LOAD_STRING'in kutuladığı StringObject*
+    // pointer'ı native koda int sabiti olarak gömülür (JIT in-process, pointer
+    // geçerli). ConstPool nesneleri immortal işaretlenir; GC onları
+    // işaretlemez/süpürmez; CompiledProgram yıkılınca serbest kalır. intern, aynı içeriği tek nesneye indirger →
     // döngüde tekrar kutulama/leak yok.
     // NOT: AOT (#81) bu yolu runtime call'a (rt_intern_string + string_data)
     // çevirmeli — farklı process'te derleme-zamanı host pointer'ı gömülemez.
@@ -1726,8 +1726,10 @@ std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
                 program.moduleRegistry.filePath(fn.moduleId);
             MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 4,
                 MIR_new_ref_op(ctx, traceEnterProto), MIR_new_ref_op(ctx, traceEnterImport),
-                embedProgramPtr(ctx, fn.name.c_str()),
-                embedProgramPtr(ctx, file.c_str())));
+                embedProgramPtr(ctx, *compiledProgram,
+                                compiledProgram->internProgramString(fn.name)),
+                embedProgramPtr(ctx, *compiledProgram,
+                                compiledProgram->internProgramString(file))));
         }
 
         auto R = [&](int slot) { return MIR_new_reg_op(ctx, regs[static_cast<size_t>(slot)]); };
@@ -2011,10 +2013,10 @@ std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
                 case Opcode::LOAD_STRING: {
                     // Sabit string'i derleme zamanı kutula, pointer'ını int
                     // sabiti olarak register'a taşı (ADR-037: Str = I64 pointer).
-                    StringObject* obj = ConstPool::instance().internString(instr.stringValue);
+                    StringObject* obj = compiledProgram->internString(instr.stringValue);
                     MIR_append_insn(ctx, func,
                         MIR_new_insn(ctx, MIR_MOV, R(instr.dest),
-                            embedProgramPtr(ctx, obj)));
+                            embedProgramPtr(ctx, *compiledProgram, obj)));
                     break;
                 }
                 case Opcode::STRING_CONCAT:
@@ -2148,10 +2150,10 @@ std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
                     // heap'e dokunmaz, gömülen adres immortal (immutability
                     // şartı yalnız PAYLAŞILAN nesneler için; scratch owner
                     // hariç, bkz. ADR-045).
-                    DecimalObject* obj = ConstPool::instance().internDecimal(instr.decimalValue);
+                    DecimalObject* obj = compiledProgram->internDecimal(instr.decimalValue);
                     MIR_append_insn(ctx, func,
                         MIR_new_insn(ctx, MIR_MOV, R(instr.dest),
-                            embedProgramPtr(ctx, obj)));
+                            embedProgramPtr(ctx, *compiledProgram, obj)));
                     break;
                 }
                 case Opcode::DADD:

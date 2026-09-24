@@ -9,13 +9,13 @@
 // hiçbir Heap'in nesne zincirinde değildirler, GC onları ne işaretler ne
 // süpürür (markObject immortal bitini görünce döner).
 //
-// SÜREÇ-GLOBALDIR (Isolate üyesi değil): ADR-045 "kod bir kez derlenir, tüm
-// thread'ler aynı makine kodunu çalıştırır; string sabitleri süreç ömrü
-// boyunca yaşayan, immutable bir ConstPool'da tutulur" der. Tek iş
-// parçacıklı çalışışta davranış birebir aynıdır.
+// PROGRAM-ÖMÜRLÜDÜR (c3, S2): CompiledProgram üyesidir; süreç-global değil,
+// Isolate üyesi de değil. Derleme sırasında doldurulur, sonra salt okunur;
+// tüm isolate'ler aynı nesneleri görür. CompiledProgram yıkılınca (tüm
+// isolate'ler bittikten sonra) serbest kalır.
 //
-// NOT: internString bugün senkronizasyonsuzdur; derleme tek iş parçacıklıdır.
-// Eşzamanlı derleme gerekirse burası kilitlenmelidir.
+// NOT: intern* senkronizasyonsuzdur; yalnız compileProgram (tek thread)
+// çağırır. Koşu sırasında mutasyon yoktur.
 // ============================================================================
 
 #ifndef SAQUT_RUNTIME_CONST_POOL
@@ -30,10 +30,9 @@
 
 class ConstPool {
 public:
-    static ConstPool& instance() {
-        static ConstPool pool;
-        return pool;
-    }
+    ConstPool() = default;
+    ConstPool(const ConstPool&)            = delete;
+    ConstPool& operator=(const ConstPool&) = delete;
 
     // Aynı içerik tek StringObject'e indirgenir; nesne immortal işaretlenir.
     StringObject* internString(const std::string& s) {
@@ -60,7 +59,8 @@ public:
         return obj;
     }
 
-    // p, bu havuzun sahip olduğu bir nesne mi? (embedProgramPtr debug assert'i)
+    // p, bu havuzun sahip olduğu bir nesne mi? (doğrusal; test/teşhis için —
+    // embedProgramPtr assert'i CompiledProgram::ownsEmbeddable kullanır)
     bool owns(const void* p) const {
         for (const auto& s : strings_)  if (s.get() == p) return true;
         for (const auto& d : decimals_) if (d.get() == p) return true;
