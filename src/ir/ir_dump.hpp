@@ -268,6 +268,55 @@ inline std::string operands(const Instruction& ins, const Palette& p = kFlatPale
             os << s(ins.src);
             break;
 
+        // ── ADR-045: izole thread modeli ─────────────────────────────────
+        case Opcode::SHARED_LOAD:
+        case Opcode::POOL_POP:
+        case Opcode::POOL_LEN:
+        case Opcode::LIST_LEN:
+            os << s(ins.dest) << " " << L("=") << " " << L("shared#") << v(ins.intValue);
+            break;
+        case Opcode::SHARED_STORE:
+        case Opcode::POOL_PUSH:
+        case Opcode::POOL_SETMAX:
+        case Opcode::LIST_APPEND:
+            os << L("shared#") << v(ins.intValue) << " " << L("←") << " " << s(ins.src);
+            break;
+        case Opcode::SHARED_RMW:
+            os << s(ins.dest) << " " << L("=") << " " << L("shared#") << v(ins.intValue) << " "
+               << p.op() << (ins.int64Value ? "-=" : "+=") << reset << " " << s(ins.src);
+            break;
+        case Opcode::LOCK:
+        case Opcode::UNLOCK:
+            os << L("shared#") << v(ins.intValue);
+            break;
+        case Opcode::LIST_GET:
+            os << s(ins.dest) << " " << L("=") << " " << L("shared#") << v(ins.intValue)
+               << L("[") << s(ins.left) << L("]");
+            break;
+        case Opcode::SHARED_EPOCH:
+            os << s(ins.dest);
+            break;
+        case Opcode::WAIT:
+        case Opcode::THREAD_STOP:
+        case Opcode::THREAD_JOIN:
+            os << s(ins.src);
+            break;
+        case Opcode::THREAD_RUNNING:
+            os << s(ins.dest) << " " << L("=") << " " << s(ins.src);
+            break;
+        case Opcode::THREAD_ARG:
+            os << s(ins.dest) << " " << L("=") << " " << L("arg#") << v(ins.intValue);
+            break;
+        case Opcode::THREAD_SPAWN:
+            os << s(ins.dest) << " " << L("=") << " "
+               << p.fn() << ins.functionName << reset << L("(");
+            for (size_t j = 0; j < ins.argSlots.size(); ++j) {
+                if (j) os << L(", ");
+                os << s(ins.argSlots[j]);
+            }
+            os << L(")");
+            break;
+
         case Opcode::BNOT:
             os << s(ins.dest) << " " << L("=") << " " << p.op() << "~" << reset << s(ins.src);
             break;

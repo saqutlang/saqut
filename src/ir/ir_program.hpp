@@ -45,6 +45,21 @@ struct IRProgram {
     // VarDecl'den doldurur; tek-modül fallback için INVALID_ID anahtarı kullanılır.
     std::unordered_map<int, std::vector<SlotType>> globalSlotTypes;
 
+    // ── ADR-045: izole thread modeli ─────────────────────────────────────
+    // `shared` globaller: SHARED_*/POOL_*/LIST_* opcode'larının intValue'su bu
+    // dizinin indeksidir. kind runtime SharedKind ile aynı sırada:
+    // 0 int, 1 float, 2 bool, 3 Pool, 4 List. Koşu başında (ana thread,
+    // spawn öncesi) SharedSlots bu tabloyla kurulur.
+    struct SharedSlotDesc {
+        int         kind = 0;
+        std::string name;
+    };
+    std::vector<SharedSlotDesc> sharedSlots;
+    // Program thread yüzeyini kullanıyor mu (thread {} / shared). false ise
+    // backend'ler hiçbir threading altyapısını (ana thread kaydı, geri kenar
+    // yoklaması, join) devreye sokmaz — tek thread davranışı birebir aynı.
+    bool usesThreads = false;
+
     // Yeni fonksiyon ekle
     void addFunction(IRFunction fn) {
         // emplace çakışmada SESSİZCE hiçbir şey yapmaz. functionOrder'a yine

@@ -219,7 +219,29 @@ enum : uint8_t {
     X(CAST_DECIMAL_TO_INT,   3, OP_VM | OP_JIT) /* trunc; taşma → fallible */ \
     X(CAST_STR_TO_DECIMAL,   3, OP_VM | OP_JIT) /* fallible */ \
     /* --- Dış dünya (FFI) --- */ \
-    X(CALLHOST, 2, OP_VM | OP_JIT) /* functionName, argSlots; şu an yalnız print */
+    X(CALLHOST, 2, OP_VM | OP_JIT) /* functionName, argSlots; şu an yalnız print */ \
+    /* --- İzole thread modeli (ADR-045 Faz 3). intValue = shared slot indeksi \
+       (SharedSlots); valueType = sonuç/eleman SlotType. Bloklayanlar \
+       (POOL_PUSH/POP, WAIT, THREAD_JOIN) iptal noktasıdır. --- */ \
+    X(SHARED_LOAD,    2, OP_VM) /* slots[dest] = shared[intValue] (atomik) */ \
+    X(SHARED_STORE,   2, OP_VM) /* shared[intValue] = slots[src] (atomik) */ \
+    X(SHARED_RMW,     3, OP_VM) /* slots[dest] = (shared[intValue] += / -= slots[src]); int64Value: 0 ekle, 1 çıkar */ \
+    X(LOCK,           1, OP_VM) /* shared[intValue] kilidini al */ \
+    X(UNLOCK,         1, OP_VM) /* shared[intValue] kilidini bırak */ \
+    X(POOL_PUSH,      2, OP_VM) /* Pool shared[intValue].push(deep copy slots[src]) — bloklar */ \
+    X(POOL_POP,       2, OP_VM) /* slots[dest] = Pool shared[intValue].pop() — bloklar */ \
+    X(POOL_LEN,       2, OP_VM) /* slots[dest] = Pool shared[intValue].length() */ \
+    X(POOL_SETMAX,    2, OP_VM) /* Pool shared[intValue].setMax(slots[src]) */ \
+    X(LIST_APPEND,    2, OP_VM) /* List shared[intValue].append(deep copy slots[src]) */ \
+    X(LIST_GET,       3, OP_VM) /* slots[dest] = List shared[intValue].get(slots[left]) */ \
+    X(LIST_LEN,       2, OP_VM) /* slots[dest] = List shared[intValue].length() */ \
+    X(SHARED_EPOCH,   1, OP_VM) /* slots[dest] = park katmanı epoch'u (wait döngüsü) */ \
+    X(WAIT,           1, OP_VM) /* epoch slots[src]'den farklı olana dek park — bloklar */ \
+    X(THREAD_SPAWN,   3, OP_VM) /* slots[dest] = spawn(functionName, argSlots kopyası) */ \
+    X(THREAD_ARG,     2, OP_VM) /* slots[dest] = başlangıç argümanı[intValue] */ \
+    X(THREAD_STOP,    1, OP_VM) /* Thread slots[src].stop() — bloklamaz */ \
+    X(THREAD_JOIN,    1, OP_VM) /* Thread slots[src].join() — bloklar */ \
+    X(THREAD_RUNNING, 2, OP_VM) /* slots[dest] = Thread slots[src].running() */
 
 // Spec tablosundan türetilen enum — OPCODE_LIST'e satır eklemek yeterlidir.
 enum class Opcode {
