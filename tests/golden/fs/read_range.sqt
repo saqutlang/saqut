@@ -3,8 +3,10 @@
 // nullable trailing parametreler isteğe bağlı. İçerik "ABCDEFGHI" (9 bayt).
 import {writeFile, readFile, existsFile, removeFile} from fs;
 import {decode} from utf8;
+import {pid} from process;
 int main() {
-    string path = "/tmp/saqut_read_range.txt";
+    // PID son eki: ctest -j altında golden + differential eşzamanlı koşar.
+    string path = "/tmp/saqut_read_range_" + (pid() as string) + ".txt";
     if (existsFile(path)) { removeFile(path); }
     writeFile(path, [65,66,67,68,69,70,71,72,73]);
     print(decode(readFile(path))); print("|");           // ABCDEFGHI

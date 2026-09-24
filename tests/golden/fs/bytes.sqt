@@ -1,8 +1,10 @@
 import {writeFile, readFile, removeFile} from fs;
+import {pid} from process;
 
 void main() {
     byte[] data = [72, 73, 33];
-    string path = "/tmp/saqut_fs_test_bytes.bin";
+    // PID son eki: ctest -j altında golden + differential eşzamanlı koşar.
+    string path = "/tmp/saqut_fs_test_bytes_" + (pid() as string) + ".bin";
     writeFile(path, data);
     byte[] back = readFile(path);
     print(back.length());

@@ -3,13 +3,16 @@
 // Deterministic: sabit bayt içeriği ve /tmp temp dosyaları.
 import {createFile, writeFile, readFile, existsFile, isEmpty, fileSize, copyFile, renameFile, isDirectory, removeFile} from fs;
 import {existsFile as varMi} from fs;
+import {pid} from process;
 
 void report(bool b) { if (b) { print(1); } else { print(0); } }
 
 void main() {
-    string p1 = "/tmp/saqut_fs_ops_a.txt";
-    string p2 = "/tmp/saqut_fs_ops_b.txt";
-    string p3 = "/tmp/saqut_fs_ops_c.txt";
+    // PID son eki: ctest -j altında golden + differential eşzamanlı koşar.
+    string tag = pid() as string;
+    string p1 = "/tmp/saqut_fs_ops_a_" + tag + ".txt";
+    string p2 = "/tmp/saqut_fs_ops_b_" + tag + ".txt";
+    string p3 = "/tmp/saqut_fs_ops_c_" + tag + ".txt";
     if (existsFile(p1)) { removeFile(p1); }
     if (existsFile(p2)) { removeFile(p2); }
     if (existsFile(p3)) { removeFile(p3); }

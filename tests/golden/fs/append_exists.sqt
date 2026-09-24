@@ -1,7 +1,9 @@
 import {writeFile, appendFile, readFile, existsFile, removeFile} from fs;
+import {pid} from process;
 
 void main() {
-    string path = "/tmp/saqut_fs_test_append.txt";
+    // PID son eki: ctest -j altında golden + differential eşzamanlı koşar.
+    string path = "/tmp/saqut_fs_test_append_" + (pid() as string) + ".txt";
     print(existsFile(path));
     writeFile(path, "a".toBuffer());
     appendFile(path, "b".toBuffer());

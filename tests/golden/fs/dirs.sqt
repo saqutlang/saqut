@@ -1,9 +1,12 @@
 import {createDirectory, isDirectory, isFile, list, walk, removeDirectory, createFile, removeFile, existsFile, modifiedTime} from fs;
+import {pid} from process;
 int main() {
-    string d = "/tmp/saqut_fsd_golden";
-    string sub = "/tmp/saqut_fsd_golden/sub";
-    string f1 = "/tmp/saqut_fsd_golden/a.txt";
-    string f2 = "/tmp/saqut_fsd_golden/sub/b.txt";
+    // PID son eki: aynı fixture ctest -j altında golden + differential olarak
+    // eşzamanlı koşar; sabit yol iki sürecin birbirinin dosyasını silmesine yol açıyordu.
+    string d = "/tmp/saqut_fsd_golden_" + (pid() as string);
+    string sub = d + "/sub";
+    string f1 = d + "/a.txt";
+    string f2 = d + "/sub/b.txt";
     // önceki çalışmadan artık yoksa (idempotent temizlik)
     if (isFile(f1)) { removeFile(f1); }
     if (isFile(f2)) { removeFile(f2); }

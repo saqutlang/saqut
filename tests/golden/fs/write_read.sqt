@@ -1,7 +1,10 @@
 import {writeFile, readFile, removeFile} from fs;
+import {pid} from process;
 
 void main() {
-    writeFile("/tmp/saqut_fs_test_write_read.txt", "merhaba".toBuffer());
-    print(readFile("/tmp/saqut_fs_test_write_read.txt").toString());
-    removeFile("/tmp/saqut_fs_test_write_read.txt");
+    // PID son eki: ctest -j altında golden + differential eşzamanlı koşar.
+    string path = "/tmp/saqut_fs_test_write_read_" + (pid() as string) + ".txt";
+    writeFile(path, "merhaba".toBuffer());
+    print(readFile(path).toString());
+    removeFile(path);
 }
