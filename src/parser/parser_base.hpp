@@ -95,6 +95,14 @@ private:
     ASTNode* parseTryStatement();
     ASTNode* parseThrowStatement();
     ASTNode* parseSwitchStatement();
+    // ADR-045: lock a, b; / unlock a; / wait(koşul);
+    ASTNode* parseLockStatement();
+    ASTNode* parseWaitStatement();
+    // ADR-045: `shared` global bildirimi (yalnız modül kapsamı)
+    ASTNode* parseSharedDecl();
+    // Tip adını string olarak okur: int / string / Job / int[] / Job? ...
+    // (Pool(T)/List(T) argümanı — "argüman ifade değil tip adıdır").
+    std::string parseTypeName();
 
     // --- İfadeler (Pratt parser) ---
     ASTNode* parseExpression();

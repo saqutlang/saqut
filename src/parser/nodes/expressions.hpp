@@ -102,4 +102,29 @@ public:
     std::string toJson(int depth = 0) override;
 };
 
+// ADR-045: thread { gövde } — ifade; tipi Thread. Gövde hemen başlayan yeni bir
+// thread'de (kendi isolate'inde) çalışır. SymbolCollector yakalanan yerelleri
+// (çevreleyen fonksiyonun yerel/parametreleri) captures/captureTypes'a yazar;
+// IRGenerator gövdeyi 0 parametreli sentetik fonksiyona kaldırır (Faz 3-c).
+class ThreadExprNode : public ExpressionNode {
+public:
+    ASTNode*                 body = nullptr;   // BlockNode
+    std::vector<std::string> captures;         // yakalanan yerel adları (ilk görülme sırası)
+    std::vector<Type>        captureTypes;     // captures ile aynı sıra
+    ThreadExprNode();
+    ~ThreadExprNode() override { delete body; }
+    void log(int indent = 0) override;
+    std::string toJson(int depth = 0) override;
+};
+
+// ADR-045: Pool(T) / List(T) — argüman ifade değil TİP adıdır (§DİL YÜZEYİ 13).
+class CollectionNewNode : public ExpressionNode {
+public:
+    bool        isPool = true;    // false → List
+    std::string elemTypeName;     // "int", "Job", "string[]", "int?" ...
+    CollectionNewNode();
+    void log(int indent = 0) override;
+    std::string toJson(int depth = 0) override;
+};
+
 #endif

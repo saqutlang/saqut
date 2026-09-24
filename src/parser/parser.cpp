@@ -140,6 +140,14 @@ static bool isStatementStartToken(TokenType t) {
     case TokenType::KW_CHAR:
     case TokenType::KW_STRING_TYPE:
     case TokenType::KW_AUTO:
+    // ADR-045
+    case TokenType::KW_SHARED:
+    case TokenType::KW_LOCK:
+    case TokenType::KW_UNLOCK:
+    case TokenType::KW_WAIT:
+    case TokenType::KW_POOL:
+    case TokenType::KW_LIST:
+    case TokenType::KW_THREAD_TYPE:
         return true;
     default:
         return false;
@@ -363,10 +371,16 @@ ASTNode* Parser::parseDeclaration() {
     if (ct.type == TokenType::KW_FFI)
         return parseFfiDecl();
 
+    // ADR-045: shared <tip> <ad> = ...;
+    if (ct.type == TokenType::KW_SHARED)
+        return parseSharedDecl();
+
     if (ct.is({TokenType::KW_VOID, TokenType::KW_INT, TokenType::KW_FLOAT_TYPE,
                TokenType::KW_DOUBLE, TokenType::KW_DECIMAL, TokenType::KW_BYTE, TokenType::KW_DATE,
                TokenType::KW_BOOL, TokenType::KW_CHAR, TokenType::KW_STRING_TYPE,
-               TokenType::KW_AUTO})) {
+               TokenType::KW_AUTO,
+               // ADR-045: Pool/List/Thread tip adları
+               TokenType::KW_POOL, TokenType::KW_LIST, TokenType::KW_THREAD_TYPE})) {
         auto la1 = lookahead(1);
         auto la2 = lookahead(2);
         // int name(  → fonksiyon
@@ -504,6 +518,39 @@ ASTNode* Parser::parseNullDenotation() {
     // (genelde parseExpressionStatement) tarafından TEK bir konumlu tanıya
     // (E901) ve panic-mode kurtarmaya çevrilir; burada ikinci bir mesaj
     // basılırsa aynı hata için çift tanı üretilirdi (Faz 2).
+
+    // ── ADR-045: Pool(T) / List(T) — argüman TİP adıdır ────────────────────
+    if ((ct.type == TokenType::KW_POOL || ct.type == TokenType::KW_LIST) &&
+        lookahead(1).type == TokenType::LPAREN) {
+        auto* cn   = new CollectionNewNode();
+        cn->loc    = ct.token ? ct.token->loc : SourceLocation{};
+        cn->isPool = ct.type == TokenType::KW_POOL;
+        nextToken(); // Pool / List
+        nextToken(); // (
+        cn->elemTypeName = parseTypeName();
+        if (currentToken().type == TokenType::RPAREN)
+            nextToken();
+        else
+            reportError(currentToken().token ? currentToken().token->loc : cn->loc, "E905",
+                        std::string("expected ')' after ") + (cn->isPool ? "Pool" : "List") +
+                            " element type");
+        return cn;
+    }
+
+    // ── ADR-045: thread { gövde } ──────────────────────────────────────────
+    if (ct.type == TokenType::KW_THREAD) {
+        auto* te = new ThreadExprNode();
+        te->loc  = ct.token ? ct.token->loc : SourceLocation{};
+        nextToken(); // thread
+        if (currentToken().type != TokenType::LBRACE) {
+            reportError(currentToken().token ? currentToken().token->loc : te->loc, "E905",
+                        "expected '{' after 'thread'");
+            return te;
+        }
+        te->body = parseBlock();
+        if (te->body) te->body->parent = te;
+        return te;
+    }
 
     // ── E::method(args) — built-in scope-call ────────────────────────────────
     if (isScopeCallPattern(ct, lookahead(1), lookahead(2), lookahead(3))) {
@@ -1248,9 +1295,24 @@ ASTNode* Parser::parseStatement() {
     if (ct.type == TokenType::KW_SWITCH)
         return parseSwitchStatement();
 
+    // ADR-045: lock / unlock / wait deyimleri
+    if (ct.type == TokenType::KW_LOCK || ct.type == TokenType::KW_UNLOCK)
+        return parseLockStatement();
+    if (ct.type == TokenType::KW_WAIT)
+        return parseWaitStatement();
+
+    // ADR-045: `shared` yalnız modül kapsamında (global) geçerlidir.
+    if (ct.type == TokenType::KW_SHARED) {
+        reportError(ct.token ? ct.token->loc : SourceLocation{}, "E014",
+                    "'shared' is only allowed on module-level (global) declarations");
+        nextToken();
+        return parseStatement();
+    }
+
     if (ct.is({TokenType::KW_VOID, TokenType::KW_INT, TokenType::KW_FLOAT_TYPE,
                TokenType::KW_DOUBLE, TokenType::KW_DECIMAL, TokenType::KW_BYTE, TokenType::KW_DATE,
-               TokenType::KW_BOOL, TokenType::KW_CHAR, TokenType::KW_STRING_TYPE})) {
+               TokenType::KW_BOOL, TokenType::KW_CHAR, TokenType::KW_STRING_TYPE,
+               TokenType::KW_POOL, TokenType::KW_LIST, TokenType::KW_THREAD_TYPE})) {
         if (lookahead(1).type == TokenType::COLON_COLON) {
             return parseExpressionStatement();
         }
@@ -1612,4 +1674,101 @@ ASTNode* Parser::parseThrowStatement() {
     th->value = expectExpression("after 'throw'");
     expectSemicolon("throw statement");
     return th;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADR-045 (Faz 3-a): izole thread dil yüzeyi
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::string Parser::parseTypeName() {
+    auto t = currentToken();
+    const bool isTypeTok =
+        t.is({TokenType::IDENTIFIER, TokenType::KW_INT, TokenType::KW_FLOAT_TYPE,
+              TokenType::KW_DOUBLE, TokenType::KW_DECIMAL, TokenType::KW_BYTE, TokenType::KW_DATE,
+              TokenType::KW_BOOL, TokenType::KW_CHAR, TokenType::KW_STRING_TYPE,
+              TokenType::KW_THREAD_TYPE, TokenType::KW_POOL, TokenType::KW_LIST});
+    if (!isTypeTok || !t.token) {
+        reportError(t.token ? t.token->loc : SourceLocation{}, "E904", "expected a type name");
+        return "";
+    }
+    std::string name = t.token->token;
+    nextToken();
+    while (currentToken().type == TokenType::LBRACKET &&
+           lookahead(1).type == TokenType::RBRACKET) {
+        nextToken();
+        nextToken();
+        name += "[]";
+    }
+    if (currentToken().type == TokenType::TERNARY) {
+        nextToken();
+        name += "?";
+    }
+    return name;
+}
+
+// shared <tip> <ad> [= başlatıcı];  — yalnız modül kapsamı (parseDeclaration).
+ASTNode* Parser::parseSharedDecl() {
+    auto kw = currentToken();
+    nextToken(); // shared
+    if (!currentToken().token) {
+        reportError(kw.token ? kw.token->loc : SourceLocation{}, "E904",
+                    "expected a declaration after 'shared'");
+        return nullptr;
+    }
+    ASTNode* decl = parseVariableDecl();
+    if (auto* vd = dynamic_cast<VariableDeclNode*>(decl)) {
+        vd->isShared = true;
+        for (ASTNode* sib : vd->getChildren())
+            if (auto* sv = dynamic_cast<VariableDeclNode*>(sib)) sv->isShared = true;
+    }
+    return decl;
+}
+
+// lock a;  lock a, b;  unlock a;
+ASTNode* Parser::parseLockStatement() {
+    auto* ls     = new LockStatementNode();
+    ls->loc      = currentToken().token->loc;
+    ls->isUnlock = currentToken().type == TokenType::KW_UNLOCK;
+    nextToken(); // lock / unlock
+    for (;;) {
+        auto t = currentToken();
+        if (t.type != TokenType::IDENTIFIER || !t.token) {
+            reportError(t.token ? t.token->loc : ls->loc, "E904",
+                        std::string("expected a shared variable name after '") +
+                            (ls->isUnlock ? "unlock" : "lock") + "'");
+            break;
+        }
+        auto* id        = new IdentifierNode();
+        id->loc         = t.token->loc;
+        id->lexerToken  = t.token;
+        id->parserToken = t;
+        id->parent      = ls;
+        ls->targets.push_back(id);
+        nextToken();
+        if (currentToken().type != TokenType::COMMA) break;
+        nextToken();
+    }
+    expectSemicolon(ls->isUnlock ? "unlock statement" : "lock statement");
+    return ls;
+}
+
+// wait(koşul);
+ASTNode* Parser::parseWaitStatement() {
+    auto* ws = new WaitStatementNode();
+    ws->loc  = currentToken().token->loc;
+    nextToken(); // wait
+    if (currentToken().type == TokenType::LPAREN)
+        nextToken();
+    else
+        reportError(currentToken().token ? currentToken().token->loc : ws->loc, "E905",
+                    "expected '(' after 'wait'");
+    ws->condition = expectExpression("in wait condition");
+    if (ws->condition) ws->condition->parent = ws;
+    if (currentToken().type == TokenType::RPAREN)
+        nextToken();
+    else
+        reportError(currentToken().token ? currentToken().token->loc : ws->loc, "E905",
+                    "expected ')' to close wait condition");
+    expectSemicolon("wait statement");
+    return ws;
 }

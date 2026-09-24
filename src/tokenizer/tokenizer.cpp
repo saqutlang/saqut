@@ -40,7 +40,10 @@ static const std::unordered_map<std::string_view, std::string_view> KW_MAP = {
     {"sizeof","sizeof"},{"auto","auto"},{"constexpr","constexpr"},
     {"noexcept","noexcept"},{"native","native"},
     {"synchronized","synchronized"},{"volatile","volatile"},
-    {"transient","transient"}
+    {"transient","transient"},
+    // ADR-045 Faz 3: izole thread modeli
+    {"shared","shared"},{"lock","lock"},{"unlock","unlock"},{"wait","wait"},
+    {"thread","thread"},{"Pool","Pool"},{"List","List"},{"Thread","Thread"}
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

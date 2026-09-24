@@ -161,3 +161,40 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
 - **[2-c/2-f]** `deserialize` artık `const MessageBuffer&` alır (okuma imleci
   yerel); List elemanları kilitsiz ve eşzamanlı okunabildiği için mesaj
   değişmez olmalı.
+
+## Faz 3 — mimari (uygulama başlamadan)
+
+- **[3-c] Lambda lifting yeri:** ayrı bir AST geçişi yerine **IRGenerator
+  içinde** yapılır. SymbolCollector `thread { }` gövdesinin yakaladığı
+  yerelleri (thread gövdesi kapsamı dışında, global olmayan semboller)
+  `ThreadExprNode::captures`'a yazar ve yakalanan adlara atamayı işaretler
+  (TypeChecker hata verir). IRGenerator `thread {}` gördüğünde gövdeyi
+  `__thread_<fn>_<n>` adlı **0 parametreli** sentetik fonksiyona üretir:
+  başında `CALL __init_globals` (debugHidden), ardından her yakalanan için
+  `THREAD_ARG i` → yerel slot. Çağıran taraf `THREAD_SPAWN` ile yakalanan
+  slotları tek bir mesaja serileştirir. | IRGenerator zaten ad→slot/kapsam
+  haritasını tutuyor; AST geçişi kapsam çözümünü çoğaltırdı. Sabit 0-arite
+  giriş JIT'te değişken imzalı fonksiyon işaretçisi çağırma sorununu
+  ortadan kaldırır (VM ve JIT aynı yoldan). | Spec: ayrı
+  `thread_lifting.cpp` AST geçişi + yakalananları parametre olarak alan
+  sentetik fonksiyon.
+- **[3-b/3-d] `wait` predicate'i:** `__wait_pred_<n>` fonksiyonu yerine
+  döngü: `e = SHARED_EPOCH; c = <koşul>; JIF_TRUE c → son; WAIT e; JMP başa`.
+  Epoch koşuldan ÖNCE okunduğu için arada olan mutasyon kaçmaz (WAIT,
+  epoch `e`'den farklıysa hemen döner). | Aynı semantik, callback yok (JIT
+  kodunu C++'tan geri çağırma gerekmez), koşuldaki yereller doğal olarak
+  erişilir. | Spec'teki sentetik predicate fonksiyonu + runtime park(pred).
+- **[3-e/3-f] stop (iptal):** VM'de bloklayan opcode stop ile dönerse (ya da
+  geri kenar yoklaması stop bitini görürse) `ThreadStopRequested` C++
+  istisnası atılır ve thread girişinde yakalanır — saQut `try/catch`
+  VM-içi olduğundan bunu yakalayamaz. JIT'te stop, özel bir "stop"
+  hatası olarak `pendingError` üzerinden yayılır; thread programlarında
+  catch dallarının önüne "durduruluyorsa catch'e girme, yay" kontrolü
+  eklenir. Yoklama ve bu kontroller yalnız thread kullanan programlarda
+  üretilir (tek-thread VM/JIT kodu ve performansı değişmez).
+- **[3-h] Kilitler:** isolate başına tutulan-kilit yığını. Sözcüksel
+  çıkışlar (`return`/`break`/`continue` ve blok sonu) IRGenerator'ın ürettiği
+  `UNLOCK`'larla; VM'de catch'e unwind edilirken try içinde alınmış
+  kilitler bırakılır; thread sonunda (normal/stop/hata) kalan tüm kilitler
+  bırakılır. JIT'te catch'e unwind edilirken kilit bırakma YOK (**PLAN B**,
+  bilinen kısıt — thread sonunda yine bırakılır).

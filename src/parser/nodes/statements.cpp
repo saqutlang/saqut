@@ -238,3 +238,36 @@ std::string SwitchStatementNode::toJson(int depth) {
     obj.addRaw("location", loc.toJson());
     return obj.str();
 }
+
+// LockStatementNode (ADR-045)
+LockStatementNode::LockStatementNode() { kind = ASTKind::LockStatement; }
+void LockStatementNode::log(int indent) {
+    std::cout << jsonIndent(indent) << Color::SoftMavi
+              << (isUnlock ? "UnlockStatement" : "LockStatement") << Color::Reset << "\n";
+    for (auto* t : targets) t->log(indent + 1);
+}
+std::string LockStatementNode::toJson(int depth) {
+    JsonObject obj(depth);
+    obj.add("kind", isUnlock ? "UnlockStatement" : "LockStatement");
+    obj.addArray("targets", [&]() {
+        for (auto* t : targets) obj.addItem(t->toJson(depth + 2));
+    });
+    obj.add("isReachable", isReachable);
+    obj.addRaw("location", loc.toJson());
+    return obj.str();
+}
+
+// WaitStatementNode (ADR-045)
+WaitStatementNode::WaitStatementNode() { kind = ASTKind::WaitStatement; }
+void WaitStatementNode::log(int indent) {
+    std::cout << jsonIndent(indent) << Color::SoftMavi << "WaitStatement" << Color::Reset << "\n";
+    if (condition) condition->log(indent + 1);
+}
+std::string WaitStatementNode::toJson(int depth) {
+    JsonObject obj(depth);
+    obj.add("kind", "WaitStatement");
+    if (condition) obj.addRaw("condition", condition->toJson(depth + 1));
+    obj.add("isReachable", isReachable);
+    obj.addRaw("location", loc.toJson());
+    return obj.str();
+}
