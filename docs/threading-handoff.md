@@ -40,6 +40,12 @@ Dal: **`v1.0.1-multithread`**. Her adımda `bash tests/run.sh` **rc=0** tutuldu.
 **Not:** `CompiledProgram` tipi ve `compileProgram`/`runOnIsolate` **henüz
 yazılmadı** (c1). `tryCompileAndRunProgram` hâlâ yekpare.
 
+**Kaldırıldı (2026-09-24):** Kullanıcının kök `threading/` altındaki ucontext
+denemesi silindi (sahibi kararı). Bölüm 0'daki "threading/ dizinine DOKUNMA"
+kuralı ve ADR-045 "Ertelendi" notu artık geçersizdir; bu satırlar tarihsel
+alıntı olarak duruyor. (Bölüm 4'teki `src/runtime/threading/` ve Bölüm 5'teki
+`examples/threading/` farklı, gelecekte oluşturulacak dizinlerdir.)
+
 ---
 
 ## B) Master prompt (bölümler eksiksiz)

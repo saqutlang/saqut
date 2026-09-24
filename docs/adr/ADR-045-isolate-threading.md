@@ -116,9 +116,9 @@ sayaçla izlenir; yıkıcı `activeIsolates == 0` bekler.
 
 ## Ertelendi
 
-- **ucontext green thread'leri:** Reddedilmedi. `threading/` altındaki deneme
-  olduğu gibi kalır; ileride bir isolate içinde M:1 hafif thread katmanı
-  olarak değerlendirilebilir.
+- **ucontext green thread'leri:** Reddedilmedi. Kullanıcının `threading/`
+  altındaki ucontext denemesi 2026-09-24'te kaldırıldı; yaklaşım ileride bir
+  isolate içinde M:1 hafif thread katmanı olarak değerlendirilebilir.
 
 ## Fazlar
 
@@ -145,8 +145,7 @@ Faz 1 dilimleri: Isolate temeli + dağınık thread_local'ların birleştirilmes
 ConstPool + `immortal` işaretleme (`0503b4f`), `Isolate::program` alanı +
 IsolateGuard (`9b468ae`), decimal literal'lerin ConstPool'a taşınması +
 `embedProgramPtr` (`855aa34`). Dil yüzeyi (Faz 3) ve runtime primitifleri
-(Faz 2) henüz yok. `threading/` altındaki ucontext denemesi bu ADR'nin dışında,
-bağımsız bir çalışmadır.
+(Faz 2) henüz yok.
 
 Faz 1'in kalanı (compileProgram/runOnIsolate bölmesi ve sonraki adımlar),
 devir belgesi `docs/threading-handoff.md` Bölüm E'de sıralanmıştır. Faz 1–4
