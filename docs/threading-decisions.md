@@ -406,6 +406,23 @@ heavy.sqt (fib(30) + struct/string/dizi döngüleri).
   komut; kalan süre farkı hizalama kaynaklı. Dispatch'in computed-goto'ya
   çevrilmesi 1.0 sonrası ayrı iş olarak kaydedildi:
   `docs/post-1.0-computed-goto-dispatch.md`.
+- **Donanım sayaçlı doğrulama (ürün sahibinin makinesi):** Intel i5-10xxxH,
+  4 GHz sabit, tek çekirdek (`taskset`), GCC 16, `perf stat -r 10`,
+  heavy.sqt; a-öncesi `8787176` ile `1.0.0` aynı derleyiciyle:
+
+  | | a-öncesi | 1.0.0 | fark |
+  |---|---|---|---|
+  | VM instructions | 11 089.9 M | 11 101.4 M | +%0.10 |
+  | VM cycles | 3 077 M | 3 092 M | +%0.48 |
+  | VM süre | 0.7657 s | 0.7664 s | +%0.10 |
+  | VM IPC | 3.60 | 3.59 | — |
+  | JIT instructions | 3 163 M | 3 198 M | +%1.1 |
+  | JIT süre | 0.2383 s | 0.238–0.244 s | %0–2 (bir koşu gürültülü) |
+
+  branch-miss ve L1-icache miss oranları iki ikilide de ~%0.02 / ~%0.007
+  komut başına. Bulut VM'deki +%5 duvar süresi farkı gerçek donanımda
+  **yok**; gerçek maliyet ölçüm gürültüsü düzeyinde. S1 kesin kapandı;
+  computed-goto notu yalnız genel bir performans fırsatı olarak kalır.
 
 ### S2 — işçi breakpoint'leri
 
