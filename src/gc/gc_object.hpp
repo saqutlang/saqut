@@ -56,6 +56,10 @@ struct Object {
     // barrier de gerekmez.
     bool marked = false;
 
+    // Immortal nesneler (ConstPool string sabitleri, ADR-045): GC bunları ne
+    // işaretler ne süpürür. markObject bu biti görünce hemen döner.
+    bool immortal = false;
+
     // Heap'in "tüm tahsis edilenler" zinciri. Sweep bu zinciri gezer.
     Object* next = nullptr;
 

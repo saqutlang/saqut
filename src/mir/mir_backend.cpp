@@ -28,6 +28,7 @@
 #include "gc/shadow_stack.hpp"
 #include "runtime/isolate.hpp"
 #include "runtime/jit_runtime.hpp"
+#include "runtime/const_pool.hpp"
 #include "ir/ir_liveness.hpp"
 #include "data/array.hpp"
 
@@ -1535,23 +1536,14 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     MIR_item_t traceLeaveProto = MIR_new_proto(ctx, "trace_leave_proto", 0, nullptr, 0);
     MIR_item_t traceLeaveImport = MIR_new_import(ctx, "rt_jit_trace_leave");
 
-    // ── String sabit havuzu (Dilim 3, ADR-037). LOAD_STRING derleme zamanında
-    // string'i kutular; StringObject* pointer'ı native koda int sabiti olarak
-    // gömülür (JIT in-process, pointer geçerli). intern tablosu aynı içeriği
-    // tek nesneye indirger → döngüde tekrar kutulama/leak yok. Nesneler bu
-    // fonksiyon kapsamı boyunca (native compiled() çağrısı dahil) yaşar.
+    // ── String sabitleri: süreç-ömrü immortal ConstPool (ADR-045, Faz 1).
+    // LOAD_STRING'in kutuladığı StringObject* pointer'ı native koda int
+    // sabiti olarak gömülür (JIT in-process, pointer geçerli). ConstPool
+    // nesneleri immortal işaretlenir; GC onları işaretlemez/süpürmez ve koşu
+    // bitince serbest bırakılmaz. intern, aynı içeriği tek nesneye indirger →
+    // döngüde tekrar kutulama/leak yok.
     // NOT: AOT (#81) bu yolu runtime call'a (rt_intern_string + string_data)
     // çevirmeli — farklı process'te derleme-zamanı host pointer'ı gömülemez.
-    std::vector<std::unique_ptr<StringObject>>     stringPool;
-    std::unordered_map<std::string, StringObject*> internTable;
-    auto internString = [&](const std::string& s) -> StringObject* {
-        auto it = internTable.find(s);
-        if (it != internTable.end()) return it->second;
-        stringPool.push_back(std::make_unique<StringObject>(s));
-        StringObject* obj = stringPool.back().get();
-        internTable.emplace(s, obj);
-        return obj;
-    };
 
     // ── Aşama 1: TÜM fonksiyonlar için proto + forward (ileri-referanslı
     // CALL çözümü, MIRPLAN §2). Tip-imzalar slotTypes'tan (MIRPLAN §3). ──
@@ -2053,7 +2045,7 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                 case Opcode::LOAD_STRING: {
                     // Sabit string'i derleme zamanı kutula, pointer'ını int
                     // sabiti olarak register'a taşı (ADR-037: Str = I64 pointer).
-                    StringObject* obj = internString(instr.stringValue);
+                    StringObject* obj = ConstPool::instance().internString(instr.stringValue);
                     MIR_append_insn(ctx, func,
                         MIR_new_insn(ctx, MIR_MOV, R(instr.dest),
                             MIR_new_int_op(ctx, reinterpret_cast<int64_t>(obj))));

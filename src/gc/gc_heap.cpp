@@ -194,7 +194,7 @@ void Heap::removeRootSource(RootSource* source) {
 // ── Mark ────────────────────────────────────────────────────────────────────
 
 void Heap::markObject(Object* object) {
-    if (!object || object->marked) return;
+    if (!object || object->marked || object->immortal) return;
     object->marked = true;
     // Çocukları burada TARANMAZ: iş listesine konur. Özyineleme yerine
     // açık liste kullanmanın sebebi budur (dosya başındaki not).
