@@ -423,7 +423,8 @@ endif()
 #   cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
 #         -DCMAKE_CXX_FLAGS=-fsanitize=thread -DCMAKE_C_FLAGS=-fsanitize=thread \
 #         -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
-set(SAQUT_THREADING_TESTS isolate_concurrency_test threading_primitives_test)
+set(SAQUT_THREADING_TESTS isolate_concurrency_test threading_primitives_test
+                          threading_asserts_test)
 foreach(t ${SAQUT_THREADING_TESTS})
     add_executable(${t} EXCLUDE_FROM_ALL tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE saqut_core)

@@ -6,7 +6,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CXX="${CXX:-g++}"
 FLAGS=(-std=c++20 -Wall -Wextra -I"$ROOT/src")
-SAQUT="$ROOT/build/saqut"
+# SAQUT ortam değişkeniyle başka bir build (Debug / TSan) sınanabilir.
+SAQUT="${SAQUT:-$ROOT/build/saqut}"
 
 # ── Birim testler ─────────────────────────────────────────────────────────────
 for t in test_type test_diagnostic test_opcode test_value_rep_contract test_cfg test_host_abi test_decimal_core; do
