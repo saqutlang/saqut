@@ -402,6 +402,11 @@ heavy.sqt (fib(30) + struct/string/dizi döngüleri).
 - **Sonuç:** %3 hedefi komut sayısında sağlandı (+%0.76); duvar
   süresinde bu makinede sağlanamadı (+%5–6, hizalama kaynaklı).
 
+- **KAPANDI (ürün sahibi kararı, seçenek a):** gerçek maliyet +%0.76
+  komut; kalan süre farkı hizalama kaynaklı. Dispatch'in computed-goto'ya
+  çevrilmesi 1.0 sonrası ayrı iş olarak kaydedildi:
+  `docs/post-1.0-computed-goto-dispatch.md`.
+
 ### S2 — işçi breakpoint'leri
 
 v1 kısıtı olarak kalır; `docs/threading-guide.md` "Debugger (DAP) ile"
