@@ -942,7 +942,7 @@ extern "C" double rt_jit_pow_d(double base, double exp) {
 }
 
 extern "C" float rt_jit_pow_f(float base, float exp) {
-    return std::powf(base, exp);
+    return ::powf(base, exp);
 }
 
 // #241: ondalık kalan. MIR'de native fmod yok; gövde VM'in çağırdığı

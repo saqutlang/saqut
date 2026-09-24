@@ -843,7 +843,7 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
         // çift yuvarlama JIT ile ayrışmaya yol açardı, F32ADD ile aynı kural).
         case Opcode::F32POW:
             frame.slots[instr.dest] = Value::fromFloat32((double)(
-                std::powf((float)frame.slots[instr.left].floatValue(),
+                ::powf((float)frame.slots[instr.left].floatValue(),
                           (float)frame.slots[instr.right].floatValue())));
             break;
         case Opcode::F32NEG:
