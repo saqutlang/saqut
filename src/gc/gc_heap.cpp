@@ -309,10 +309,12 @@ void printGcStats(std::ostream& out, const GcStats& stats) {
 //
 // Kanca isolate başına durur (ADR-045, Faz 1): bağlı heap Isolate üyesidir,
 // böylece her iş parçacığı kendi heap'ini görür.
-void setValueStringHeap(Heap* heap) { Isolate::current().stringHeap = heap; }
+// c2 sonrası: bağlama/çözme guard'sız araç yollarından da (birim testleri)
+// çağrılabilir → currentOrCreate; tahsis ise isolate yoksa yedek havuza düşer.
+void setValueStringHeap(Heap* heap) { Isolate::currentOrCreate().stringHeap = heap; }
 
 Object* allocValueString(std::string text) {
-    if (Heap* active = Isolate::current().stringHeap)
+    if (Heap* active = t_isolate ? t_isolate->stringHeap : nullptr)
         return active->allocString(std::move(text));
 
     // Heap bağlı değil (birim testi, izole kullanım): nesne toplanmaz ama

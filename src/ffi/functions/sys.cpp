@@ -20,7 +20,8 @@
 // iş parçacığı kendi üretecini kurar — tek thread'de davranış birebir aynı
 // (tohum random_device'ten, çağrı başına değil üretim başına alınır).
 static std::mt19937_64& sysRng() {
-    return Isolate::current().rng;
+    // Host fonksiyonu guard'sız birim testlerinden de çağrılır (c2 sonrası).
+    return Isolate::currentOrCreate().rng;
 }
 
 static int sys_random(HostCallFrame* f) {
