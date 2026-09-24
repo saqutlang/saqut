@@ -139,3 +139,14 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   zamanında gönderilebilirlik denetimi için kullanılıyor; runtime'da nesne
   başlığı eşdeğer bilgiyi taşıyor. | Tip yönlü serileştirme + CompiledProgram
   tip tablosu.
+- **[2-d] Araştırma sonucu (handoff D6 cevabı):** v1 FFI'de **native handle
+  yoktur.** `src/ffi/functions/fs.cpp` başlığı: "Handle/descriptor YOK — tek
+  atımlık read/write (ADR-034 §5)"; `io.cpp`: "handle'sız model"; soket
+  modülü yok. Host sınırındaki tüm türler değerdir (`HostSlot`: Int/LongInt/
+  Date/Float/Float32/Str/Decimal/Ref/Null, `src/ffi/host_abi.hpp:86-107`);
+  dosya içeriği `byte[]` olarak taşınır. **Karar:** v1'de sahiplik devri
+  kuralının uygulanacağı bir tür yok; FFI'nin ürettiği tüm değerler olağan
+  deep copy ile gönderilebilir. İleride handle eklenirse prompt'taki karar
+  tablosu uygulanır (süreç-global kilitli tabloya int id → kopyalanır ve
+  paylaşılır; isolate'e özel tablo → sahiplik devri; ham void* → Faz 3'te
+  "type X is not sendable"). | Kanıt koddan. | —
