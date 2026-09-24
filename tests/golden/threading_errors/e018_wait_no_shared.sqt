@@ -1,0 +1,6 @@
+// E018: wait koşulunda en az bir shared sembol olmalı
+int main() {
+    int i = 0;
+    wait(i > 3);
+    return 0;
+}

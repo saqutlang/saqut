@@ -1,0 +1,11 @@
+// W009: lock kapsamı içinde bloklayan çağrı (pop)
+shared int a = 0;
+shared Pool q = Pool(int);
+
+int main() {
+    q.push(1);
+    lock a;
+    int v = q.pop();
+    print(v);
+    return 0;
+}

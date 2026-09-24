@@ -1,0 +1,5 @@
+// E014: shared yalnız modül kapsamında
+int main() {
+    shared int x = 0;
+    return 0;
+}

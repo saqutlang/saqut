@@ -1,0 +1,6 @@
+// E014: shared string v1'de yok
+shared string s = "a";
+
+int main() {
+    return 0;
+}

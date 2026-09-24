@@ -1,0 +1,9 @@
+// E016: yakalanan değişken bir kopyadır; gövdede atanamaz
+int main() {
+    int x = 1;
+    Thread t = thread {
+        x = 2;
+    };
+    t.join();
+    return 0;
+}

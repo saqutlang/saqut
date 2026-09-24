@@ -1,0 +1,8 @@
+// W008: shared değişkende atomik olmayan güncelleme (x = x + 1)
+shared int x = 0;
+
+int main() {
+    x = x + 1;
+    print(x);
+    return 0;
+}

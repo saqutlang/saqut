@@ -1,0 +1,30 @@
+// ADR-045 örneği: t.stop(). Biri boş kuyrukta bekleyen (pop iptal noktası),
+// biri sonsuz döngüde dönen (geri kenar yoklaması) iki thread durdurulur ve
+// ikisi de temiz çıkar.
+shared Pool q = Pool(int);
+shared int spins = 0;
+
+int main() {
+    Thread waiter = thread {
+        while (true) {
+            int x = q.pop();
+            print(x);
+        }
+    };
+    Thread spinner = thread {
+        while (true) {
+            spins += 1;
+        }
+    };
+    wait(spins > 100);
+    waiter.stop();
+    spinner.stop();
+    waiter.join();
+    spinner.join();
+    print(waiter.running());
+    print("\n");
+    print(spinner.running());
+    print("\n");
+    print("stopped\n");
+    return 0;
+}

@@ -1,0 +1,10 @@
+// ADR-045 örneği: beklenen deadlock hatası. Tek canlı thread (main) boş bir
+// kuyrukta bekliyor; hiçbir thread ilerleyemez → "all threads are blocked",
+// çıkış kodu 70.
+shared Pool q = Pool(int);
+
+int main() {
+    int x = q.pop();
+    print(x);
+    return 0;
+}

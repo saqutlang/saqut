@@ -1,0 +1,8 @@
+// E019: lock kapsamı içinde wait (v1)
+shared int a = 0;
+
+int main() {
+    lock a;
+    wait(a > 0);
+    return 0;
+}

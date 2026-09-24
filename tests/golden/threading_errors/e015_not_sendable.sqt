@@ -1,0 +1,6 @@
+// E015: Pool elemanı gönderilebilir olmalı (Pool/List eleman olamaz)
+shared Pool q = Pool(Pool);
+
+int main() {
+    return 0;
+}

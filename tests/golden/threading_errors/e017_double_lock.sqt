@@ -1,0 +1,8 @@
+// E017: aynı kilit iki kez alınamaz
+shared int a = 0;
+
+int main() {
+    lock a;
+    lock a;
+    return 0;
+}

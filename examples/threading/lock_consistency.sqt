@@ -1,0 +1,33 @@
+// ADR-045 örneği: lock ile iki değişkenli tutarlılık. Dört thread `lock a, b;`
+// altında a'yı artırıp b'yi azaltır (ayrı yükle + yaz; atomik değil — kilit
+// korur). Değişmez: a + b == 0.
+shared int a = 0;
+shared int b = 0;
+
+void work() {
+    for (int i = 0; i < 1000; i = i + 1) {
+        lock a, b;
+        int x = a;
+        int y = b;
+        a = x + 1;
+        b = y - 1;
+    }
+}
+
+int main() {
+    Thread t1 = thread { work(); };
+    Thread t2 = thread { work(); };
+    Thread t3 = thread { work(); };
+    Thread t4 = thread { work(); };
+    t1.join();
+    t2.join();
+    t3.join();
+    t4.join();
+    print(a);
+    print("\n");
+    print(b);
+    print("\n");
+    print(a + b);
+    print("\n");
+    return 0;
+}
