@@ -139,10 +139,18 @@ sayaçla izlenir; yıkıcı `activeIsolates == 0` bekler.
 
 ## Uygulama durumu
 
-**Tasarlandı.** Hiçbir dil yüzeyi veya runtime primitifi uygulanmamıştır
-(v1.0.1-multithread dalı). `threading/` altındaki ucontext denemesi bu ADR'nin
-dışında, bağımsız bir çalışmadır. Faz 1–4 tamamlanıp test kanıtı üretilmeden
-karar "Uygulandı" veya "Test Edildi" sayılamaz.
+**Tasarlandı; Faz 1 kısmen uygulandı.** v1.0.1-multithread dalında tamamlanan
+Faz 1 dilimleri: Isolate temeli + dağınık thread_local'ların birleştirilmesi
+(`07dcc04`), JitRuntime'ın Isolate üyesi olması ve `rt()` erişimi (`1bcc081`),
+ConstPool + `immortal` işaretleme (`0503b4f`), `Isolate::program` alanı +
+IsolateGuard (`9b468ae`), decimal literal'lerin ConstPool'a taşınması +
+`embedProgramPtr` (`855aa34`). Dil yüzeyi (Faz 3) ve runtime primitifleri
+(Faz 2) henüz yok. `threading/` altındaki ucontext denemesi bu ADR'nin dışında,
+bağımsız bir çalışmadır.
+
+Faz 1'in kalanı (compileProgram/runOnIsolate bölmesi ve sonraki adımlar),
+devir belgesi `docs/threading-handoff.md` Bölüm E'de sıralanmıştır. Faz 1–4
+sonuna kadar, kanıt üretilmeden karar "Uygulandı" veya "Test Edildi" sayılamaz.
 
 ## Doğrulama
 
