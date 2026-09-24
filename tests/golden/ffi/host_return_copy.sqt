@@ -1,0 +1,13 @@
+// Host dönüş kaçış testi: hostRetOwner tek bir scratch nesnedir (Isolate
+// üyesi). İki ayrı string-döndüren host çağrısı farklı değer üretmeli ve
+// önceki sonuç sonraki çağrıyla EZİLMEMELİ — yani dönüş değeri çağırana
+// kopyalanmalı, scratch'e alias olmamalı.
+int main() {
+    string a = "abc".upper();
+    string b = "xy".upper();
+    print(a); print(" "); print(b); print("\n");
+
+    string c = "merhaba".upper();
+    print(a); print(" "); print(c); print("\n");   // a hâlâ "ABC" olmalı
+    return 0;
+}
