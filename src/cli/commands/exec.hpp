@@ -139,6 +139,8 @@ inline int cmdExec(const CliArgs& args) {
 
     IRGenerator irGenerator;
     IRProgram   program = irGenerator.generate(ast, symbolTable, syntheticPath);
+    // ADR-045 (1-e): derleme bitti; dosya kayıt defteri koşu boyunca salt okunur.
+    FileRegistry::instance().freeze();
 
     int exitCode = 0;
     try {

@@ -46,3 +46,11 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   üyelere doğrudan bakıyor; sahipliği Isolate'e almak bu API'leri gereksiz
   yere değiştirirdi. Thread başına bir Interpreter olduğundan izolasyon
   aynıdır. | Heap/globalSlots'un sahibi Isolate, Interpreter referans tutar.
+- **[1-e]** FileRegistry'ye `freeze()`; `run` ve `exec` IR üretiminden sonra
+  çağırır; sonrasında YENİ yol kaydı debug'da assert (kayıtlı yolun aranması
+  serbest). Koşu sırasında FileRegistry'ye yazan yol bulunmadı (vm/mir/ffi
+  SourceLocation üretmiyor) → Plan B (shared_mutex) gerekmedi. LSP ve bench
+  dondurmaz (süreç içinde tekrar derler). FfiCatalog'a freeze eklenmedi:
+  kurucudan sonra mutatörü yok, `instance()` const döner — tip zaten donuk;
+  ilk erişim magic-static ile thread-safe. | En küçük diff, gerçek risk
+  (koşuda yeni kayıt) assert'le yakalanır. | FfiCatalog'a boş bir freeze().

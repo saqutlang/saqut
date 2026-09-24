@@ -11,6 +11,10 @@
 //   module → (isim → FfiDeclNode*) indeksiyle O(1) çözüm. Dosya-tabanlı modül
 //   makinesinden bağımsız; SymbolCollector import'ları buradan bağlar.
 //
+// İŞ PARÇACIĞI GÜVENLİĞİ (ADR-045, 1-e): kurucudan sonra hiçbir mutatör
+// yoktur (instance() const döner); ilk erişim C++11 "magic static" ile
+// thread-safe'tir. Ayrı bir freeze() gerekmez — tip zaten dondurulmuştur.
+//
 // ============================================================================
 
 #ifndef SAQUT_FFI_CATALOG

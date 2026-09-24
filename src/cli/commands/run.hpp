@@ -99,6 +99,8 @@ inline int cmdRun(const CliArgs& args) {
         Profiling::StageTimer::ScopedStage _prof(profilerPtr, "ir-gen");
         program = irGenerator.generateModuleGraph(graph, symbolTable);
     }
+    // ADR-045 (1-e): derleme bitti; dosya kayıt defteri koşu boyunca salt okunur.
+    FileRegistry::instance().freeze();
     // --profile: "instr" = üretilen toplam IR talimatı (tüm fonksiyonlar).
     if (profilerPtr) {
         long long totalInstr = 0;
