@@ -37,6 +37,7 @@
 #include "runtime/jit_runtime.hpp"
 
 struct Heap;
+struct Value;
 struct CompiledProgram;
 
 // Not: yaşam süresi bugün süreç/thread ömrü (new ile ayrılır, serbest
@@ -59,6 +60,12 @@ struct Isolate {
     // fonksiyon giriş tablosu ve serileştirme için tip tablosu da buradan
     // okunacak. Guard yokken (LSP/birim testleri) nullptr olabilir.
     const CompiledProgram* program = nullptr;
+
+    // Yorumlayıcı (VM) bağı (1-d): Interpreter kurucusu kendi heap_ ve
+    // globalSlots_ üyelerini buraya bağlar (thread başına bir Interpreter).
+    // JIT koşusunda heap rt().heap'tir; bu alanlar VM'e özgüdür.
+    Heap*               heap        = nullptr;
+    std::vector<Value>* globalSlots = nullptr;
 
     // JIT host çağrılarının ortamı (programArgs, koşu heap'i). runOnIsolate
     // doldurur ve rt().hostEnv'e bağlar (önce süreç-global static'ti).

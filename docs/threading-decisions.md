@@ -36,3 +36,13 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   `tryCompileAndRunProgram` içindeydi). `tryCompileAndRunProgram` API olarak
   kaldı, CLI kullanmıyor. | Sahiplik ADR-045 "CompiledProgram ömrü"ne göre
   koşu komutunda. | Yalnız run.hpp'yi taşımak (Plan B).
+- **[1-d] PLAN B** Interpreter `heap_`/`globalSlots_` üyelerini korur;
+  kurucu bağlı isolate'e `Isolate::heap`/`Isolate::globalSlots` işaretçilerini
+  bağlar, yıkıcı önceki bağı geri koyar. `Interpreter` artık
+  `const IRProgram&` tutar (`IRProgram::findFunction` const aşırı yüklemesi
+  eklendi); koşu sırasında IRProgram'ı değiştiren yol bulunmadı (yalnız iki
+  `findFunction` çağrısı const olmayan pointer alıyordu). | Interpreter
+  heap'i bir RootSource olarak kendine kaydediyor ve DAP/bench API'leri
+  üyelere doğrudan bakıyor; sahipliği Isolate'e almak bu API'leri gereksiz
+  yere değiştirirdi. Thread başına bir Interpreter olduğundan izolasyon
+  aynıdır. | Heap/globalSlots'un sahibi Isolate, Interpreter referans tutar.

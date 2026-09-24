@@ -61,6 +61,11 @@ struct IRProgram {
         auto it = functions.find(name);
         return (it != functions.end()) ? &it->second : nullptr;
     }
+    // Salt okunur arama (ADR-045: IRProgram koşu sırasında paylaşılır, değişmez).
+    const IRFunction* findFunction(const std::string& name) const {
+        auto it = functions.find(name);
+        return (it != functions.end()) ? &it->second : nullptr;
+    }
 
     // Tüm fonksiyonları ekleme sırasıyla yazdır
     void dump() const;

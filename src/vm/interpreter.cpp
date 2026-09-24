@@ -21,6 +21,7 @@
 #include "ffi/host_functions.hpp"
 #include "ffi/host_registry.hpp"
 #include "gc/shadow_stack.hpp"
+#include "runtime/isolate.hpp"
 #include <iostream>
 #include <stdexcept>
 #include <sstream>
@@ -35,6 +36,28 @@
 // sözleşmesidir; VM ve sabit katlama aynı fonksiyonları çağırmak zorundadır —
 // ayrı kopyalar sessizce ayrışır. Gerekçelerin tamamı o başlıktadır.
 using namespace saqut::intmath;
+
+// ADR-045 (1-d): heap/globalSlots Interpreter üyesidir (thread başına bir
+// Interpreter); bağlı isolate onlara işaretçi tutar ki runtime primitifleri
+// (Faz 2 mesaj deserialize, park öncesi GC) thread'in heap'ini bulabilsin.
+// Guard'sız araçlarda (birim testleri) isolate bağlı olmayabilir.
+Interpreter::Interpreter(const IRProgram& program) : program_(program) {
+    heap_.addRootSource(this);
+    if (Isolate* iso = t_isolate) {
+        prevIsolateHeap_    = iso->heap;
+        prevIsolateGlobals_ = iso->globalSlots;
+        iso->heap           = &heap_;
+        iso->globalSlots    = &globalSlots_;
+    }
+}
+
+Interpreter::~Interpreter() {
+    if (Isolate* iso = t_isolate; iso && iso->heap == &heap_) {
+        iso->heap        = prevIsolateHeap_;
+        iso->globalSlots = prevIsolateGlobals_;
+    }
+    heap_.removeRootSource(this);
+}
 
 // ── buildTrace ─────────────────────────────────────────────────────────────────
 // Mevcut callStack_'i en içten dışa gezerek stacktrace string'i üretir.
@@ -702,7 +725,7 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
         // ── Fonksiyon çağrısı ─────────────────────────────────────────────
         case Opcode::CALL: {
             if (vmTrace_) [[unlikely]] ++vmTrace_->vmSaqutCalls;
-            IRFunction* callee = program_.findFunction(instr.functionName);
+            const IRFunction* callee = program_.findFunction(instr.functionName);
             if (!callee)
                 throw std::runtime_error(
                     "'" + instr.functionName + "' function not found");
@@ -1494,7 +1517,7 @@ void Interpreter::initForDebug() {
     // Globalleri sıfırla — tek flat dizi (bkz. globalSlots_ yorum notu, #3)
     globalSlots_.assign(program_.globalCount, Value::fromInt(0));
 
-    IRFunction* mainFunction = program_.findFunction("main");
+    const IRFunction* mainFunction = program_.findFunction("main");
     if (!mainFunction)
         throw std::runtime_error("'main' function not found");
 

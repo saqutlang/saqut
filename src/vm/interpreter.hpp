@@ -44,10 +44,11 @@ struct TryFrame {
 // yapılır, yıkıcıda kaldırılır (Heap sağlayıcıyı sahiplenmez).
 class Interpreter : public RootSource {
 public:
-    explicit Interpreter(IRProgram& program) : program_(program) {
-        heap_.addRootSource(this);
-    }
-    ~Interpreter() override { heap_.removeRootSource(this); }
+    // ADR-045 (1-d): IRProgram salt okunur paylaşılır. Heap ve globalSlots
+    // Interpreter üyesi kalır (thread başına bir Interpreter); kurucu bunları
+    // bağlı isolate'e işaretçi olarak bağlar, yıkıcı önceki bağı geri koyar.
+    explicit Interpreter(const IRProgram& program);
+    ~Interpreter() override;
 
     // "main" fonksiyonunu bul ve çalıştır.
     // Tamamlandığında main'in dönüş değerini (int) döndürür.
@@ -139,7 +140,10 @@ public:
     std::string slotName(int frameDepth, int slotIndex) const;
 
 private:
-    IRProgram&             program_;
+    const IRProgram&       program_;
+    // Kurucuda bağlı isolate'in önceki heap/globalSlots bağı (yıkıcı geri koyar).
+    Heap*                  prevIsolateHeap_    = nullptr;
+    std::vector<Value>*    prevIsolateGlobals_ = nullptr;
     std::vector<CallFrame> callStack_;
     // #3 (2026-07-16): tek DÜZ global slot dizisi — LOAD_GLOBAL/STORE_GLOBAL
     // yürütülen fonksiyonun DEĞİL, IRGenerator'ın tüm programa yaydığı flat
