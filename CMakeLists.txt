@@ -38,8 +38,12 @@ add_custom_command(
     VERBATIM)
 add_custom_target(embed_internal DEPENDS "${INTERNAL_HEADER}")
 
-# Tüm kaynak dosyaları topla
+# Tüm kaynak dosyaları topla. main.cpp ayrı tutulur: geri kalanı bir OBJECT
+# kütüphanesidir (saqut_core) ki C++ test ikilileri (ADR-045 isolate /
+# threading testleri) aynı nesnelere bağlanabilsin. OBJECT kütüphanesi
+# statik arşivden farklı olarak kullanılmayan nesneleri düşürmez.
 file(GLOB_RECURSE SOURCES "src/*.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/src/main.cpp")
 
 # ── MIR JIT backend (Fast-mode, #80, MIRPLAN.md) ──────────────────────────
 # Yalnızca mir.c + mir-gen.c derlenir — c2mir (C->MIR derleyicisi) saQut'ta
@@ -63,9 +67,15 @@ if(SAQUT_MIR_HAS_NO_IPA_CP_CLONE)
     target_compile_options(mir_core PRIVATE -fno-ipa-cp-clone)
 endif()
 
-add_executable(saqut ${SOURCES})
+add_library(saqut_core OBJECT ${SOURCES})
 # Üretilen başlık kaynaklardan önce hazır olmalı.
-add_dependencies(saqut embed_internal)
+add_dependencies(saqut_core embed_internal)
+target_include_directories(saqut_core PUBLIC "${CMAKE_BINARY_DIR}/generated" src)
+find_package(Threads REQUIRED)
+target_link_libraries(saqut_core PUBLIC mir_core Threads::Threads)
+
+add_executable(saqut src/main.cpp)
+target_link_libraries(saqut PRIVATE saqut_core)
 target_include_directories(saqut PRIVATE "${CMAKE_BINARY_DIR}/generated")
 
 target_include_directories(saqut PRIVATE src)
@@ -405,3 +415,17 @@ endforeach()
 else()
     message(WARNING "python3 bulunamadı — LSP golden testleri (tests/lsp/) atlanıyor")
 endif()
+
+# ── ADR-045 isolate / threading C++ testleri ─────────────────────────────────
+# Varsayılan build'e girmez (EXCLUDE_FROM_ALL):
+#   cmake --build build --target saqut_threading_tests
+# TSan için ayrı bir Debug build dizini önerilir (Release -static bağlar):
+#   cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
+#         -DCMAKE_CXX_FLAGS=-fsanitize=thread -DCMAKE_C_FLAGS=-fsanitize=thread \
+#         -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
+set(SAQUT_THREADING_TESTS isolate_concurrency_test)
+foreach(t ${SAQUT_THREADING_TESTS})
+    add_executable(${t} EXCLUDE_FROM_ALL tests/${t}.cpp)
+    target_link_libraries(${t} PRIVATE saqut_core)
+endforeach()
+add_custom_target(saqut_threading_tests DEPENDS ${SAQUT_THREADING_TESTS})

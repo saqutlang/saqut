@@ -81,3 +81,13 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   isolate'ler okur). `gMaxCallDepth` yalnız argüman ayrıştırmada yazılıyor
   (salt okunur). Codegen'deki `static int` sayaçlar yalnız tek thread'li
   derlemede kullanılıyor. | En küçük diff. | Her ikisini Isolate alanı yapmak.
+- **[1-h]** C++ testleri için CMake'te `main.cpp` dışındaki kaynaklar
+  `saqut_core` OBJECT kütüphanesine alındı (statik arşiv kullanılmayan
+  nesneleri düşürebilirdi); `saqut` ve testler ona bağlanır. Threading
+  testleri `EXCLUDE_FROM_ALL` + `saqut_threading_tests` hedefi; varsayılan
+  build ve `tests/run.sh` değişmez. `Threads::Threads` saqut_core'a bağlandı.
+  Test karşılaştırması dönüş değeri (checksum) + VM'de thread başına output
+  sink; JIT print'i doğrudan stdout'a gittiği için JIT'te yalnız dönüş
+  değeri karşılaştırılır. | Tam derleyici hattına bağlanmanın tek temiz yolu;
+  run.sh'deki tek-dosya g++ derlemesi tüm kaynakları elle saymayı
+  gerektirirdi. | Gizli bir CLI alt komutu (CLI yüzeyi ürün kararı).
