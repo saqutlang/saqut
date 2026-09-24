@@ -26,6 +26,7 @@
 #ifndef SAQUT_RUNTIME_ISOLATE
 #define SAQUT_RUNTIME_ISOLATE
 
+#include <cassert>
 #include <cstdint>
 #include <random>
 #include <vector>
@@ -61,9 +62,10 @@ struct Isolate {
     // doldurur ve rt().hostEnv'e bağlar (önce süreç-global static'ti).
     HostEnv jitEnv;
 
-    // Koşu yolunda t_isolate guard tarafından bağlıdır; current() bunu
-    // varsayar (Faz 1 ileriki adımında assert'e dönecek). LSP ve birim
-    // testleri gibi guard'sız yollar currentOrCreate() kullanır.
+    // current(): bağlı isolate'i döndürür; bağlı değilse debug'da assert
+    // (c2). Süreç girişi (main.cpp) ana thread isolate'ini bağlar; koşu
+    // yolları IsolateGuard ile bağlar. Lazy oluşturma YALNIZ
+    // currentOrCreate()'tedir (guard'sız birim testleri ve araçlar).
     static Isolate& current();
     static Isolate& currentOrCreate();
 };
@@ -77,10 +79,11 @@ inline Isolate& Isolate::currentOrCreate() {
     return *t_isolate;
 }
 
-// Geçiş dönemi: current() şimdilik lazy (currentOrCreate ile aynı). Faz 1
-// ileriki adımında run yolu guard'ı bağladıktan sonra current() assert'e
-// dönecek; guard'sız yollar currentOrCreate() kullanmalı.
-inline Isolate& Isolate::current() { return currentOrCreate(); }
+// Sıcak yol: kontrolsüz TLS okuması; debug'da bağlı olma assert'i.
+inline Isolate& Isolate::current() {
+    assert(t_isolate && "Isolate::current(): bağlı isolate yok (IsolateGuard?)");
+    return *t_isolate;
+}
 
 // RAII guard: bir koşu boyunca thread'in isolate'ini ve (verilmişse) koşulan
 // programı bağlar, çıkışta önceki değerleri geri koyar (S4).
@@ -101,6 +104,19 @@ private:
     Isolate*               prev_;
     Isolate&               iso_;
     const CompiledProgram* prevProgram_;
+};
+
+// RAII: kapsam boyunca thread'i isolate'siz bırakır (ADR-045 §RUNTIME 6:
+// compileProgram hiçbir isolate bağlı değilken çalışır). Codegen'de kalan bir
+// rt()/current() erişimi debug'da assert'e takılır.
+class NoIsolateScope {
+public:
+    NoIsolateScope() : prev_(t_isolate) { t_isolate = nullptr; }
+    ~NoIsolateScope() { t_isolate = prev_; }
+    NoIsolateScope(const NoIsolateScope&)            = delete;
+    NoIsolateScope& operator=(const NoIsolateScope&) = delete;
+private:
+    Isolate* prev_;
 };
 
 #endif // SAQUT_RUNTIME_ISOLATE

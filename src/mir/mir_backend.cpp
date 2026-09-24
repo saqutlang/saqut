@@ -79,7 +79,11 @@ static MIR_op_t embedProgramPtr(MIR_context_t ctx, const void* p) {
 
 // Tek erişim noktası: JitRuntime artık Isolate üyesidir (ADR-045, Faz 1).
 // Koşu başına g_jitRuntime global'i yerine thread başına Isolate::current().jit.
-JitRuntime& rt() { return Isolate::current().jit; }
+// c2: sıcak yol — kontrolsüz TLS okuması, debug'da bağlı olma assert'i.
+JitRuntime& rt() {
+    assert(t_isolate && "rt(): bağlı isolate yok");
+    return t_isolate->jit;
+}
 
 StringObject*  jitNewString(std::string v);
 DecimalObject* jitBoxDecimal(const DecimalValue& v);
@@ -1240,6 +1244,8 @@ namespace mir_backend {
 std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
                                                 UnsupportedReason& outReason,
                                                 Profiling::StageTimer* profiler) {
+    // ADR-045 §RUNTIME 6: derleme hiçbir isolate bağlı değilken çalışır.
+    NoIsolateScope noIsolate;
     if (!wholeProgramSupported(program, outReason)) return nullptr;
 
     if (program.findFunction("main") == nullptr) {
@@ -3581,11 +3587,12 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                               std::vector<long long>* executionSamplesUs,
                               const std::function<void(int, int)>& executionProgress) {
     // c1 sarmalayıcısı: compileProgram → IsolateGuard → runOnIsolate →
-    // CompiledProgram yıkımı (MIR_gen_finish/MIR_finish). Derleme bu thread'in
-    // mevcut isolate'i bağlıyken yapılır; ayırma c2'de zorlanır.
+    // CompiledProgram yıkımı (MIR_gen_finish/MIR_finish). compileProgram kendi
+    // içinde isolate'i ayırır (NoIsolateScope); koşu, çağıran thread'in bağlı
+    // isolate'inde yapılır (süreç girişi ana isolate'i bağlar).
     std::unique_ptr<CompiledProgram> compiled = compileProgram(program, outReason, profiler);
     if (!compiled) return false;
-    Isolate& iso = Isolate::currentOrCreate();
+    Isolate& iso = Isolate::current();
     IsolateGuard guard(iso, compiled.get());
     return runOnIsolate(*compiled, iso, outExitCode, programArgs, profiler, counters,
                         executionRuns, executionSamplesUs, executionProgress);

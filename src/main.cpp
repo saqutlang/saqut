@@ -33,8 +33,13 @@
 #include "cli/commands/lsp.hpp"
 #include "cli/commands/dap.hpp"
 #include "cli/commands/bench.hpp"
+#include "runtime/isolate.hpp"
 
 int main(int argc, char* argv[]) {
+    // ADR-045: ana thread isolate'i (thread id 1). Süreç ömrü boyunca bağlı
+    // kalır; Isolate::current() artık lazy değildir (c2).
+    Isolate::currentOrCreate();
+
     // Komutları kaydet
     CliDispatcher cli;
 
