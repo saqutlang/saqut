@@ -399,7 +399,7 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
     // src/profiling/ (--profile): "vm-exec" TAM OLARAK bu döngünün süresi —
     // VM'in gerçekten instruction çalıştırdığı kısım (kapanış: while'ın
     // kendi kapanış parantezinden hemen sonra).
-    { profiling::StageTimer::ScopedStage _profExec(stageProfiler_, "vm-exec");
+    { Profiling::StageTimer::ScopedStage _profExec(stageProfiler_, "vm-exec");
     while (!callStack_.empty()) {
         // Bütçe kontrolü: < 0 = sınırsız, == 0 = tükendi, > 0 = kalan hak
         // runUntilEvent(-1, ...) → sınırsız
@@ -1520,7 +1520,7 @@ int Interpreter::run() {
     setValueStringHeap(&heap_);
 
     {
-        profiling::StageTimer::ScopedStage _prof(stageProfiler_, "vm-warmup");
+        Profiling::StageTimer::ScopedStage _prof(stageProfiler_, "vm-warmup");
         initForDebug();
     }
 

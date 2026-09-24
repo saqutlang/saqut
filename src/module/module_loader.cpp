@@ -66,7 +66,7 @@ void ModuleLoader::loadUnit(const std::string& filePath, ModuleGraph& graph,
     Tokenizer tokenizer;
     std::vector<Token*> tokens;
     {
-        profiling::StageTimer::ScopedStage _prof(profiler_, "token");
+        Profiling::StageTimer::ScopedStage _prof(profiler_, "token");
         tokens = tokenizer.scan(source, filePath);
     }
     // --profile: bu dosyanın token sayısı "token" aşamasına eklenir
@@ -79,7 +79,7 @@ void ModuleLoader::loadUnit(const std::string& filePath, ModuleGraph& graph,
     Parser parser(&diag_);
     ASTNode* ast = nullptr;
     {
-        profiling::StageTimer::ScopedStage _prof(profiler_, "parser");
+        Profiling::StageTimer::ScopedStage _prof(profiler_, "parser");
         ast = parser.parse(tokens);
     }
     if (!ast) {

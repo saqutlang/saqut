@@ -65,7 +65,7 @@ public:
     // edilirse "vm-warmup" (initForDebug — frame/global kurulumu) ve
     // "vm-exec" (runUntilEvent'in ANA döngüsü, yani VM'in gerçekten
     // instruction çalıştırdığı kısım) ayrı ayrı raporlanır.
-    void setStageProfiler(profiling::StageTimer* p) { stageProfiler_ = p; }
+    void setStageProfiler(Profiling::StageTimer* p) { stageProfiler_ = p; }
 
     // Faz 7 (#105): program çıktısı kancası. DAP modunda print çıktısı
     // protokol stdout'unu kirletmesin diye DapHandler output event'ine
@@ -157,7 +157,7 @@ private:
     std::vector<TryFrame>  tryStack_;
     std::optional<Value>   pendingThrow_;
     BenchVMTrace*          vmTrace_ = nullptr;  // profil hook (bench modunda non-null)
-    profiling::StageTimer* stageProfiler_ = nullptr;  // --profile hook
+    Profiling::StageTimer* stageProfiler_ = nullptr;  // --profile hook
     OutputSink             outputSink_;         // Faz 7 (#105): boş = std::cout
 
     // DAP durumu
