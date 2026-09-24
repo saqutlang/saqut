@@ -34,6 +34,20 @@ elseif(EXIT_CODE EQUAL 0)
         "Çıktı: ${STDOUT_OUT}")
 endif()
 
+# Opsiyonel: BASE.expected aynı fixture'da varsa (runtime hatasından ÖNCE
+# üretilen stdout, ör. "hata satırından sonrası çalışmamalı" testleri) stdout
+# tam olarak ona eşit olmalı. tests/run.sh ile aynı kural.
+if(DEFINED EXPECTED_STDOUT AND NOT EXPECTED_STDOUT STREQUAL "")
+    file(READ "${EXPECTED_STDOUT}" EXPECTED_STDOUT_CONTENT)
+    string(STRIP "${EXPECTED_STDOUT_CONTENT}" EXPECTED_STDOUT_CONTENT)
+    string(STRIP "${STDOUT_OUT}" STDOUT_STRIPPED)
+    if(NOT STDOUT_STRIPPED STREQUAL EXPECTED_STDOUT_CONTENT)
+        message(FATAL_ERROR
+            "stdout uyuşmuyor: ${SOURCE}\n"
+            "--- BEKLENEN ---\n${EXPECTED_STDOUT_CONTENT}\n--- GERÇEK ---\n${STDOUT_OUT}")
+    endif()
+endif()
+
 file(READ "${EXPECTED}" EXPECTED_CONTENT)
 string(STRIP "${EXPECTED_CONTENT}" EXPECTED_CONTENT)
 

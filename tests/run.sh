@@ -111,7 +111,11 @@ while IFS= read -r -d '' sqt; do
         rc=$?
         set -e
         err=$(cat /tmp/saqut_rerr)
-        if [ "$rc" -eq "$want_rc" ] && echo "$err" | grep -Eq "$want_re"; then
+        # .expected aynı fixture'da varsa: hatadan önceki stdout tam eşit
+        # olmalı (ör. hata satırından sonrası çalışmamalı).
+        out_ok=1
+        if [ -f "$exp" ] && [ "$out" != "$(cat "$exp")" ]; then out_ok=0; fi
+        if [ "$out_ok" -eq 1 ] && [ "$rc" -eq "$want_rc" ] && echo "$err" | grep -Eq "$want_re"; then
             PASS=$((PASS + 1))
         else
             echo "  FAIL (runtime_error): ${sqt#"$ROOT"/}"

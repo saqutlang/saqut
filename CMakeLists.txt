@@ -208,8 +208,11 @@ foreach(SQT_FILE ${ALL_GOLDEN_SQT})
     endif()
 
     # Siyah-kutu: saqut run çıktısı
+    # .runtime_error ile birlikte bulunan .expected, hatadan önceki stdout
+    # beklentisidir; o fixture aşağıdaki runtime_error testinde sınanır
+    # (exit 0 bekleyen bu koşucuda değil — tests/run.sh ile aynı kural).
     set(RUN_EXPECTED "${CMAKE_SOURCE_DIR}/tests/golden/${BASE}.expected")
-    if(EXISTS "${RUN_EXPECTED}")
+    if(EXISTS "${RUN_EXPECTED}" AND NOT EXISTS "${CMAKE_SOURCE_DIR}/tests/golden/${BASE}.runtime_error")
         add_test(
             NAME "golden_${TNAME}"
             COMMAND ${CMAKE_COMMAND}
@@ -250,6 +253,7 @@ foreach(SQT_FILE ${ALL_GOLDEN_SQT})
                 -DSOURCE=${SQT_FILE}
                 -DEXPECTED=${IR_PLAIN_EXPECTED}
                 -DCOMMAND=ir
+                -DDONT_OPTIMIZE=1
                 -DEXTRA_ARGS=${EXTRA_ARGS_JOINED}
                 -P "${GOLDEN_SCRIPT}"
         )
@@ -331,6 +335,10 @@ foreach(SQT_FILE ${ALL_GOLDEN_SQT})
     # + stderr içeriği kontrolü.
     set(RUNTIME_ERROR_EXPECTED "${CMAKE_SOURCE_DIR}/tests/golden/${BASE}.runtime_error")
     if(EXISTS "${RUNTIME_ERROR_EXPECTED}")
+        set(EXPECTED_STDOUT_ARG "")
+        if(EXISTS "${RUN_EXPECTED}")
+            set(EXPECTED_STDOUT_ARG "-DEXPECTED_STDOUT=${RUN_EXPECTED}")
+        endif()
         add_test(
             NAME "golden_${TNAME}_runtime_error"
             COMMAND ${CMAKE_COMMAND}
@@ -338,6 +346,7 @@ foreach(SQT_FILE ${ALL_GOLDEN_SQT})
                 -DSOURCE=${SQT_FILE}
                 -DEXPECTED=${RUNTIME_ERROR_EXPECTED}
                 -DEXTRA_ARGS=${EXTRA_ARGS_JOINED}
+                ${EXPECTED_STDOUT_ARG}
                 ${EXPECTED_EXIT_ARG}
                 -P "${CMAKE_SOURCE_DIR}/cmake/run_golden_error.cmake"
         )

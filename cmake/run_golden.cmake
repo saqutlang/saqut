@@ -15,6 +15,11 @@ set(EXTRA_FLAGS "")
 if(OPTIMIZED)
     list(APPEND EXTRA_FLAGS "--optimized")
 endif()
+# Optimizasyon varsayılan açık (src/cli/args.hpp); plain IR golden'ları
+# açıkça kapatmalı.
+if(DONT_OPTIMIZE)
+    list(APPEND EXTRA_FLAGS "--dont-optimize")
+endif()
 # ADR-036 (#76): BASE.flags'ten gelen --allow-fs vb. bayraklar ("|" ile ayrık).
 if(EXTRA_ARGS)
     string(REPLACE "|" ";" EXTRA_ARGS_LIST "${EXTRA_ARGS}")
