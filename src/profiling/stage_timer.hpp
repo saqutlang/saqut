@@ -2,7 +2,7 @@
 // saQut Profiling — StageTimer (Aşama Başına Süre Ölçümü)
 // ============================================================================
 //
-// DİZİN:   src/profiling/stage_timer.hpp
+// DİZİN:   src/Profiling/stage_timer.hpp
 // KATMAN:  Çapraz kesit — CLI'nin (`--profile`) pipeline aşamalarını
 //          (token/parser/ir-gen/vm-veya-jit) ölçmesi için kullandığı
 //          minimal araç.
@@ -16,9 +16,9 @@
 //   araçtır). Bugün yalnızca ana pipeline aşamalarını ölçüyor.
 //
 // KULLANIM:
-//   profiling::StageTimer timer;
+//   Profiling::StageTimer timer;
 //   {
-//       profiling::StageTimer::ScopedStage _(&timer, "token");
+//       Profiling::StageTimer::ScopedStage _(&timer, "token");
 //       // ... tokenize ...
 //   }
 //   timer.printReport(std::cerr);
@@ -38,7 +38,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace profiling {
+namespace Profiling {
 
 class StageTimer {
 public:
@@ -144,6 +144,6 @@ private:
     std::unordered_map<std::string, StageInfo> totals_;
 };
 
-}  // namespace profiling
+}  // namespace Profiling
 
 #endif  // SAQUT_PROFILING_STAGE_TIMER

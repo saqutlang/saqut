@@ -284,7 +284,7 @@ static bool runPipeline(
             }
             int                             jitResult = 0;
             mir_backend::UnsupportedReason  reason;
-            profiling::StageTimer           stageTimer;
+            Profiling::StageTimer           stageTimer;
 
             auto ta = BClock::now();
             bool jitOk = mir_backend::tryCompileAndRunProgram(
@@ -449,8 +449,8 @@ inline int cmdBench(const CliArgs& args) {
     }
 
     // ── 1 Profil çalışması (trace etkin) ─────────────────────────────────────
-    std::cerr << "[bench] profiling run (tracing enabled, timings may differ)...\n";
-    if (verbose) std::cerr << "[profiling run]\n";
+    std::cerr << "[bench] Profiling run (tracing enabled, timings may differ)...\n";
+    if (verbose) std::cerr << "[Profiling run]\n";
     BenchProfile profile;
     PipelineTimes profTimes;
     if (!runPipeline(fileSources, compileOnly, useJit, programArgs,

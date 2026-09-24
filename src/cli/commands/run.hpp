@@ -28,10 +28,10 @@ inline int cmdRun(const CliArgs& args) {
     std::string filePath = inputFilePath(args);
     if (filePath.empty()) { std::cerr << "error: no input file\n"; return saqut::exit_code::kUsageError; }
 
-    // src/profiling/ (--profile): args.profile false ise timer kullanılmaz,
+    // src/Profiling/ (--profile): args.profile false ise timer kullanılmaz,
     // ScopedStage'ler no-op kalır (StageTimer::ScopedStage tasarımı gereği).
-    profiling::StageTimer  stageTimer;
-    profiling::StageTimer* profilerPtr = args.profile ? &stageTimer : nullptr;
+    Profiling::StageTimer  stageTimer;
+    Profiling::StageTimer* profilerPtr = args.profile ? &stageTimer : nullptr;
 
     // ── Aşama 1: Tüm modülleri yükle (BFS parse) ─────────────────────────
     ModuleRegistry   registry;
@@ -76,7 +76,7 @@ inline int cmdRun(const CliArgs& args) {
 
     // ── Aşama 4 (opsiyonel): Optimizasyon ────────────────────────────────
     if (args.optimize) {
-        profiling::StageTimer::ScopedStage _prof(profilerPtr, "optimize");
+        Profiling::StageTimer::ScopedStage _prof(profilerPtr, "optimize");
         CompilerConfig   cfg;
         DiagnosticEngine optDiag;
         // --profile: "geçiş" = fixpoint tur sayısı (her modül için ayrı ayrı
@@ -94,7 +94,7 @@ inline int cmdRun(const CliArgs& args) {
     IRGenerator irGenerator;
     IRProgram   program;
     {
-        profiling::StageTimer::ScopedStage _prof(profilerPtr, "ir-gen");
+        Profiling::StageTimer::ScopedStage _prof(profilerPtr, "ir-gen");
         program = irGenerator.generateModuleGraph(graph, symbolTable);
     }
     // --profile: "instr" = üretilen toplam IR talimatı (tüm fonksiyonlar).

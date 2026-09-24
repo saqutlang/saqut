@@ -59,7 +59,7 @@ struct JitCallCounters {
 bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                               UnsupportedReason& outReason,
                               const std::vector<std::string>& programArgs,
-                              profiling::StageTimer* profiler = nullptr,
+                              Profiling::StageTimer* profiler = nullptr,
                               JitCallCounters* counters = nullptr,
                               int executionRuns = 1,
                               std::vector<long long>* executionSamplesUs = nullptr,
