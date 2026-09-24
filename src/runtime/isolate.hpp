@@ -8,14 +8,15 @@
 // bağlamı ve global slot kopyası. Bir isolate başka bir isolate'in heap'ine
 // asla dokunmaz (ADR-045 §RUNTIME 1).
 //
-// BU ADIM (faz1, adım 1-2, kısmi): daha önce dağınık duran thread_local
-// depolar tek bir Isolate nesnesinde toplanır:
+// BU ADIM (faz1, adım 1-2): daha önce dağınık duran thread_local depolar ve
+// JIT çalışma bağlamı tek bir Isolate nesnesinde toplanır:
 //   - ShadowStack        (önce: src/gc/shadow_stack.cpp thread_local)
 //   - string heap kancası (önce: src/gc/gc_heap.cpp t_activeStringHeap)
 //   - RNG durumu          (önce: src/ffi/functions/sys.cpp thread_local)
+//   - JitRuntime          (önce: mir_backend.cpp g_jitRuntime global'i)
 //
-// HENÜZ TAŞINMADI (faz1 devamı): JitRuntime (hostFrame/pendingError/globalP…),
-// Interpreter globalSlots_/Heap, ConstPool, compile/run ayrımı, FileRegistry/
+// HENÜZ TAŞINMADI (faz1 devamı): ConstPool, compile/run ayrımı (structMeta'nın
+// CompiledProgram'a alınması), Interpreter globalSlots_/Heap, FileRegistry/
 // FfiCatalog freeze(). Tek iş parçacıklı davranış bu adımda birebir korunur:
 // tek thread'de tek Isolate oluşur ve alanlar eskisi gibi çalışır.
 // ============================================================================
@@ -28,12 +29,16 @@
 #include <vector>
 
 #include "gc/shadow_stack.hpp"
+#include "runtime/jit_runtime.hpp"
 
 struct Heap;
 
 // Not: yaşam süresi bugün süreç/thread ömrü (new ile ayrılır, serbest
 // bırakılmaz). Faz 1 devamında isolate yaşam döngüsü sahipli hale gelecek.
 struct Isolate {
+    // JIT çalışma bağlamı (önce g_jitRuntime global'iydi).
+    JitRuntime jit;
+
     // JIT canlı referans kökleri (GC bu diziyi tarar).
     ShadowStack shadow;
 

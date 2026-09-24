@@ -26,6 +26,8 @@
 #include "ffi/host_bridge.hpp"
 #include "ffi/host_registry.hpp"
 #include "gc/shadow_stack.hpp"
+#include "runtime/isolate.hpp"
+#include "runtime/jit_runtime.hpp"
 #include "ir/ir_liveness.hpp"
 #include "data/array.hpp"
 
@@ -56,114 +58,13 @@ namespace mir_backend {
 
 namespace {
 
-// ── JIT çalışma bağlamı (runtime context) ───────────────────────────────────
-//
-// JIT'in ÇALIŞMA ZAMANI durumunun tamamı bu tek yapıda toplanır (refactor,
-// davranış değişikliği yok). Öncesinde bu alanlar dosyaya dağınık
-// g_jit* global'leri olarak yayılmıştı — her biri ayrı sahiplik noktası
-// olduğundan çok-thread'li çalışmanın önünde engeldi.
-//
-// Bugün süreç-ömrü TEK örnek vardır ve rt() ile erişilir. Thread desteği
-// geldiğinde tek değişiklik rt()'nin deposunu thread_local yapmak olur;
-// çağıran taraf değişmez. (MIRPLAN §9: MIR_context paylaşımı ve shadow
-// stack ile aynı model.)
-//
-// Derleme-zamanı tablolar (intern edilmiş string havuzu, shadow-stack
-// kodgen kararları) burada DEĞİLDİR — bunlar MIR context'ine ve üretilen
-// koda gömülüdür; çalışma zamanında mutasyonları yoktur.
+// JIT çalışma bağlamı (JitRuntime) artık Isolate üyesidir (ADR-045, Faz 1).
+// Tanım: src/runtime/jit_runtime.hpp. Erişim: rt() -> Isolate::current().jit.
 
-// ADR-025 deterministik stacktrace çerçevesi (yalnızca try'lı fonksiyonlar).
-struct JitTraceFrame {
-    std::string name;
-    std::string file;
-    int         line = 0;
-    int         col  = 0;
-};
 
-// STRUCT_NEW metadata'sı: VM fieldNames + ADR-021 nullable zero-init
-// maskesi. Derleme sırasında doldurulur, çalışmada salt okunur.
-struct JitStructMeta {
-    std::shared_ptr<std::vector<std::string>> names;
-    std::vector<bool>                         nullableMask;
-};
-
-struct JitRuntime {
-    // GC: JIT ve VM AYNI Heap'i paylaşır (jitSetHeap ile bağlanır). Toplama
-    // eşiği/politikası Heap'in kendisindedir — backend'ler yalnızca
-    // safepoint'lerinde collectIfNeeded() çağırır.
-    Heap* heap = nullptr;
-
-    // Hata yayılımı (#110): VM'in pendingThrow_ karşılığı — hata tek
-    // bayrakta durur, kodgen her hata-üretebilen talimattan sonra kontrol
-    // eder. errorLine/Col: jitSetError defaults için son hata konumu.
-    StructObject* pendingError = nullptr;
-    int64_t       errorLine    = 0;
-    int64_t       errorCol     = 0;
-
-    // Global slot'ların JIT tarafı görünümü (VM globalSlots_ ile aynı
-    // değerler, ham register temsillerinde) + nullable çağrı kanalı.
-    std::vector<int64_t> globalI;
-    std::vector<double>   globalD;
-    std::vector<void*>    globalP;
-    int64_t               callNullArgs[64]{};
-    int64_t               callRetNull = 0;
-
-    // Bench profil sayaçları — nullptr ise sayaç artırılmaz (sıfır ek yük).
-    JitCallCounters* benchCounters = nullptr;
-
-    // Deterministik iz yığını (ADR-025) — yalnızca try'lı fonksiyonlar.
-    std::vector<JitTraceFrame> traceStack;
-
-    // #254: saQut çağrı derinliği (VM callStack_ boyunun karşılığı) ve
-    // native yığın koruması. stackBase çalıştırma girişinde kaydedilir.
-    int64_t     callDepth  = 0;
-    const char* stackBase  = nullptr;
-    size_t      stackBudget = 0;
-
-    // STRUCT_NEW talimat başına bir kayıt (derleme sırasında dolar).
-    std::vector<JitStructMeta> structMeta;
-
-    // Host çağrı ABI'si (#222): çağrılar arasında yeniden kullanılan
-    // scratch/owner — çağrı başına tahsis yapmamanın yolu. Argümanlar
-    // MIR'den tek tek geçirilemez (değişken arite), bu yüzden sabit bir
-    // tampona yazılır (tek iş parçacığı varsayımı, MIRPLAN §9).
-    static constexpr int kMaxHostArgs = 8;
-    HostSlot      hostArgs[JitRuntime::kMaxHostArgs];
-    HostRetOwner  hostRetOwner;
-    HostCallFrame hostFrame;
-    HostEnv*      hostEnv = nullptr;
-
-    // Fallible cast null kanalı: cast_begin nullable-mod bayrağını tutar,
-    // null sonucu cast_null_check'e taşır.
-    bool    castNullable = false;
-    int64_t castNull     = 0;
-
-    // jitNewString/jitBoxDecimal'in heap bağlı değilken (test/izole
-    // kullanım) sızdırmadan çalışması için yedek havuzlar — normal yol
-    // heap->allocString/allocDecimal'dir.
-    std::vector<std::unique_ptr<StringObject>>  stringFallback;
-    std::vector<std::unique_ptr<DecimalObject>> decimalFallback;
-};
-
-// Tek erişim noktası.
-//
-// Depo FONKSİYON-İÇİ static DEĞİL, namespace kapsamındadır. Fonksiyon-içi
-// static her erişimde "başlatıldı mı?" guard'ı kontrol ettirir (C++
-// thread-safe statics); rt() sıcak yolda çok çağrılır — tek bir
-// rt_jit_host_call gövdesinde 28 kez — ve profilde bu guard tek başına
-// koşunun %25.86'sını alıyordu (perf, dizi push döngüsü).
-//
-// Namespace kapsamlı nesnenin başlatması program yüklenirken bir kez yapılır;
-// erişim sabit adrestir, kontrol yoktur. JitRuntime'ın kurucusu trivial
-// (POD üyeler + boş vector'ler), dolayısıyla statik başlatma sırası sorunu
-// doğurmaz: ilk kullanımdan önce sıfırlanmış olur.
-//
-// THREAD NOTU: bugün süreç-ömrü tek örnek; thread desteğinde bu satır
-// `thread_local JitRuntime g_jitRuntime;` olur (MIRPLAN §9 modeli) — o
-// biçimde de guard maliyeti yoktur.
-JitRuntime g_jitRuntime;
-
-JitRuntime& rt() { return g_jitRuntime; }
+// Tek erişim noktası: JitRuntime artık Isolate üyesidir (ADR-045, Faz 1).
+// Koşu başına g_jitRuntime global'i yerine thread başına Isolate::current().jit.
+JitRuntime& rt() { return Isolate::current().jit; }
 
 StringObject*  jitNewString(std::string v);
 DecimalObject* jitBoxDecimal(const DecimalValue& v);
@@ -1307,7 +1208,7 @@ struct FuncEntry {
 bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                               UnsupportedReason& outReason,
                               const std::vector<std::string>& programArgs,
-                              profiling::StageTimer* profiler,
+                              Profiling::StageTimer* profiler,
                               JitCallCounters* counters,
                               int executionRuns,
                               std::vector<long long>* executionSamplesUs,
@@ -1391,7 +1292,7 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     // "jit-warmup" — IR->MIR çeviri + gerçek native derleme (MIR_gen dahil).
     // compiled() çağrısı bu kapsamın DIŞINDA ("jit-exec"); RAII kapsamı
     // compiled()'dan hemen önce reset() ile kapatılır.
-    std::optional<profiling::StageTimer::ScopedStage> profWarmup;
+    std::optional<Profiling::StageTimer::ScopedStage> profWarmup;
     profWarmup.emplace(profiler, "jit-warmup");
 
     MIR_context_t ctx = MIR_init();
@@ -3591,7 +3492,7 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     for (int run = 0; run < runs; ++run) {
         auto execStart = std::chrono::steady_clock::now();
         {
-            profiling::StageTimer::ScopedStage profExec(profiler, "jit-exec");
+            Profiling::StageTimer::ScopedStage profExec(profiler, "jit-exec");
             nativeResult = compiled();
         }
         auto execEnd = std::chrono::steady_clock::now();
