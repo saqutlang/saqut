@@ -31,6 +31,7 @@
 #include "runtime/jit_runtime.hpp"
 #include "runtime/const_pool.hpp"
 #include "runtime/compiled_program.hpp"
+#include "runtime/output_lock.hpp"
 #include "ir/ir_liveness.hpp"
 #include "data/array.hpp"
 
@@ -634,7 +635,7 @@ extern "C" int64_t rt_jit_host_ret_is_null() {
 // #120: VM (9ac66d5) trailing "\n" eklemeyi bıraktı (console:: FFI hazırlığı,
 // #115) — JIT aynı hizaya getirildi, yalnızca flush eklendi.
 extern "C" void rt_jit_print_int(int64_t v) {
-    std::cout << v << std::flush;
+    writeProgramOutput(std::cout, std::to_string(v));   // ADR-045 §18 (1-f)
 }
 
 // ── print(float) trampoline'i — VM'in Value::toString() Float dalıyla BİREBİR
@@ -642,7 +643,7 @@ extern "C" void rt_jit_print_int(int64_t v) {
 // eşleşmesi buna bağlı (value.hpp:94-102). ──────────────────────────────────
 extern "C" void rt_jit_print_float(double v) {
     // #114: biçim tek kaynaktan (core/float_format.hpp) — VM senkronu
-    std::cout << formatDoublePrint(v) << std::flush;
+    writeProgramOutput(std::cout, formatDoublePrint(v));
 }
 
 // ── print(float32) trampoline'i — VM'in Value::toString() Float32 dalıyla BİREBİR
@@ -650,7 +651,7 @@ extern "C" void rt_jit_print_float(double v) {
 // çağrı öncesi F2D ile double'a genişletilip buraya double gelir. ─────────────
 extern "C" void rt_jit_print_float32(double v) {
     // #114: biçim tek kaynaktan (core/float_format.hpp) — VM senkronu
-    std::cout << formatFloat32Print(v) << std::flush;
+    writeProgramOutput(std::cout, formatFloat32Print(v));
 }
 
 // ── print(string) trampoline'i (Dilim 3, ADR-037). Argüman, JIT register'ında
@@ -658,7 +659,7 @@ extern "C" void rt_jit_print_float32(double v) {
 // Value::toString() String dalı ham içeriği döndürür (value.hpp:104); #120
 // öncesi print host'u "\n" ekliyordu, artık eklemiyor (VM ile birebir). ──────
 extern "C" void rt_jit_print_str(void* strObj) {
-    std::cout << static_cast<StringObject*>(strObj)->data << std::flush;
+    writeProgramOutput(std::cout, static_cast<StringObject*>(strObj)->data);
 }
 
 // ── Runtime string havuzu (Dilim 3). LOAD_STRING sabitleri derleme zamanı
@@ -897,7 +898,7 @@ extern "C" void* rt_jit_str_to_decimal(void* s) {
         return nullptr;  // ulaşılmaz
     }
 }
-extern "C" void rt_jit_print_decimal(void* d) { std::cout << jitDV(d).toString() << std::flush; }
+extern "C" void rt_jit_print_decimal(void* d) { writeProgramOutput(std::cout, jitDV(d).toString()); }
 
 // Sıfıra bölme — bu Dilim'de try/catch (ENTER_TRY/THROW) reddedildiğinden
 // yakalanamaz; VM'de de aynı program uncaught throw ile sonlanırdı.

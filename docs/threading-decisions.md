@@ -54,3 +54,10 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   kurucudan sonra mutatörü yok, `instance()` const döner — tip zaten donuk;
   ilk erişim magic-static ile thread-safe. | En küçük diff, gerçek risk
   (koşuda yeni kayıt) assert'le yakalanır. | FfiCatalog'a boş bir freeze().
+- **[1-f]** Tek süreç-global `programOutputMutex()` (`runtime/output_lock.hpp`);
+  `print` (CORE_PRINT), `stdout/stderr::write`, `writeBytes` ve JIT
+  `rt_jit_print_*` trampolinleri metni önce üretip kilit altında tek parça
+  yazar. print satır sonu eklemediği için atomiklik birimi "çağrı"dır.
+  stdout ve stderr aynı kilidi paylaşır; DAP output sink'i de kilit altında
+  çağrılır. | Tek kilit sıralama sorununu ve iki akış arası ara-kesimi
+  önler; print sıcak yolu değil. | Akış başına ayrı mutex.
