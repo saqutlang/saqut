@@ -41,10 +41,11 @@ Dal: **`v1.0.1-multithread`**. Her adımda `bash tests/run.sh` **rc=0** tutuldu.
 yazılmadı** (c1). `tryCompileAndRunProgram` hâlâ yekpare.
 
 **Kaldırıldı (2026-09-24):** Kullanıcının kök `threading/` altındaki ucontext
-denemesi silindi (sahibi kararı). Bölüm 0'daki "threading/ dizinine DOKUNMA"
-kuralı ve ADR-045 "Ertelendi" notu artık geçersizdir; bu satırlar tarihsel
-alıntı olarak duruyor. (Bölüm 4'teki `src/runtime/threading/` ve Bölüm 5'teki
-`examples/threading/` farklı, gelecekte oluşturulacak dizinlerdir.)
+denemesi depodan silindi (sahibi kararı). ucontext fikri ADR-045'te
+**"Ertelendi"** olarak durur; yalnız dizin artık yoktur ve ona ilişkin
+"dokunma" kuralı Bölüm 0'dan çıkarıldı. (Bölüm 4'teki `src/runtime/threading/`
+ve Bölüm 5'teki `examples/threading/` farklı, gelecekte oluşturulacak
+dizinlerdir.)
 
 ---
 
@@ -64,7 +65,6 @@ alıntı olarak duruyor. (Bölüm 4'teki `src/runtime/threading/` ve Bölüm 5't
   `std::scoped_lock`, `std::latch`. Boost ya da yeni bağımlılık YOK.
 - Concurrency testleri iki modda koşar: normal ve GC stres modu (eşik minimumda,
   her tahsiste toplama). Hepsi `-fsanitize=thread` ile de temiz geçmeli.
-- `threading/` dizinine (ucontext denemesi) DOKUNMA.
 
 ### Bölüm 1 — cevapları (uygulama talimatı)
 - **1.1** ADR-045 commit'le; ucontext maddesini "Ertelendi"ye taşı (yapıldı).
@@ -298,10 +298,9 @@ Sonra uygula:
 5. **CompiledProgram sahipliğinin `run.hpp`'ye taşınması ertelendi.**
 6. Faz 2 Bölüm 4 madde 3'teki **native handle sorusu cevapsız** (dosya/soket
    temsili: int id mi, void* mi?).
-7. Çalışma ağacında **başka bir aktörün** commit edilmemiş değişiklikleri var
-   (`run.hpp`, `bench.hpp`, `interpreter.hpp/.cpp`, `module_loader.*`,
-   `stage_timer.hpp`, `mir_backend.hpp`, `examples/parser-stress/Final.sqt`) —
-   dokunma, commit'leme.
+7. ~~Çalışma ağacında başka bir aktörün commit edilmemiş değişiklikleri~~
+   (`run.hpp`, `interpreter.*` vb.) **atıldı (2026-09-24)**; artık geçerli bir
+   engel değildir. (d) öncesi `git status` kontrolü (Bölüm C) yine uygulanır.
 
 ---
 
