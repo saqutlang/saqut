@@ -330,4 +330,100 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   `continue` → çıktı 2001000/2000, exit 0) geçti.
   **Kısıt:** `thread` started/exited olayları ThreadTable anlık görüntü
   farkından üretildiği için iki koşu turu arasında başlayıp biten işçiler
-  (örnekte thread#2/#3) için olay gönderilmez.
+  (örnekte thread#2/#3) için olay gönderilmez. → S3 ile giderildi (aşağıda).
+
+## Tur 2 — ürün sahibi kararları sonrası
+
+Çalışma şekli değişti: süreç kararlarını ajan verir, bu günlüğe yazar;
+ADR-045 mimarisi (isolate'ler, shared veri heap dışında, deep copy
+mesajlar) sabittir.
+
+### Uyarı temizliği (GCC 14 ile; ortama GCC 16 kurulamadı)
+
+GCC 16 paket deposunda yok; `g++-14` kuruldu, Release + mevcut
+`-Wall -Wextra` ile derlendi (43 uyarı).
+- `profile.hpp` walkAST: `LockStatement` (hedeflere), `WaitStatement`
+  (koşula), `ThreadExpr` (gövdeye iner), `CollectionNew` (yaprak) eklendi.
+- `gc_heap.cpp` -Warray-bounds (12 uyarı): tür etiketi her constructor'da
+  set ediliyor (`gc_object.hpp` Array/Struct/String/Decimal) → **yanlış
+  alarm**. Tahsis yolları tür başına tahmin fonksiyonlarını doğrudan
+  çağırır; `estimateBytes(Object*)` bunlara dağıtan switch olarak kaldı.
+- `mir_backend.cpp` print_* proto/import'ları MIR modülüne kayıt yan etkisi
+  taşıdığı için `[[maybe_unused]]`; `type_checker.cpp` srcIsNumeric/
+  tgtIsNumeric ve `fs.cpp` created kaldırıldı.
+- Kalan (threading öncesi, `8787176`'da da var, dokunulmadı):
+  `mir_backend.cpp` 4× -Winvalid-offsetof (ArrayObject), `ir_function.cpp:28`
+  kullanılmayan `slot()`, vendor `mir.c` 5× -Wclobbered.
+
+### S1 — VM gerilemesi
+
+Donanım sayaçları bu VM'de yok (`perf stat`: `<not supported>`); komut
+sayısı, simüle I1/D1 ve dal tahmini için valgrind cachegrind kullanıldı.
+Süre: ABBA dönüşümlü koşu (sıra yanlılığı yok), medyan ve minimum;
+heavy.sqt (fib(30) + struct/string/dizi döngüleri).
+
+| Deney | Ir (komut) | runUntilEvent Ir | Süre medyan / min (a-öncesine göre) |
+|---|---|---|---|
+| a-öncesi `8787176` | 11 303 M | 7 511 M | — |
+| HEAD `eb10b5f` | 11 584 M (+%2.48) | 7 752 M (+%3.2) | +%6.5 / +%3.8 |
+| (b) saqut kaynaklardan doğrudan | 11 584 M (+%2.48) | 7 752 M | +%5.8 / +%6.3 |
+| (c1) pollFlags_ yerel kopya | 11 596 M (+%2.59) | 7 764 M | ölçülmedi (Ir kötüleşti) |
+| (c2) ADR-045 üyeleri sınıf sonuna | 11 584 M | 7 752 M | ölçülmedi (Ir aynı) |
+| teşhis: JMP yoklaması yok | 11 570 M | — | — |
+| teşhis: executeThreadOp çağrısı yok | 11 377 M | — | — |
+| **(c3) executeThreadOp frame'i kendisi alır** | **11 389 M (+%0.76)** | — | +%6.2 / +%5.6 |
+| a-öncesi, hizalama bayraklarıyla | — | — | a-öncesine göre +%6.4 / +%3.8 |
+| c3 vs a-öncesi, ikisi de hizalama bayraklı | — | — | −%1.4 / +%0.8 |
+
+(A-vs-A kalibrasyonu: medyan +%2.1, min −%0.2.) Simüle I1 kaçırma
+(8.2 K vs 8.3 K), D1 kaçırma (8.21 M vs 8.22 M) ve dal tahmin hatası
+(105.5 M vs 105.3 M) c3'te a-öncesiyle aynı. Boş programda başlangıç farkı
+0.1 ms.
+
+- **Teşhis:** komut sayısı artışının ~%90'ı tek kaynaktan: switch içindeki
+  `executeThreadOp(instr, frame)` çağrısı `frame` referansının adresini
+  kaçırıyordu; derleyici her VM komutunda `callStack_.back()`'i ve
+  `maybeCollect` için heap adresini yeniden hesaplıyordu (cachegrind satır
+  düzeyi: `stl_iterator operator-` ve `maybeCollect` her biri +195 M).
+  Geri kenar yoklaması (3-g) yalnız 13 M (%0.1); JIT GC sayaçları (1-h0)
+  VM yolunda değil.
+- **Düzeltme (c3, `c4b3343`):** `executeThreadOp(const Instruction&)`
+  çerçeveyi `callStack_.back()`'ten kendisi alır, `[[gnu::noinline]]`.
+- **Kalan süre farkı (~%5) kod hizalaması:** yalnız
+  `-falign-jumps/labels/loops=32` ile a-öncesinin kendisi %4–6 yavaşlıyor;
+  aynı bayraklarla c3 ile a-öncesi gürültü içinde eşit. Yani fark,
+  dispatch döngüsünün makine kodu yerleşiminin (dolaylı sıçrama hedefleri /
+  uop önbelleği) şansına bağlı; kaynak düzeyinde ek iş kalmadı.
+- (b) ve (c1)/(c2) ölçülebilir fayda vermediği için geri alındı; OBJECT
+  kütüphanesi düzeni korunur. Soğuk opcode'ları switch'ten ayırma (S1-c
+  ikinci kol) yapılmadı: hizalama deneyi farkın bir yerleşim piyangosu
+  olduğunu gösteriyor; büyük bir switch yeniden düzenlemesinin hangi yönde
+  etki edeceği öngörülemez ve 0.8/1.0 dispatch kodunu da değiştirir.
+- **Sonuç:** %3 hedefi komut sayısında sağlandı (+%0.76); duvar
+  süresinde bu makinede sağlanamadı (+%5–6, hizalama kaynaklı).
+
+### S2 — işçi breakpoint'leri
+
+v1 kısıtı olarak kalır; `docs/threading-guide.md` "Debugger (DAP) ile"
+bölümünde belgelendi.
+
+### S3 — DAP thread olayları
+
+ThreadTable'a isteğe bağlı yaşam döngüsü kuyruğu (`setRecordLifecycleEvents`,
+`drainLifecycleEvents`); spawn'da started, gövde bitişinde exited kaydı. DAP
+yalnız thread kullanan programda açar (CLI koşusunda kuyruk büyümez).
+Duman testinde 5 işçinin hepsi için started+exited görülür (önceden
+thread#2/#3 eksikti). `tests/dap/dap_threads_smoke.py` ctest'e eklendi.
+
+Yan bulgu: `tests/dap/dap_test_driver.py` ve `tests/lsp/lsp_test_driver.py`
+Python 3.11'de stdin kapatıldıktan sonra `communicate()` çağırdığı için
+çöküyordu → DAP/LSP golden'ları bu ortamda hiç koşmuyordu (run.sh
+bunları çalıştırmıyor, ctest çalıştırıyor). Düzeltildi; Faz 4'ün initialize
+yanıtına eklediği `supportsSingleThreadExecutionRequests:false` (DAP
+varsayılanı) bu yüzden fark edilmemişti → yanıttan çıkarıldı.
+
+### VS Code eklentisi
+
+Kaynak: `editor/vscode/`. Gramer, snippet, LSP tamamlama; sürüm 1.0.1;
+paket `editor/vscode/saqut-1.0.1.vsix` (`npm run package`). Gramer testi
+`npm run test:grammar` + ctest `vscode_grammar` (node varsa).

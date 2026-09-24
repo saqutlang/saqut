@@ -160,8 +160,14 @@ int n = log.length();
 - Bir işçinin çağrı yığını ve yerelleri durduğu yerden okunabilir; bekleyen
   işçinin üst çerçevesi ne beklediğini yazar (ör. `[bekliyor: pop jobs]`).
   "Shared" bölümü shared değişkenleri ve Pool/List uzunluklarını gösterir.
-- v1 kısıtları: breakpoint ve adımlama yalnız **main** thread'de çalışır;
-  çok kısa ömürlü işçiler için başladı/bitti olayı görünmeyebilir.
+- Her işçi için başladı/bitti (`thread` started/exited) olayı gelir; çok kısa
+  ömürlü işçiler de dahil.
+- **v1 kısıtı:** breakpoint ve adımlama (step over/in/out) yalnız **main**
+  thread'de çalışır. İşçi thread'in gövdesindeki bir satıra konan breakpoint
+  tetiklenmez; bir işçi seçiliyken adım isteği hata döner. İşçiyi incelemek
+  için main'de bir breakpoint'te durun (hepsi durur) ve işçinin yığınına
+  thread listesinden bakın. `evaluate` (izleme/hover) yalnız main'in
+  çerçevelerinde çalışır.
 
 ## Örnekler
 

@@ -411,6 +411,15 @@ foreach(SCEN_FILE ${ALL_DAP_SCENARIOS})
         set_tests_properties("dap_${SCEN_BASE}" PROPERTIES WILL_FAIL TRUE)
     endif()
 endforeach()
+# VS Code TextMate gramer scope testi (node + editor/vscode/node_modules varsa).
+find_program(SAQUT_NODE node)
+if(SAQUT_NODE AND EXISTS "${CMAKE_SOURCE_DIR}/editor/vscode/node_modules/vscode-textmate")
+    add_test(
+        NAME vscode_grammar
+        COMMAND "${SAQUT_NODE}" "${CMAKE_SOURCE_DIR}/editor/vscode/test/grammar.test.js"
+    )
+endif()
+
 # ADR-045: thread'li DAP senaryosu (zamanlamaya bağlı → iddia tabanlı).
 add_test(
     NAME dap_threads_smoke
