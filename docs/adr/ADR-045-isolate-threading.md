@@ -26,12 +26,20 @@ sınırda kopyalanan" bir paylaşım modeli seçilmiştir.
 2. GC'lerde **kilit yoktur, stop-the-world yoktur**; her isolate kendi heap'ini
    bağımsız toplar.
 3. Kod **bir kez** derlenir; tüm thread'ler aynı makine kodunu çalıştırır.
-   String sabitleri süreç ömrü boyunca yaşayan, **immutable bir ConstPool**'da
-   tutulur; GC onu ne işaretler ne süpürür.
+   String sabitleri **program ömrü** boyunca yaşayan, immutable bir
+   **ConstPool**'da tutulur; GC onu ne işaretler ne süpürür. ConstPool
+   süreç-global değil, **CompiledProgram üyesidir** (aynı süreçte birden çok
+   koşu olursa her program havuzunu kapanışta bırakır).
 4. Bir thread uyumadan önce (pop/wait), son toplamadan bu yana eşiğin anlamlı
    bir kısmı kadar tahsis yapıldıysa GC çalışır.
 5. Tüm bloklamalar **tek bir park/unpark katmanından** geçer; böylece ileride
    event loop eklenebilir.
+6. **Koda gömülü adres kuralı:** bir adres makine koduna yalnızca işaret
+   ettiği veri **immutable ise** VE **tüm isolate'lerden uzun yaşıyorsa**
+   gömülebilir (program ömürlü veri). **Heap nesnesi adresi asla gömülmez.**
+   ConstPool string'leri ve `structMeta` bu kurala uyar.
+7. MIR derlemesi **eager**'dir (`MIR_set_gen_interface`); koşu sırasında hiçbir
+   `MIR_*` API çağrılmaz. Birden çok thread aynı `MIR_context`'inde kod üretmez.
 
 ### SHARED VERİ
 
@@ -75,6 +83,22 @@ kopyalanarak geçer.**
     bloklanmışsa **"all threads are blocked"** hatası (deadlock dedektörü).
 18. Yakalanmayan bir hata tüm süreci durdurur (stack trace ile). `print` satır
     bazında atomiktir.
+
+### Isolate alanları (Faz 1, kapsayıcı)
+
+Her `Isolate` en az şunları taşır: `JitRuntime jit`, `ShadowStack shadow`,
+string-heap kancası, RNG durumu, `const CompiledProgram* program` (koşu
+raundunda `IsolateGuard` bağlar), ve ileriki adımlarda `Heap` + `globalSlots`.
+Oluşturma açıkça `Isolate::currentOrCreate()` (LSP, birim testleri); koşu yolu
+RAII guard ile bağlanır ve `current()` guard'lı yolda assert'e döner.
+
+### CompiledProgram ömrü
+
+`CompiledProgram` MIR context'ini (opaque), fonksiyon giriş tablosunu,
+`structMeta`'yı ve ConstPool'u taşır. Sahibi **run komutudur**. Yıkım sırası
+sabittir: tüm thread'ler join -> tüm isolate'ler yıkılır -> `MIR_gen_finish` ->
+`MIR_finish` -> CompiledProgram yıkılır. Aktif koşan isolate sayısı atomik
+sayaçla izlenir; yıkıcı `activeIsolates == 0` bekler.
 
 ## Reddedilen alternatifler
 
