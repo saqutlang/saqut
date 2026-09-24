@@ -46,19 +46,19 @@ struct MessageBuffer {
     // Struct alan adı metadata'sı: değişmez, ref-sayımlı (atomik) — heap
     // nesnesi değildir, isolate'ler arası paylaşılabilir.
     std::vector<std::shared_ptr<std::vector<std::string>>> metas;
-    size_t readPos = 0;
 
-    void clear() { bytes.clear(); metas.clear(); readPos = 0; }
+    void clear() { bytes.clear(); metas.clear(); }
     bool empty() const { return bytes.empty(); }
 };
 
 // v'yi (ve eriştiği tüm nesne grafını) buf'un sonuna ekler.
 void serialize(const Value& v, MessageBuffer& buf);
 
-// buf'tan bir değer okur; nesneler heap'te yeni tahsis edilir. Tahsisler
-// toplama tetiklemez (Heap sözleşmesi) — dönen değer çağıranın köküne
-// bağlanana kadar güvendedir.
-Value deserialize(MessageBuffer& buf, Heap& heap);
+// buf'tan (baştan) bir değer okur; nesneler heap'te yeni tahsis edilir.
+// buf DEĞİŞMEZ — aynı mesaj birden çok thread'den eşzamanlı okunabilir
+// (List::get kilitsizdir). Tahsisler toplama tetiklemez (Heap sözleşmesi) —
+// dönen değer çağıranın köküne bağlanana kadar güvendedir.
+Value deserialize(const MessageBuffer& buf, Heap& heap);
 
 // Kolaylık: tek değerlik mesaj.
 inline MessageBuffer makeMessage(const Value& v) {

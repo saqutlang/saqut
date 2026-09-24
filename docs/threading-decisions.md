@@ -150,3 +150,14 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   tablosu uygulanır (süreç-global kilitli tabloya int id → kopyalanır ve
   paylaşılır; isolate'e özel tablo → sahiplik devri; ham void* → Faz 3'te
   "type X is not sendable"). | Kanıt koddan. | —
+- **[2-e]** PoolCore'un kendi `notEmpty/notFull` condition variable'ları
+  **yok**; push/pop park katmanından geçer (pred = kuyruk mutex'i altında
+  `tryPush`/`tryPop`, park mutex'i → kuyruk mutex'i sabit kilit sırası).
+  Başarılı push/pop/setMax `notifyShared` yapar. | ADR-045 §RUNTIME 5 "tüm
+  bloklamalar tek park katmanından" (ADR prompt'taki uygulama detayından
+  önce gelir) ve deadlock dedektörünün pop/push beklemelerini görebilmesi
+  için tek sayaç noktası gerekir. | Spec'teki gibi Pool başına iki CV +
+  dedektöre ayrı kayıt.
+- **[2-c/2-f]** `deserialize` artık `const MessageBuffer&` alır (okuma imleci
+  yerel); List elemanları kilitsiz ve eşzamanlı okunabildiği için mesaj
+  değişmez olmalı.

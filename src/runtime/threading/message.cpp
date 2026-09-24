@@ -145,24 +145,25 @@ struct Writer {
 
 // ── Okuyucu ─────────────────────────────────────────────────────────────────
 struct Reader {
-    MessageBuffer&        buf;
+    const MessageBuffer&  buf;
     Heap&                 heap;
     std::vector<Object*>  byIndex;
+    size_t                pos = 0;
 
     template <typename T>
     T get() {
-        if (buf.readPos + sizeof(T) > buf.bytes.size())
+        if (pos + sizeof(T) > buf.bytes.size())
             throw std::runtime_error("message: truncated buffer");
         T x;
-        std::memcpy(&x, buf.bytes.data() + buf.readPos, sizeof(T));
-        buf.readPos += sizeof(T);
+        std::memcpy(&x, buf.bytes.data() + pos, sizeof(T));
+        pos += sizeof(T);
         return x;
     }
     void getBytes(void* p, size_t n) {
-        if (buf.readPos + n > buf.bytes.size())
+        if (pos + n > buf.bytes.size())
             throw std::runtime_error("message: truncated buffer");
-        if (n) std::memcpy(p, buf.bytes.data() + buf.readPos, n);
-        buf.readPos += n;
+        if (n) std::memcpy(p, buf.bytes.data() + pos, n);
+        pos += n;
     }
     DecimalValue decimal() {
         DecimalValue d;
@@ -265,8 +266,8 @@ void serialize(const Value& v, MessageBuffer& buf) {
     w.value(v);
 }
 
-Value deserialize(MessageBuffer& buf, Heap& heap) {
-    Reader r{buf, heap, {}};
+Value deserialize(const MessageBuffer& buf, Heap& heap) {
+    Reader r{buf, heap, {}, 0};
     return r.value();
 }
 
