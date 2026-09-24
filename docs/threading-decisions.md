@@ -91,3 +91,38 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   değeri karşılaştırılır. | Tam derleyici hattına bağlanmanın tek temiz yolu;
   run.sh'deki tek-dosya g++ derlemesi tüm kaynakları elle saymayı
   gerektirirdi. | Gizli bir CLI alt komutu (CLI yüzeyi ürün kararı).
+
+## Faz 2
+
+- **[2-a+g+h]** Üç madde tek commit: ThreadTable'ın yaşam döngüsü (canlı
+  sayacı, bitişte uyandırma) park katmanını, park'ın deadlock raporu
+  ThreadTable'ı çağırır; dedektör park döngüsünün içindedir. | Her commit
+  derlenmeli/bağlanmalı kuralı (OBJECT kütüphanesi tüm nesneleri bağlar). |
+  Sahte ara arayüz (callback) ile üç ayrı commit.
+- **[2-a]** Thread durdurma için `ThreadCore::stopSource` (kendi
+  `std::stop_source`'u) kullanılır, jthread'in iç stop kaynağı değil. |
+  jthread kurucusu thread'i hemen başlatır; gövde jthread nesnesine erişirse
+  atamayla yarışırdı. jthread yine OS thread'ini taşır ve yıkımda join eder.
+  | Gövdeye jthread'in stop_token'ını parametre olarak geçmek (DAP/park
+  tarafında token'a thread dışından erişim zorlaşırdı).
+- **[2-a]** saQut `t.join()` = park ile "hedef finished" beklemesi; OS
+  seviyesinde `std::jthread::join` yalnız `joinAll` (main dönüşü) ve tablo
+  yıkıcısında. | Aynı handle'ı birden çok thread join edebilir; OS join'i
+  tek çağırana izin verir. | —
+- **[2-g]** Park modeli: tek mutex + tek `condition_variable_any` + epoch;
+  pred park mutex'i altında değerlendirilir ve yan etkili olabilir (Pool'da
+  "kuyruktan al"). `notifyShared` epoch'u mutex altında artırır → kayıp
+  uyandırma yok. Stop, `condition_variable_any::wait(lock, stop_token, pred)`
+  ile uyandırır. Park öncesi GC bir kanca (`setBeforeParkHook`) ile bağlı
+  isolate'in heap'inde `Heap::collectBeforePark()` (son toplamadan beri
+  tahsis ≥ eşik/2). | ADR-045 §RUNTIME 5 "tek park katmanı". | —
+- **[2-h]** Dedektör: `parked` sayacı her `notifyShared`'de sıfırlanır (tüm
+  bekleyenler pred'i yeniden deneyecek, "uyanık" sayılır) ve her bekleyen
+  yeniden kayıt olur; `parked >= live` ⇒ deadlock. Bu, "bildirildi ama henüz
+  mutex'i geri almadı" yarışındaki yanlış pozitifi önler. Varsayılan
+  işleyici raporu stderr'e yazıp `_Exit(70)` (statik yıkıcılar bloklu
+  thread'leri join etmeye çalışıp asılırdı). **PLAN B (önlem):**
+  `SAQUT_NO_DEADLOCK_DETECT=1` dedektörü kapatır; varsayılan açık.
+  `lock` (std::mutex) beklemesi dedektörde sayılmaz ve stop ile kesilemez
+  (bilinen kısıt; `lock a, b` sıralı alındığı için kilit-kilit deadlock'u
+  statik olarak önlenir). | — | Sembol başına bekleyen listeleri (TODO).
