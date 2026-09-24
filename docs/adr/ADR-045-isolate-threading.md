@@ -144,11 +144,27 @@ Faz 1 dilimleri: Isolate temeli + dağınık thread_local'ların birleştirilmes
 (`07dcc04`), JitRuntime'ın Isolate üyesi olması ve `rt()` erişimi (`1bcc081`),
 ConstPool + `immortal` işaretleme (`0503b4f`), `Isolate::program` alanı +
 IsolateGuard (`9b468ae`), decimal literal'lerin ConstPool'a taşınması +
-`embedProgramPtr` (`855aa34`). Dil yüzeyi (Faz 3) ve runtime primitifleri
-(Faz 2) henüz yok.
+`embedProgramPtr` (`855aa34`), compileProgram/runOnIsolate bölmesi + structMeta
+CompiledProgram'da (`9c61a78`, c1), `rt()` sıcak yolu + `current()` assert'i +
+isolate'siz derleme (`033f9bc`, c2), ConstPool CompiledProgram üyesi +
+gömme üyelik assert'i (`bddab15`, c3), CompiledProgram sahipliği CLI
+komutlarında (`a7e6c71`, c4), Interpreter isolate bağı + salt okunur
+IRProgram (`df884c1`, d), FileRegistry freeze (`e2c0848`, e), print mutex'i
+(`5fecf75`, f), `__init_globals` üreticisi (`ff30dac`, g — Plan B), JIT GC
+sayaç global'leri (`f538915`), isolate eşzamanlılık testi (`03a7f32`, h).
+Faz 1 kodu **Uygulandı** durumundadır; toplu doğrulama (Debug assert'leri,
+GC stres, TSan, benchmark) henüz koşulmadı → "Test Edildi" değil.
 
-Faz 1'in kalanı (compileProgram/runOnIsolate bölmesi ve sonraki adımlar),
-devir belgesi `docs/threading-handoff.md` Bölüm E'de sıralanmıştır. Faz 1–4
+Global başlatma kararı (Plan B, `docs/threading-decisions.md` [1-g]):
+main'in başındaki global init prelude'u korunur; thread kullanan programlarda
+IRGenerator ayrıca `__init_globals()` (shared olmayan globaller) üretir ve her
+yeni thread'in isolate'i gövdeden önce onu çağırır. **Global initializer'ların
+yan etkileri thread başına yeniden çalışır.** shared globaller main thread'inde
+spawn'dan önce bir kez kurulur.
+
+Otonom uygulama turunun kararları ve Plan B geçişleri
+`docs/threading-decisions.md`'dedir; sıradaki adımlar devir belgesi
+`docs/threading-handoff.md` Bölüm E'de. Faz 1–4
 sonuna kadar, kanıt üretilmeden karar "Uygulandı" veya "Test Edildi" sayılamaz.
 
 ## Doğrulama
