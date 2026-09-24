@@ -23,21 +23,24 @@ set -e
 test "$actual" -eq 0
 test -s "$out"
 
-# ast: semantic hatalı girdi -> exit 65, AST BASILMAZ (yalnız tanı stderr'e).
+# ast: semantic hatalı girdi -> 360bad2 sözleşmesi: ast'in tanı akışı YOK.
+# Hatalı kodda kısmi AST basılır, çıkış kodu 0, tanılar gösterilmez (tanı
+# için `saqut check`). (Eski #157 beklentisi — exit 65, AST basılmaz —
+# bu ürün kararıyla geçersizleşti.)
 set +e
 "$binary" ast "$semantic_error" > "$out" 2>"$err"
 actual=$?
 set -e
-if [ "$actual" -ne 65 ]; then
-    echo "FAIL: ast semantic hatada beklenen exit 65, gercek $actual" >&2
+if [ "$actual" -ne 0 ]; then
+    echo "FAIL: ast semantic hatada beklenen exit 0 (tanı akışı yok), gercek $actual" >&2
     exit 1
 fi
-if [ -s "$out" ]; then
-    echo "FAIL: ast semantic hatada stdout bos olmali, gercek: $(cat "$out")" >&2
+if ! grep -q "undefined_thing" "$out"; then
+    echo "FAIL: ast semantic hatada kismi AST basilmali, gercek: $(cat "$out")" >&2
     exit 1
 fi
-if ! grep -q "E001" "$err"; then
-    echo "FAIL: ast semantic hata tanisi stderr'de yok: $(cat "$err")" >&2
+if grep -q "E001" "$err"; then
+    echo "FAIL: ast tani basmamali, stderr: $(cat "$err")" >&2
     exit 1
 fi
 
