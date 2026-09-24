@@ -74,3 +74,10 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   eklendi. | Spec'in birinci seçeneği tüm tek-thread IR dump'larını
   değiştirirdi; prompt tek thread regresyonunu mutlak öncelik sayıyor. |
   Spec: init'i main'den `__init_shared`/`__init_globals`'e taşıyıp çağırmak.
+- **[1-h ön]** Paylaşılan mutable yapı taraması (Bölüm 0 "dur ve raporla"
+  sınıfı, otonom modda düzeltildi): `lastRunGcStatsStorage` süreç-global
+  `static` idi ve her JIT koşusu sonunda yazılıyordu → `thread_local`.
+  `gcThresholdForNextRunStorage` → `std::atomic<int>` (ana thread yazar,
+  isolate'ler okur). `gMaxCallDepth` yalnız argüman ayrıştırmada yazılıyor
+  (salt okunur). Codegen'deki `static int` sayaçlar yalnız tek thread'li
+  derlemede kullanılıyor. | En küçük diff. | Her ikisini Isolate alanı yapmak.

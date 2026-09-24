@@ -302,14 +302,17 @@ void jitMaybeCollect() {
 }
 
 // Koşu heap'i koşu sonunda yıkıldığı için sayaçları hayatta tutan depo.
+// ADR-045: thread başına (her isolate kendi koşusunun sayaçlarını yazar;
+// CLI ana thread'in değerini okur) — süreç-global olsaydı veri yarışıydı.
 GcStats& lastRunGcStatsStorage() {
-    static GcStats stats;
+    static thread_local GcStats stats;
     return stats;
 }
 
 // --gc-threshold'ün JIT karşılığı. 0 = ayarlanmadı (Heap varsayılanı).
-int& gcThresholdForNextRunStorage() {
-    static int bytes = 0;
+// ADR-045: ana thread bir kez yazar, tüm isolate'ler koşu başında okur.
+std::atomic<int>& gcThresholdForNextRunStorage() {
+    static std::atomic<int> bytes{0};
     return bytes;
 }
 
@@ -3480,7 +3483,8 @@ bool runOnIsolate(const CompiledProgram& compiled, Isolate& iso, int& outExitCod
     // bitince yıkılır ve tahsis ettiği her nesne serbest kalır. Aynı süreçte
     // arka arkaya program çalıştıran gömülü kullanım için bu şarttır.
     Heap runHeap;
-    if (const int gcThreshold = gcThresholdForNextRunStorage(); gcThreshold != 0) {
+    if (const int gcThreshold = gcThresholdForNextRunStorage().load(std::memory_order_relaxed);
+        gcThreshold != 0) {
         if (gcThreshold > 0) runHeap.setMinCollectBytes(gcThreshold);
         else                 runHeap.setCollectionEnabled(false);
     }
