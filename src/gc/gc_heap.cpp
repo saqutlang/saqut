@@ -41,6 +41,7 @@
 
 #include "gc/gc_heap.hpp"
 #include "vm/value.hpp"
+#include "runtime/isolate.hpp"
 
 #include <algorithm>
 
@@ -306,15 +307,13 @@ void printGcStats(std::ostream& out, const GcStats& stats) {
 // tersine çevirmeden bağlar: çalışan backend başlangıçta aktif heap'i
 // bağlar, Value::fromString onu kullanır.
 //
-// Kanca thread_local'dır: her iş parçacığı kendi heap'ini bağlar.
-namespace {
-thread_local Heap* t_activeStringHeap = nullptr;
-}
-
-void setValueStringHeap(Heap* heap) { t_activeStringHeap = heap; }
+// Kanca isolate başına durur (ADR-045, Faz 1): bağlı heap Isolate üyesidir,
+// böylece her iş parçacığı kendi heap'ini görür.
+void setValueStringHeap(Heap* heap) { Isolate::current().stringHeap = heap; }
 
 Object* allocValueString(std::string text) {
-    if (t_activeStringHeap) return t_activeStringHeap->allocString(std::move(text));
+    if (Heap* active = Isolate::current().stringHeap)
+        return active->allocString(std::move(text));
 
     // Heap bağlı değil (birim testi, izole kullanım): nesne toplanmaz ama
     // sızmaz da — süreç ömrü boyunca yedek havuzda tutulur. Bağlı heap

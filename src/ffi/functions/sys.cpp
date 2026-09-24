@@ -13,14 +13,14 @@
 #include <thread>
 #include "ffi/host_functions.hpp"
 #include "ffi/host_bridge.hpp"
+#include "runtime/isolate.hpp"
 
-// RNG durumu thread_local: mt19937_64 sırayı korumaz, iki thread ayni
-// anda çekerse yarış olur ve seri bozulur. thread_local ile her is
-// parcacigi kendi üretecini kurar — tek thread'de davranış birebir aynı
+// RNG durumu Isolate üyesidir (ADR-045, Faz 1): mt19937_64 sırayı korumaz,
+// iki thread ayni anda çekerse yarış olur ve seri bozulur. Isolate ile her
+// iş parçacığı kendi üretecini kurar — tek thread'de davranış birebir aynı
 // (tohum random_device'ten, çağrı başına değil üretim başına alınır).
 static std::mt19937_64& sysRng() {
-    thread_local std::mt19937_64 gen(std::random_device{}());
-    return gen;
+    return Isolate::current().rng;
 }
 
 static int sys_random(HostCallFrame* f) {
