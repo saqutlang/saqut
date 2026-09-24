@@ -15,6 +15,7 @@
 #include "parser/nodes/declarations.hpp"
 #include "parser/nodes/statements.hpp"
 #include "parser/nodes/expressions.hpp"
+#include "parser/nodes/binary_expr.hpp"
 
 void StructuralValidator::validate(ASTNode* program) {
     if (!program) return;
@@ -31,6 +32,25 @@ void StructuralValidator::walkDecl(ASTNode* node) {
         if (!ch.empty()) walkStmt(ch[0]);
         inFunction_ = false;
     }
+}
+
+// ADR-045: `thread { }` gövdesi ayrı bir fonksiyondur (lambda lifting): dıştaki
+// döngüye break/continue edemez. Gövde sıfır döngü derinliğiyle denetlenir.
+// Thread ifadesi bildirim başlatıcısında, ifade deyiminde ya da atamanın sağ
+// tarafında bulunur.
+void StructuralValidator::walkThreadBodies(ASTNode* expr) {
+    if (!expr) return;
+    if (expr->kind == ASTKind::ThreadExpr) {
+        auto* te = static_cast<ThreadExprNode*>(expr);
+        const int savedLoop = loopDepth_, savedPure = pureLoopDepth_;
+        loopDepth_ = pureLoopDepth_ = 0;
+        walkStmt(te->body);
+        loopDepth_ = savedLoop;
+        pureLoopDepth_ = savedPure;
+        return;
+    }
+    if (expr->kind == ASTKind::BinaryExpression)
+        walkThreadBodies(static_cast<BinaryExpressionNode*>(expr)->Right);
 }
 
 void StructuralValidator::walkStmt(ASTNode* node) {
@@ -133,12 +153,14 @@ void StructuralValidator::walkStmt(ASTNode* node) {
         break;
 
     case ASTKind::VariableDecl: {
+        walkThreadBodies(static_cast<VariableDeclNode*>(node)->initExpr);   // ADR-045
         for (ASTNode* sib : node->getChildren())
             if (sib->kind == ASTKind::VariableDecl) walkStmt(sib);
         break;
     }
 
     case ASTKind::ExpressionStatement:
+        walkThreadBodies(static_cast<ExpressionStatementNode*>(node)->expression);   // ADR-045
         break;
 
     default:

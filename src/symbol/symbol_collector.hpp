@@ -65,6 +65,20 @@ private:
 
     Type typeFromName(const std::string& n, const SourceLocation& loc);
 
+    // ADR-045: bildirim tipi — "Pool"/"List" adı eleman tipini başlatıcıdaki
+    // Pool(T)/List(T)'den alır.
+    Type declType(const std::string& varType, ASTNode* initExpr, const SourceLocation& loc);
+
+    // ADR-045 (Faz 3-c): açık `thread { }` gövdeleri (içten dışa). Bir ad bir
+    // gövdenin kapsamı dışında tanımlı ve global değilse o thread için
+    // yakalanan (kopya) değişkendir.
+    struct ThreadCtx {
+        class ThreadExprNode* node;
+        Scope*                bodyScope;
+    };
+    std::vector<ThreadCtx> threadCtx_;
+    void noteThreadCapture(class IdentifierNode* id, Symbol* s);
+
     SymbolTable&      table_;
     DiagnosticEngine& diag_;
     int               currentModuleId_ = -1;

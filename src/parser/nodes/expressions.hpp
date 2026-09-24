@@ -18,6 +18,14 @@
 
 #include "parser/ast_node.hpp"
 
+// ADR-045: Pool/List/Thread alıcılı intrinsic metotlar (ScopeCallNode::threadOp).
+enum ThreadIntrinsic : int {
+    TI_None = 0,
+    TI_PoolPush, TI_PoolPop, TI_PoolSetMax, TI_PoolLength,
+    TI_ListAppend, TI_ListGet, TI_ListLength,
+    TI_ThreadStop, TI_ThreadJoin, TI_ThreadRunning,
+};
+
 class PostfixNode : public ExpressionNode {
 public:
     ASTNode*  operand  = nullptr;
@@ -79,6 +87,9 @@ public:
     std::string methodName;     // "push", "pop", "upper", "toJson", ...
     std::vector<ASTNode*> arguments;
     int         builtinId = -1; // TypeChecker çözer; IR codegen kullanır
+    // ADR-045: Pool/List/Thread alıcılı intrinsic metot (ThreadIntrinsic);
+    // 0 = değil. TypeChecker çözer; IR SHARED/POOL/LIST/THREAD opcode'u üretir.
+    int         threadOp = 0;
     // ADR-033 (#85): UFCS nokta çağrısı — expr.method(args) şekeri.
     // true ise leftTypeName boştur, receiver arguments[0]'dadır; kategori
     // TypeChecker'da receiver TİPİNDEN çözülür. IR aynı CALLHOST'a düşer.

@@ -42,7 +42,9 @@
 
 enum class PrimitiveKind { Int, LongInt, Float, Double, Decimal, Byte, Char, String, Bool, Void, Date };
 
-enum class TypeKind { Primitive, Array, Struct, Enum, Function, Error };
+// ADR-045: Pool/List elementType alanını (Array gibi) kullanır; Thread bir
+// ThreadTable id'sidir (heap nesnesi değil).
+enum class TypeKind { Primitive, Array, Struct, Enum, Function, Error, Pool, List, Thread };
 
 // ============================================================================
 // Type — Bir veri tipi
@@ -125,6 +127,26 @@ struct Type {
     static Type error() {
         return Type{}; // varsayılan = Error
     }
+    // ADR-045: Pool(T) / List(T) — eleman tipi elementType'ta. Eleman tipi
+    // bilinmiyorsa (yalnız "Pool" adı) elementType boş kalır; bildirimde
+    // başlatıcıdan tamamlanır.
+    static Type pool(Type elem) {
+        Type t;
+        t.kind = TypeKind::Pool;
+        t.elementType = std::make_shared<Type>(std::move(elem));
+        return t;
+    }
+    static Type list(Type elem) {
+        Type t;
+        t.kind = TypeKind::List;
+        t.elementType = std::make_shared<Type>(std::move(elem));
+        return t;
+    }
+    static Type thread() {
+        Type t;
+        t.kind = TypeKind::Thread;
+        return t;
+    }
 
     // ------------------------------------------------------------------ //
     // Yüklemler (predicates)
@@ -136,6 +158,9 @@ struct Type {
     bool isEnum()      const { return kind == TypeKind::Enum; }
     bool isFunction()  const { return kind == TypeKind::Function; }
     bool isVoid()      const { return kind == TypeKind::Primitive && prim == PrimitiveKind::Void; }
+    bool isPool()      const { return kind == TypeKind::Pool; }
+    bool isList()      const { return kind == TypeKind::List; }
+    bool isThread()    const { return kind == TypeKind::Thread; }
 
     // Aritmetik/karşılaştırma operatörlerine uygun sayısal tip mi?
     // byte de sayısaldır (#86) ama aritmetikte int'e terfi eder (C modeli) —
@@ -205,8 +230,12 @@ struct Type {
             case TypeKind::Primitive:
                 return prim == o.prim;
             case TypeKind::Array:
+            case TypeKind::Pool:
+            case TypeKind::List:
                 return elementType && o.elementType &&
                        elementType->equals(*o.elementType);
+            case TypeKind::Thread:
+                return true;
             case TypeKind::Struct:
                 return structName == o.structName;
             case TypeKind::Enum:
@@ -268,6 +297,11 @@ struct Type {
         if (n == "string") return String();
         if (n == "bool")   return Bool();
         if (n == "void")   return Void();
+        // ADR-045: "Thread" tam tiptir; "Pool"/"List" eleman tipsiz yer tutucudur
+        // (bildirimde Pool(T)/List(T) başlatıcısından tamamlanır).
+        if (n == "Thread") return thread();
+        if (n == "Pool")   { Type t; t.kind = TypeKind::Pool; return t; }
+        if (n == "List")   { Type t; t.kind = TypeKind::List; return t; }
         // "int[]", "float[]" vb. — suffix [] ile dizi tipi
         if (n.size() > 2 && n.substr(n.size() - 2) == "[]") {
             Type elem = fromName(n.substr(0, n.size() - 2));
@@ -286,6 +320,12 @@ struct Type {
                 base = primName(prim); break;
             case TypeKind::Array:
                 base = (elementType ? elementType->toString() : "<?>") + "[]"; break;
+            case TypeKind::Pool:
+                base = "Pool(" + (elementType ? elementType->toString() : std::string("?")) + ")"; break;
+            case TypeKind::List:
+                base = "List(" + (elementType ? elementType->toString() : std::string("?")) + ")"; break;
+            case TypeKind::Thread:
+                base = "Thread"; break;
             case TypeKind::Struct:
                 base = "struct " + structName; break;
             case TypeKind::Enum:
@@ -338,6 +378,14 @@ struct Type {
             }
             case TypeKind::Error:
                 j["kind"] = "error";
+                break;
+            case TypeKind::Pool:
+            case TypeKind::List:
+                j["kind"]    = kind == TypeKind::Pool ? "pool" : "list";
+                j["element"] = elementType ? elementType->toJsonObj() : nullptr;
+                break;
+            case TypeKind::Thread:
+                j["kind"] = "thread";
                 break;
         }
         return j;

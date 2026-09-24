@@ -17,6 +17,7 @@
 
 #include <unordered_set>
 #include <string>
+#include <vector>
 #include "symbol/symbol_table.hpp"
 #include "diagnostic/diagnostic_engine.hpp"
 #include "parser/ast_node.hpp"
@@ -64,6 +65,27 @@ private:
 
     // ADR-021: akış-duyarlı null daraltma — bu kapsamda non-null olduğu bilinen değişkenler
     std::unordered_set<std::string> narrowedNonNull_;
+
+    // ── ADR-045 (Faz 3-b) ─────────────────────────────────────────────────
+    // Modül kapsamındaki bildirim denetleniyor mu (shared / Pool / List).
+    bool inGlobalDecl_ = false;
+    // Pool(T)/List(T) yalnız shared global başlatıcısında geçerli.
+    bool allowCollectionNew_ = false;
+    // Sözcüksel kilit kapsamları: her Block bir seviye; tutulan shared adları.
+    std::vector<std::vector<std::string>> heldLocks_;
+    bool anyLockHeld() const {
+        for (auto& lvl : heldLocks_) if (!lvl.empty()) return true;
+        return false;
+    }
+    // Gönderilebilir tip (mesaj deep copy / thread yakalaması).
+    bool isSendable(const Type& t) const;
+    bool isSendableImpl(const Type& t, std::unordered_set<std::string>& seenStructs) const;
+    // Pool/List/Thread alıcılı metot çağrısı (ScopeCall dotCall).
+    Type checkThreadIntrinsic(class ScopeCallNode* sc, const Type& recvType,
+                              const std::vector<Type>& argTypes);
+    // İfade ağacında shared bir sembole başvuru var mı (wait kuralı, W008).
+    static bool referencesShared(ASTNode* node);
+    static bool referencesSymbol(ASTNode* node, const Symbol* sym);
 
     // #219 A1: unary '-' altındaki tam sayı literal'i denetlenirken >0 olur.
     // Aralık denetimi üst sınırı bir kaydırır, böylece her tipin EN KÜÇÜK

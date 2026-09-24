@@ -123,6 +123,45 @@ Type SymbolCollector::typeFromName(const std::string& n, const SourceLocation& l
     return Type::error();
 }
 
+// ADR-045: "Pool"/"List" bildirim tipi eleman tipini Pool(T)/List(T)
+// başlatıcısından alır; başlatıcı yoksa eleman tipsiz yer tutucu kalır ve
+// TypeChecker E014 raporlar.
+Type SymbolCollector::declType(const std::string& varType, ASTNode* initExpr,
+                               const SourceLocation& loc) {
+    if (varType == "Pool" || varType == "List") {
+        if (initExpr && initExpr->kind == ASTKind::CollectionNew) {
+            auto* cn  = static_cast<CollectionNewNode*>(initExpr);
+            Type elem = typeFromName(cn->elemTypeName, cn->loc);
+            if (elem.isError()) return Type::error();
+            return cn->isPool ? Type::pool(elem) : Type::list(elem);
+        }
+        return Type::fromName(varType);
+    }
+    return typeFromName(varType, loc);
+}
+
+// ADR-045 (Faz 3-c): id, açık thread gövdelerinden bazılarının DIŞINDA
+// tanımlı, global olmayan bir değişkeni (yerel/parametre) gösteriyorsa o
+// gövde(ler) için yakalanan bir kopyadır. İçten dışa: sembolün tanımlandığı
+// gövdeye gelince durulur (daha dıştaki thread'ler onu görmez).
+void SymbolCollector::noteThreadCapture(IdentifierNode* id, Symbol* s) {
+    if (!s || !s->scope || s->scope == table_.global()) return;
+    if (s->kind != SymbolKind::Variable && s->kind != SymbolKind::Parameter) return;
+    bool innermost = true;
+    for (auto it = threadCtx_.rbegin(); it != threadCtx_.rend(); ++it) {
+        bool inside = false;
+        for (Scope* sc = s->scope; sc; sc = sc->parent)
+            if (sc == it->bodyScope) { inside = true; break; }
+        if (inside) break;
+        if (innermost) { id->capturedInThread = true; innermost = false; }
+        auto& caps = it->node->captures;
+        if (std::find(caps.begin(), caps.end(), s->name) == caps.end()) {
+            caps.push_back(s->name);
+            it->node->captureTypes.push_back(s->type);
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // pass1aRegisterNames — sadece tip isimlerini kaydet, alan/imza çözümleme yok.
 // Tüm modüllerde çalıştıktan sonra pass1bResolveLayouts çağrılır; bu sayede
@@ -194,13 +233,15 @@ void SymbolCollector::pass1aRegisterNames(ASTNode* program, int moduleId) {
         case ASTKind::VariableDecl: {
             // Modül-düzeyi değişkenler — tip adı primitive olabilir, güvenle kaydet.
             auto* vd = static_cast<VariableDeclNode*>(child);
-            table_.define(vd->name, SymbolKind::Variable,
-                          Type::fromName(vd->varType), vd->loc, moduleId);
+            Symbol* gs = table_.define(vd->name, SymbolKind::Variable,
+                                       Type::fromName(vd->varType), vd->loc, moduleId);
+            if (gs) gs->isShared = vd->isShared;   // ADR-045
             for (ASTNode* sib : vd->getChildren()) {
                 if (sib->kind == ASTKind::VariableDecl) {
                     auto* sv = static_cast<VariableDeclNode*>(sib);
-                    table_.define(sv->name, SymbolKind::Variable,
-                                  Type::fromName(sv->varType), sv->loc, moduleId);
+                    Symbol* ss = table_.define(sv->name, SymbolKind::Variable,
+                                               Type::fromName(sv->varType), sv->loc, moduleId);
+                    if (ss) ss->isShared = sv->isShared;
                 }
             }
             break;
@@ -270,8 +311,8 @@ void SymbolCollector::pass1bResolveLayouts(ASTNode* program, int moduleId) {
             // Modül-düzeyi değişkenlerin struct/enum tiplerini düzelt.
             auto* vd = static_cast<VariableDeclNode*>(child);
             Symbol* s = table_.resolve(vd->name);
-            if (s && s->type.isError())
-                s->type = typeFromName(vd->varType, vd->loc);
+            if (s && (s->type.isError() || s->type.isPool() || s->type.isList()))
+                s->type = declType(vd->varType, vd->initExpr, vd->loc);
             break;
         }
 
@@ -629,7 +670,7 @@ void SymbolCollector::walkStmt(ASTNode* node) {
         if (vd->initExpr) walkExpr(vd->initExpr);
         // Then define
         Symbol* s = table_.define(vd->name, SymbolKind::Variable,
-                                  typeFromName(vd->varType, vd->loc), vd->loc);
+                                  declType(vd->varType, vd->initExpr, vd->loc), vd->loc);
         if (!s) {
             Symbol* ex_ = table_.resolve(vd->name);
             std::string h_ = ex_ ? "'" + vd->name + "' first defined at " + ex_->definitionLoc.toString() + " — choose a different name" : "choose a different name";
@@ -738,6 +779,18 @@ void SymbolCollector::walkStmt(ASTNode* node) {
         break;
     }
 
+    // ADR-045: lock a, b; / unlock a; / wait(koşul);
+    case ASTKind::LockStatement: {
+        auto* ls = (LockStatementNode*)node;
+        for (ASTNode* t : ls->targets) walkExpr(t);
+        break;
+    }
+    case ASTKind::WaitStatement: {
+        auto* ws = (WaitStatementNode*)node;
+        if (ws->condition) walkExpr(ws->condition);
+        break;
+    }
+
     default:
         break;
     }
@@ -760,6 +813,7 @@ void SymbolCollector::walkExpr(ASTNode* node) {
         if (s) {
             id->resolvedSymbol = s;
             table_.addReference(s, id->loc);
+            if (!threadCtx_.empty()) noteThreadCapture(id, s);   // ADR-045
 
             // Modül sınır kontrolü: başka modülden gelen sembol import edilmeli.
             // Builtin'ler (moduleId=0) ve aynı modül muaf.
@@ -842,6 +896,26 @@ void SymbolCollector::walkExpr(ASTNode* node) {
     case ASTKind::CastExpression: {  // ADR-026
         auto* cast = (CastExpressionNode*)node;
         if (cast->operand) walkExpr(cast->operand);
+        break;
+    }
+
+    // ADR-045: thread { gövde } — gövde kendi kapsamında gezilir; dışarıdaki
+    // yerellere başvurular yakalama olarak kaydedilir (noteThreadCapture).
+    case ASTKind::ThreadExpr: {
+        auto* te = (ThreadExprNode*)node;
+        if (!te->body) break;
+        Scope* bodyScope = table_.enterScope();
+        threadCtx_.push_back({te, bodyScope});
+        walkStmt(te->body);
+        threadCtx_.pop_back();
+        table_.exitScope();
+        break;
+    }
+
+    // ADR-045: Pool(T) / List(T) — eleman tipi bilinmeli (E007).
+    case ASTKind::CollectionNew: {
+        auto* cn = (CollectionNewNode*)node;
+        typeFromName(cn->elemTypeName, cn->loc);
         break;
     }
 
