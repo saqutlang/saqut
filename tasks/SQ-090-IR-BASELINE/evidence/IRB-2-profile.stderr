@@ -1,7 +1,0 @@
-[profil] Asama olcumleri:
-  token                  119 token       0.039 ms
-  parser                  74 node        0.052 ms
-  ir-gen                  32 instr       0.033 ms
-  vm-warmup                                  0 ms
-  vm-exec                                0.085 ms
-  toplam                                 0.209 ms

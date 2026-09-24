@@ -1,3 +1,0 @@
-/home/saqut/Masaüstü/saqutcompiler/tests/golden/numeric/longint_narrowing.sqt:4:5: error [E003]: 'i': longint → int requires explicit cast (longint is isolated from the numeric rank tower)
-    hint: use explicit cast: `i as int`
-— 1 error(s), 0 warning(s)

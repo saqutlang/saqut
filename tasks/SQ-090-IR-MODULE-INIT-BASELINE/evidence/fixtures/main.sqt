@@ -1,6 +1,0 @@
-import {counter} from "mod_counter.sqt";
-
-int main() {
-    print(counter);
-    return 0;
-}

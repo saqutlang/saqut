@@ -1,5 +1,0 @@
-parser error: unexpected token ':' — expected a statement
-parser error: expected variable name
-/tmp/saqut-sq090-baseline-fixtures-sYNDsc/syntax_error.sqt:1:1: error [E007]: unknown type: 'func'
-    hint: known types: int, float, double, decimal, bool, string. if using a struct, define it first: `struct func { ... }`, or an enum: `enum func { ... }`
-— 1 error(s), 0 warning(s)

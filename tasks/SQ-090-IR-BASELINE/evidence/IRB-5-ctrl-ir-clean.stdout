@@ -1,9 +1,0 @@
-IR DUMP
-
-NAME=main PARAMS=0 SLOTS=2
-    0  LOAD_CONST      s0 = 42
-    1  CALLHOST        print(s0)
-    2  LOAD_CONST      s1 = 0
-    3  RETURN          return s1
-
-END

@@ -1,8 +1,0 @@
-#!/bin/bash
-# argv representation:
-  /tmp/saqut-sq090-amendment01-build-H5aiLe/saqut
-  ast
-  --output
-  /root/no-permission/out.json
-  /tmp/saqut-sq090-amendment01-fixtures-S66rsq/valid_main.sqt
-# ---
