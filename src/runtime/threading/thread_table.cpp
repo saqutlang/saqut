@@ -48,17 +48,36 @@ ThreadCore& ThreadTable::spawn(std::string location, std::function<void(ThreadCo
                   (location.empty() ? std::string() : " @ " + location);
         core    = c.get();
         threads_.push_back(std::move(c));
+        if (recordEvents_.load(std::memory_order_relaxed))
+            events_.push_back({core->id, true});
     }
     // live sayacı thread başlamadan artar: ebeveyn hemen ardından park etse
     // bile dedektör çocuğu canlı sayar.
     parkThreadStarted();
-    core->thread = std::jthread([core, body = std::move(body)]() {
+    core->thread = std::jthread([this, core, body = std::move(body)]() {
         t_threadCore = core;
         body(*core);
         core->state.store(ThreadState::Finished, std::memory_order_release);
+        if (recordEvents_.load(std::memory_order_relaxed)) {
+            std::lock_guard<std::mutex> lk(mu_);
+            events_.push_back({core->id, false});
+        }
         parkThreadFinished();
     });
     return *core;
+}
+
+void ThreadTable::setRecordLifecycleEvents(bool on) {
+    std::lock_guard<std::mutex> lk(mu_);
+    recordEvents_.store(on, std::memory_order_relaxed);
+    if (!on) events_.clear();
+}
+
+std::vector<ThreadTable::LifecycleEvent> ThreadTable::drainLifecycleEvents() {
+    std::lock_guard<std::mutex> lk(mu_);
+    std::vector<LifecycleEvent> out(events_.begin(), events_.end());
+    events_.clear();
+    return out;
 }
 
 ThreadCore* ThreadTable::find(int id) {

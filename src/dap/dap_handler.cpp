@@ -369,10 +369,10 @@ nlohmann::json DapHandler::handleInitialize(const nlohmann::json& req) {
         {"supportsTerminateRequest",         true},
         {"supportsExceptionInfoRequest",     false},
         {"supportsEvaluateForHovers",        true},
-        {"supportTerminateDebuggee",         true},
+        {"supportTerminateDebuggee",         true}
         // ADR-045 Faz 4: continue/step tüm thread'leri sürdürür (gdb
-        // scheduler-locking off); tek thread yürütme istekleri yok.
-        {"supportsSingleThreadExecutionRequests", false}
+        // scheduler-locking off). supportsSingleThreadExecutionRequests
+        // bildirilmez — DAP varsayılanı false (yanıt Faz 4 öncesiyle aynı).
     };
 
     // DAP kuralı: ÖNCE response, SONRA initialized event
@@ -449,6 +449,7 @@ nlohmann::json DapHandler::handleLaunch(const nlohmann::json& req) {
     if (usesThreads_) {
         g_activeDap = this;
         saqut::threading::setDeadlockHandler(&dapDeadlockHandler);
+        saqut::threading::ThreadTable::instance().setRecordLifecycleEvents(true);
     }
 
     // VM'i ilklendir ama çalıştırma — configurationDone'da başlatılacak
@@ -824,16 +825,11 @@ void DapHandler::drainWorkerOutput() {
 
 void DapHandler::syncThreadEvents() {
     if (!usesThreads_) return;
-    std::set<int> live;
-    for (auto* t : saqut::threading::ThreadTable::instance().snapshot())
-        if (t->id != 1 && !t->finished()) live.insert(t->id);
-    for (int id : live)
-        if (!knownThreads_.count(id))
-            sendEvent("thread", {{"reason", "started"}, {"threadId", id}});
-    for (int id : knownThreads_)
-        if (!live.count(id))
-            sendEvent("thread", {{"reason", "exited"}, {"threadId", id}});
-    knownThreads_ = std::move(live);
+    // S3: ThreadTable'ın yaşam döngüsü kuyruğundan — iki tur arasında
+    // başlayıp biten kısa ömürlü thread'ler de started+exited olarak görünür.
+    for (const auto& ev : saqut::threading::ThreadTable::instance().drainLifecycleEvents())
+        sendEvent("thread", {{"reason", ev.started ? "started" : "exited"},
+                             {"threadId", ev.id}});
 }
 
 void DapHandler::pauseWorkers(bool on) {
@@ -869,6 +865,8 @@ void DapHandler::shutdownThreads() {
     pauseWorkers(false);
     table.joinAll();
     drainWorkerOutput();
+    syncThreadEvents();   // son exited olayları
+    table.setRecordLifecycleEvents(false);
     usesThreads_ = false;
     if (g_activeDap == this) {
         g_activeDap = nullptr;

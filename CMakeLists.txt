@@ -411,6 +411,13 @@ foreach(SCEN_FILE ${ALL_DAP_SCENARIOS})
         set_tests_properties("dap_${SCEN_BASE}" PROPERTIES WILL_FAIL TRUE)
     endif()
 endforeach()
+# ADR-045: thread'li DAP senaryosu (zamanlamaya bağlı → iddia tabanlı).
+add_test(
+    NAME dap_threads_smoke
+    COMMAND "${PYTHON3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tests/dap/dap_threads_smoke.py"
+        "${SAQUT_BINARY}" "${CMAKE_SOURCE_DIR}"
+)
 
 else()
     message(WARNING "python3 bulunamadı — LSP golden testleri (tests/lsp/) atlanıyor")

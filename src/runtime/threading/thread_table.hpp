@@ -92,6 +92,15 @@ public:
     // işaretçiler süreç boyunca geçerlidir.
     std::vector<ThreadCore*> snapshot();
 
+    // Yaşam döngüsü olay kuyruğu (DAP `thread` olayları, S3). Açıkken her
+    // spawn bir started, her gövde bitişi bir exited kaydı ekler; DAP
+    // drain eder. Anlık görüntü farkından farklı olarak iki tur arasında
+    // başlayıp biten thread'ler de görünür. Varsayılan kapalı (CLI koşusunda
+    // kuyruk büyümesin).
+    struct LifecycleEvent { int id; bool started; };
+    void setRecordLifecycleEvents(bool on);
+    std::vector<LifecycleEvent> drainLifecycleEvents();
+
     ~ThreadTable();
 
 private:
@@ -99,6 +108,8 @@ private:
     std::mutex                               mu_;
     std::deque<std::unique_ptr<ThreadCore>>  threads_;
     int                                      nextId_ = 1;
+    std::atomic<bool>                        recordEvents_{false};
+    std::deque<LifecycleEvent>               events_;   // mu_ altında
 };
 
 }  // namespace saqut::threading

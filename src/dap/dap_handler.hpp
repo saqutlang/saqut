@@ -119,7 +119,6 @@ private:
     // scope ref'i kSharedScopeRef (child ref aralığı 100000+'dan önce).
     static constexpr int kSharedScopeRef = 99999;
     bool          usesThreads_ = false;
-    std::set<int> knownThreads_;           // thread olayları için (started/exited)
     // İşçi thread'lerin print çıktısı: protokol akışına yalnız DAP thread'i
     // yazar; işçiler kuyruğa koyar, DAP thread'i tur aralarında boşaltır.
     std::thread::id          dapThread_ = std::this_thread::get_id();
