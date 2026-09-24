@@ -21,6 +21,16 @@
 #include "ffi/host_functions.hpp"
 #include "ffi/host_registry.hpp"
 #include "gc/shadow_stack.hpp"
+#include "runtime/isolate.hpp"
+#include "runtime/output_lock.hpp"
+#include "runtime/threading/message.hpp"
+#include "runtime/threading/park.hpp"
+#include "runtime/threading/shared_slots.hpp"
+#include "runtime/threading/thread_runtime.hpp"
+#include "runtime/threading/thread_table.hpp"
+#include "cli/exit_codes.hpp"
+#include <cstdlib>
+#include <memory>
 #include <iostream>
 #include <stdexcept>
 #include <sstream>
@@ -35,6 +45,28 @@
 // sözleşmesidir; VM ve sabit katlama aynı fonksiyonları çağırmak zorundadır —
 // ayrı kopyalar sessizce ayrışır. Gerekçelerin tamamı o başlıktadır.
 using namespace saqut::intmath;
+
+// ADR-045 (1-d): heap/globalSlots Interpreter üyesidir (thread başına bir
+// Interpreter); bağlı isolate onlara işaretçi tutar ki runtime primitifleri
+// (Faz 2 mesaj deserialize, park öncesi GC) thread'in heap'ini bulabilsin.
+// Guard'sız araçlarda (birim testleri) isolate bağlı olmayabilir.
+Interpreter::Interpreter(const IRProgram& program) : program_(program) {
+    heap_.addRootSource(this);
+    if (Isolate* iso = t_isolate) {
+        prevIsolateHeap_    = iso->heap;
+        prevIsolateGlobals_ = iso->globalSlots;
+        iso->heap           = &heap_;
+        iso->globalSlots    = &globalSlots_;
+    }
+}
+
+Interpreter::~Interpreter() {
+    if (Isolate* iso = t_isolate; iso && iso->heap == &heap_) {
+        iso->heap        = prevIsolateHeap_;
+        iso->globalSlots = prevIsolateGlobals_;
+    }
+    heap_.removeRootSource(this);
+}
 
 // ── buildTrace ─────────────────────────────────────────────────────────────────
 // Mevcut callStack_'i en içten dışa gezerek stacktrace string'i üretir.
@@ -339,6 +371,7 @@ const SlotLiveness& Interpreter::livenessFor(const IRFunction* fn) {
 
 void Interpreter::collectRoots(RootSink& sink) {
     for (const Value& global : globalSlots_) sink.acceptValue(global);
+    for (const Value& arg : threadArgs_) sink.acceptValue(arg);   // ADR-045
 
     for (CallFrame& frame : callStack_) {
         const SlotLiveness& liveness = livenessFor(frame.function);
@@ -399,7 +432,7 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
     // src/profiling/ (--profile): "vm-exec" TAM OLARAK bu döngünün süresi —
     // VM'in gerçekten instruction çalıştırdığı kısım (kapanış: while'ın
     // kendi kapanış parantezinden hemen sonra).
-    { profiling::StageTimer::ScopedStage _profExec(stageProfiler_, "vm-exec");
+    { Profiling::StageTimer::ScopedStage _profExec(stageProfiler_, "vm-exec");
     while (!callStack_.empty()) {
         // Bütçe kontrolü: < 0 = sınırsız, == 0 = tükendi, > 0 = kalan hak
         // runUntilEvent(-1, ...) → sınırsız
@@ -687,22 +720,55 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
         }
 
         // ── Kontrol akışı ─────────────────────────────────────────────────
+        // ADR-045 (Faz 3-g): geri kenar yoklaması — yalnız thread kullanan
+        // programlarda (pollFlags_ bağlı); tek thread yolu tek dal kontrolü.
         case Opcode::JMP:
+            if (pollFlags_ && instr.jumpTarget < frame.instructionPointer) [[unlikely]]
+                pollBackEdge();
             frame.instructionPointer = instr.jumpTarget;
             break;
         case Opcode::JIF_FALSE:
-            if (!frame.slots[instr.cond].isTruthy())
+            if (!frame.slots[instr.cond].isTruthy()) {
+                if (pollFlags_ && instr.jumpTarget < frame.instructionPointer) [[unlikely]]
+                    pollBackEdge();
                 frame.instructionPointer = instr.jumpTarget;
+            }
             break;
         case Opcode::JIF_TRUE:
-            if (frame.slots[instr.cond].isTruthy())
+            if (frame.slots[instr.cond].isTruthy()) {
+                if (pollFlags_ && instr.jumpTarget < frame.instructionPointer) [[unlikely]]
+                    pollBackEdge();
                 frame.instructionPointer = instr.jumpTarget;
+            }
+            break;
+
+        // ── ADR-045 (Faz 3-e): izole thread modeli ───────────────────────
+        case Opcode::SHARED_LOAD:
+        case Opcode::SHARED_STORE:
+        case Opcode::SHARED_RMW:
+        case Opcode::LOCK:
+        case Opcode::UNLOCK:
+        case Opcode::POOL_PUSH:
+        case Opcode::POOL_POP:
+        case Opcode::POOL_LEN:
+        case Opcode::POOL_SETMAX:
+        case Opcode::LIST_APPEND:
+        case Opcode::LIST_GET:
+        case Opcode::LIST_LEN:
+        case Opcode::SHARED_EPOCH:
+        case Opcode::WAIT:
+        case Opcode::THREAD_SPAWN:
+        case Opcode::THREAD_ARG:
+        case Opcode::THREAD_STOP:
+        case Opcode::THREAD_JOIN:
+        case Opcode::THREAD_RUNNING:
+            executeThreadOp(instr);
             break;
 
         // ── Fonksiyon çağrısı ─────────────────────────────────────────────
         case Opcode::CALL: {
             if (vmTrace_) [[unlikely]] ++vmTrace_->vmSaqutCalls;
-            IRFunction* callee = program_.findFunction(instr.functionName);
+            const IRFunction* callee = program_.findFunction(instr.functionName);
             if (!callee)
                 throw std::runtime_error(
                     "'" + instr.functionName + "' function not found");
@@ -843,7 +909,7 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
         // çift yuvarlama JIT ile ayrışmaya yol açardı, F32ADD ile aynı kural).
         case Opcode::F32POW:
             frame.slots[instr.dest] = Value::fromFloat32((double)(
-                std::powf((float)frame.slots[instr.left].floatValue(),
+                ::powf((float)frame.slots[instr.left].floatValue(),
                           (float)frame.slots[instr.right].floatValue())));
             break;
         case Opcode::F32NEG:
@@ -1454,6 +1520,9 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
             if (!tryStack_.empty()) {
                 TryFrame tf = tryStack_.back();
                 tryStack_.pop_back();
+                // ADR-045 (3-h): bu try içinde alınmış kilitleri bırak.
+                if (threadingActive_)
+                    saqut::threading::releaseLocksAboveTag((int)tryStack_.size());
                 // catch bloğunun bulunduğu frame'e unwind
                 while (callStack_.size() > tf.callStackDepth)
                     callStack_.pop_back();
@@ -1494,9 +1563,21 @@ void Interpreter::initForDebug() {
     // Globalleri sıfırla — tek flat dizi (bkz. globalSlots_ yorum notu, #3)
     globalSlots_.assign(program_.globalCount, Value::fromInt(0));
 
-    IRFunction* mainFunction = program_.findFunction("main");
+    // ADR-045: thread programı — ana Interpreter program başını kurar (ana
+    // thread kaydı, SharedSlots); her Interpreter yoklama bayrağını bağlar.
+    threadingActive_ = program_.usesThreads;
+    if (threadingActive_) {
+        if (isMainInterpreter_) {
+            std::vector<std::pair<int, std::string>> slots;
+            for (const auto& d : program_.sharedSlots) slots.emplace_back(d.kind, d.name);
+            saqut::threading::programBegin(slots);
+        }
+        pollFlags_ = saqut::threading::currentPollFlags();
+    }
+
+    const IRFunction* mainFunction = program_.findFunction(entryFunction_);
     if (!mainFunction)
-        throw std::runtime_error("'main' function not found");
+        throw std::runtime_error("'" + entryFunction_ + "' function not found");
 
     CallFrame mainFrame;
     mainFrame.function           = mainFunction;
@@ -1520,12 +1601,251 @@ int Interpreter::run() {
     setValueStringHeap(&heap_);
 
     {
-        profiling::StageTimer::ScopedStage _prof(stageProfiler_, "vm-warmup");
+        Profiling::StageTimer::ScopedStage _prof(stageProfiler_, "vm-warmup");
         initForDebug();
     }
 
-    runUntilEvent(-1, -1);
+    if (!(threadingActive_ && isMainInterpreter_)) {
+        runUntilEvent(-1, -1);
+        return lastReturnValue_;
+    }
+
+    // ADR-045: ana thread'in main'i. main dönünce açık thread'ler beklenir
+    // (deadlock dedektörü aktif). main'de yakalanmayan hata tüm süreci
+    // durdurur: diğer thread'ler hâlâ koşuyor olabilir, statik yıkım onları
+    // beklerken asılı kalırdı → mesaj + _Exit (CLI run yolu ile aynı biçim).
+    try {
+        runUntilEvent(-1, -1);
+    } catch (const std::exception& e) {
+        std::cout.flush();
+        writeProgramOutput(std::cerr, std::string("runtime error: ") + e.what() + "\n");
+        std::_Exit(saqut::exit_code::kSoftwareError);
+    }
+    saqut::threading::programEnd();
     return lastReturnValue_;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADR-045 (Faz 3-e/3-g): izole thread opcode'ları ve geri kenar yoklaması
+// ─────────────────────────────────────────────────────────────────────────────
+
+void Interpreter::pollBackEdge() {
+    const uint32_t flags = pollFlags_->load(std::memory_order_acquire);
+    if (flags & saqut::threading::pollbits::kStop)
+        throw saqut::threading::ThreadStopRequested{};
+    if (flags & saqut::threading::pollbits::kDebugPause)
+        debugPausePoint();
+}
+
+// Faz 4 (DAP all-stop): duraklatma biti kalkana dek park et (deadlock'a
+// sayılmaz). Geri kenarlarda ve bloklayan bir çağrıdan dönüşte — kullanıcı
+// koduna geçmeden — çağrılır. Park'tayken DAP bu thread'in çerçevelerini
+// güvenle okur.
+void Interpreter::debugPausePoint() {
+    if (!pollFlags_) return;
+    std::atomic<uint32_t>* flags = pollFlags_;
+    if (!(flags->load(std::memory_order_acquire) & saqut::threading::pollbits::kDebugPause))
+        return;
+    const bool resumed = saqut::threading::park(
+        [flags] {
+            return (flags->load(std::memory_order_acquire) &
+                    saqut::threading::pollbits::kDebugPause) == 0;
+        },
+        saqut::threading::currentStopToken(), "debug pause", /*countsForDeadlock=*/false);
+    if (!resumed) throw saqut::threading::ThreadStopRequested{};
+}
+
+namespace {
+
+// Yeni thread'in gövdesi: kendi Isolate'i + kendi Interpreter'ı (IRProgram
+// salt okunur paylaşılır). Başlangıç mesajı bu thread'in heap'ine açılır.
+void runVmThread(const IRProgram* program, const std::string& entry,
+                 const std::shared_ptr<saqut::threading::MessageBuffer>& startMsg,
+                 const std::vector<std::string>& programArgs, int gcThreshold,
+                 const Interpreter::OutputSink& sink, saqut::threading::ThreadCore& self) {
+    Isolate      iso;
+    IsolateGuard guard(iso);
+    self.isolate = &iso;
+    try {
+        Interpreter vm(*program);
+        if (gcThreshold != 0) vm.setGCThreshold(gcThreshold);
+        vm.setProgramArgs(programArgs);
+        if (sink) vm.setOutputSink(sink);
+        vm.setThreadEntry(entry, saqut::threading::deserializeValues(*startMsg, vm.heap()));
+        self.debugTarget = &vm;   // Faz 4: DAP bu thread'i park'ta okuyabilir
+        struct DebugTargetReset {
+            saqut::threading::ThreadCore& t;
+            ~DebugTargetReset() { t.debugTarget = nullptr; }
+        } debugTargetReset{self};
+        vm.run();
+    } catch (const saqut::threading::ThreadStopRequested&) {
+        // t.stop(): temiz çıkış (kilitler aşağıda bırakılır).
+    } catch (const std::exception& e) {
+        saqut::threading::releaseAllLocks();
+        saqut::threading::fatalThreadError(e.what(), "");
+    }
+    saqut::threading::releaseAllLocks();
+    self.isolate = nullptr;
+}
+
+std::string threadLocation(const IRProgram& program, const CallFrame& frame, const Instruction& instr) {
+    const std::string& file = instr.sourceFile.empty()
+        ? program.moduleRegistry.filePath(frame.function->moduleId)
+        : instr.sourceFile;
+    std::string base = file;
+    if (auto slash = base.find_last_of('/'); slash != std::string::npos) base = base.substr(slash + 1);
+    return base + ":" + std::to_string(instr.sourceLine);
+}
+
+}  // namespace
+
+void Interpreter::executeThreadOp(const Instruction& instr) {
+    // Çerçeve burada yeniden alınır: dispatch döngüsündeki `frame`
+    // referansının adresi dışarı kaçarsa derleyici onu her komutta
+    // bellekten yeniden yükler (S1 ölçümü: ~%1.7 fazla komut).
+    CallFrame& frame = callStack_.back();
+    using namespace saqut::threading;
+    auto& shared = SharedSlots::instance();
+    const int idx = instr.intValue;
+
+    switch (instr.opcode) {
+    case Opcode::SHARED_LOAD: {
+        const SharedSlot& s = shared.at(idx);
+        if (s.kind == SharedKind::Float)
+            frame.slots[instr.dest] = Value::fromFloat32(shared.loadFloat(idx));
+        else if (s.kind == SharedKind::Bool)
+            frame.slots[instr.dest] = Value::fromInt(shared.loadBool(idx) ? 1 : 0);
+        else
+            frame.slots[instr.dest] = Value::fromInt((int)shared.loadInt(idx));
+        break;
+    }
+    case Opcode::SHARED_STORE: {
+        const Value& v = frame.slots[instr.src];
+        const SharedSlot& s = shared.at(idx);
+        if (s.kind == SharedKind::Float)      shared.storeFloat(idx, v.asDouble());
+        else if (s.kind == SharedKind::Bool)  shared.storeBool(idx, v.isTruthy());
+        else                                  shared.storeInt(idx, v.asI64());
+        break;
+    }
+    case Opcode::SHARED_RMW: {
+        const Value& d = frame.slots[instr.src];
+        const bool   sub = instr.int64Value != 0;
+        if (shared.at(idx).kind == SharedKind::Float) {
+            const double r = shared.addFloat32(idx, sub ? -d.asDouble() : d.asDouble());
+            frame.slots[instr.dest] = Value::fromFloat32(r);
+        } else {
+            const int64_t r = shared.addInt(idx, sub ? -d.asI64() : d.asI64());
+            frame.slots[instr.dest] = Value::fromInt((int)r);
+        }
+        break;
+    }
+    case Opcode::LOCK:
+        lockShared(idx, (int)tryStack_.size());
+        break;
+    case Opcode::UNLOCK:
+        unlockShared(idx);
+        break;
+    case Opcode::POOL_PUSH:
+        if (!shared.pool(idx).push(makeMessage(frame.slots[instr.src]), currentStopToken()))
+            throw ThreadStopRequested{};
+        break;
+    case Opcode::POOL_POP: {
+        MessageBuffer m;
+        if (!shared.pool(idx).pop(m, currentStopToken()))
+            throw ThreadStopRequested{};
+        // Park sırasında GC çalışmış olabilir; frame referansı geçerli
+        // (callStack_ değişmedi), yeni değer bu heap'e açılır.
+        frame.slots[instr.dest] = deserialize(m, heap_);
+        break;
+    }
+    case Opcode::POOL_LEN:
+        frame.slots[instr.dest] = Value::fromInt((int)shared.pool(idx).length());
+        break;
+    case Opcode::POOL_SETMAX:
+        shared.pool(idx).setMax(frame.slots[instr.src].asI64());
+        break;
+    case Opcode::LIST_APPEND:
+        if (!shared.list(idx).append(makeMessage(frame.slots[instr.src])))
+            pendingThrow_ = makeErrorValue("List '" + shared.at(idx).name + "' is full",
+                                           "E_LIST_FULL", instr.sourceLine, instr.sourceCol);
+        break;
+    case Opcode::LIST_GET: {
+        const int64_t i = frame.slots[instr.left].asI64();
+        const MessageBuffer* m = shared.list(idx).get(i);
+        if (!m) {
+            pendingThrow_ = makeErrorValue(
+                "List index " + std::to_string(i) + " out of range (length " +
+                    std::to_string(shared.list(idx).length()) + ")",
+                "E_LIST_INDEX", instr.sourceLine, instr.sourceCol);
+            break;
+        }
+        frame.slots[instr.dest] = deserialize(*m, heap_);
+        break;
+    }
+    case Opcode::LIST_LEN:
+        frame.slots[instr.dest] = Value::fromInt((int)shared.list(idx).length());
+        break;
+    case Opcode::SHARED_EPOCH:
+        frame.slots[instr.dest] = Value::fromLongInt((long long)sharedEpoch());
+        break;
+    case Opcode::WAIT:
+        if (!parkUntilEpochChanges((uint64_t)frame.slots[instr.src].asI64(), currentStopToken(), "wait"))
+            throw ThreadStopRequested{};
+        break;
+    case Opcode::THREAD_SPAWN: {
+        std::vector<Value> args;
+        args.reserve(instr.argSlots.size());
+        for (int s : instr.argSlots) args.push_back(frame.slots[s]);
+        auto msg = std::make_shared<MessageBuffer>();
+        serializeValues(args, *msg);
+        const IRProgram*   prog  = &program_;
+        const std::string  entry = instr.functionName;
+        const auto         pargs = programArgs_;
+        const int          gct   = gcThreshold_;
+        const OutputSink   sink  = outputSink_;
+        ThreadCore& core = ThreadTable::instance().spawn(
+            threadLocation(program_, frame, instr),
+            [prog, entry, msg, pargs, gct, sink](ThreadCore& self) {
+                runVmThread(prog, entry, msg, pargs, gct, sink, self);
+            });
+        frame.slots[instr.dest] = Value::fromInt(core.id);
+        break;
+    }
+    case Opcode::THREAD_ARG: {
+        const size_t i = (size_t)instr.intValue;
+        frame.slots[instr.dest] = i < threadArgs_.size() ? threadArgs_[i] : Value::fromInt(0);
+        break;
+    }
+    case Opcode::THREAD_STOP:
+        ThreadTable::instance().requestStop(frame.slots[instr.src].intValue());
+        break;
+    case Opcode::THREAD_JOIN: {
+        ThreadCore* target = ThreadTable::instance().find(frame.slots[instr.src].intValue());
+        if (target && !park([target] { return target->finished(); }, currentStopToken(),
+                            "join " + target->name))
+            throw ThreadStopRequested{};
+        break;
+    }
+    case Opcode::THREAD_RUNNING: {
+        ThreadCore* target = ThreadTable::instance().find(frame.slots[instr.src].intValue());
+        frame.slots[instr.dest] = Value::fromInt(target && !target->finished() ? 1 : 0);
+        break;
+    }
+    default:
+        break;
+    }
+    // Faz 4 (DAP all-stop): bloklayan bir çağrıdan uyanan thread, kullanıcı
+    // koduna geçmeden duraklatma bitini denetler.
+    if (pollFlags_) {
+        switch (instr.opcode) {
+            case Opcode::POOL_PUSH: case Opcode::POOL_POP:
+            case Opcode::WAIT: case Opcode::THREAD_JOIN:
+                debugPausePoint();
+                break;
+            default:
+                break;
+        }
+    }
 }
 
 // #229: legacy executeHostFunction("print") yolu silindi — print artık

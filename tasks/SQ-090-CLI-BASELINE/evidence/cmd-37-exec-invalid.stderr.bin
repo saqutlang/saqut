@@ -1,3 +1,0 @@
-<exec>:2:5: error [E007]: unknown type: 'let'
-    hint: known types: int, float, double, decimal, bool, string. if using a struct, define it first: `struct let { ... }`, or an enum: `enum let { ... }`
-— 1 error(s), 0 warning(s)

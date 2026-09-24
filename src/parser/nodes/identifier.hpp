@@ -26,6 +26,11 @@ public:
     // TODO(faz-2): isim çözümlemede sembol tablosundaki tanıma bağlanır.
     Symbol* resolvedSymbol = nullptr;
 
+    // ADR-045: bu ad bir `thread { }` gövdesinin içinde, çevreleyen fonksiyonun
+    // bir yerelini (yakalanan kopya) gösteriyor. SymbolCollector işaretler;
+    // TypeChecker bu ada atamayı reddeder (E016 "yakalanan değişken bir kopyadır").
+    bool capturedInThread = false;
+
     IdentifierNode();
     void log(int indent = 0) override;
     std::string toJson(int depth = 0) override;

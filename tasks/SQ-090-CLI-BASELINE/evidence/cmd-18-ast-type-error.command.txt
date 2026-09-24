@@ -1,1 +1,0 @@
-/tmp/saqut-sq090-baseline-4WbBYH/saqut ast /tmp/saqut-sq090-baseline-fixtures-sYNDsc/type_error.sqt

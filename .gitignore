@@ -18,6 +18,8 @@ __pycache__/
 
 # CMake versiyona özgü dosyalar (otomatik üretilir, her güncellemede değişir)
 build/*
+# Ek build dizinleri (build-dbg/, build-tsan/ ...)
+build-*/
 
 # Benchmark — üretilmiş dosyalar (gen_compile_suite.py tarafından üretilir)
 scripts/bench/compile_suite/

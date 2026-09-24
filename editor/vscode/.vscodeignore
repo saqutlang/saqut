@@ -3,3 +3,5 @@ node_modules/**
 extension.ts
 tsconfig.json
 *.map
+test/**
+*.vsix

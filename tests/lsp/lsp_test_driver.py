@@ -86,10 +86,11 @@ def run_scenario(binary: str, fixdir: str, scenario_path: str, timeout: float):
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     try:
-        for m in messages:
-            proc.stdin.write(frame(m))
-        proc.stdin.close()
-        out, err = proc.communicate(timeout=timeout)
+        # Tüm çerçeveler communicate'e girdi olarak verilir (stdin'i elle
+        # kapatıp communicate çağırmak Python 3.11'de "flush of closed file"
+        # hatası veriyor).
+        data = b"".join(frame(m) for m in messages)
+        out, err = proc.communicate(input=data, timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
         out, err = proc.communicate()

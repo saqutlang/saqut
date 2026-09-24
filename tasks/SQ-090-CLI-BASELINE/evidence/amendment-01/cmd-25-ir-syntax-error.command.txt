@@ -1,6 +1,0 @@
-#!/bin/bash
-# argv representation:
-  /tmp/saqut-sq090-amendment01-build-H5aiLe/saqut
-  ir
-  /tmp/saqut-sq090-amendment01-fixtures-S66rsq/syntax_error.sqt
-# ---

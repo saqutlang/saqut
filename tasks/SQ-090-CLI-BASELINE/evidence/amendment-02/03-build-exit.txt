@@ -1,4 +1,0 @@
-Build log for amendment-02 fresh build
-Build dir: /tmp/saqut-sq090-amendment02-build-wbStc9
-Exit code: 0
-Full output: 03-build-stdout.txt

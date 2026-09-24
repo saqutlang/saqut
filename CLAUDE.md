@@ -22,6 +22,18 @@ Commit mesajlarına `Co-Authored-By`, `Claude-Session`, `Generated with ...`
 gibi araç/model imzası **eklenmez**. Commit mesajı yalnızca yapılan işi ve
 gerekçesini anlatır. Bu kural PR açıklamaları için de geçerlidir.
 
+## Dosya düzenleme kuralı
+
+Mevcut dosyalar yalnız düzenleme aracıyla (Edit), yeni dosyalar yalnız yazma
+aracıyla (Write) değiştirilir; ürün sahibi her değişikliği diff olarak
+görebilmelidir. Dosya yazmak/düzenlemek için `python3 - <<'EOF'` heredoc'u,
+`cat > dosya <<EOF` ya da `sed -i`/`awk` ile toplu değiştirme **kullanılmaz**.
+
+Edit başarısız olursa (eşleşme yok, metin birden fazla yerde geçiyor vb.)
+betiğe geçilmez: eşleşme daha fazla çevre bağlamla benzersiz yapılır ya da
+değişiklik küçük parçalara bölünür. Yine çözülmüyorsa DUR ve hangi dosyada,
+neden başarısız olduğunu raporla.
+
 ## Değişmez ürün bağlamı
 
 - `0.8.0` yayınlanmış baseline'dır.

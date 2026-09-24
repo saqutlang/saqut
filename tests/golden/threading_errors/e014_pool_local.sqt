@@ -1,0 +1,5 @@
+// E014: Pool yalnız shared global başlatıcısında
+int main() {
+    Pool p = Pool(int);
+    return 0;
+}

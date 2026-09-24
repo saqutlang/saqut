@@ -221,6 +221,16 @@ enum class TokenType : uint16_t {
     KW_CONSTEXPR,    // constexpr (derleme zamanı sabiti — C++11)
     KW_NOEXCEPT,     // noexcept (istisna fırlatmayan bildirimi — C++11)
 
+    /* ====== İzole thread modeli (ADR-045 Faz 3) ====== */
+    KW_SHARED,       // shared (global niteleyici: thread'ler arası görünür)
+    KW_LOCK,         // lock a; / lock a, b;  (kapsam sonunda otomatik unlock)
+    KW_UNLOCK,       // unlock a;
+    KW_WAIT,         // wait(koşul);
+    KW_THREAD,       // thread { gövde }  (ifade; tipi Thread)
+    KW_POOL,         // Pool (tip) / Pool(T) (intrinsic, tip argümanlı)
+    KW_LIST,         // List (tip) / List(T) (intrinsic, tip argümanlı)
+    KW_THREAD_TYPE,  // Thread (tip — ThreadTable id'si)
+
     /* ================================================================
      * Operatörler — Öncelik sırasına göre gruplanmış
      *
@@ -496,6 +506,16 @@ inline const std::unordered_map<std::string_view, TokenType> KEYWORD_MAP = {
     {"synchronized",TokenType::KW_SYNCHRONIZED},
     {"volatile",    TokenType::KW_VOLATILE},
     {"transient",   TokenType::KW_TRANSIENT},
+
+    // --- İzole thread modeli (ADR-045 Faz 3) ---
+    {"shared",      TokenType::KW_SHARED},
+    {"lock",        TokenType::KW_LOCK},
+    {"unlock",      TokenType::KW_UNLOCK},
+    {"wait",        TokenType::KW_WAIT},
+    {"thread",      TokenType::KW_THREAD},
+    {"Pool",        TokenType::KW_POOL},
+    {"List",        TokenType::KW_LIST},
+    {"Thread",      TokenType::KW_THREAD_TYPE},
 };
 
 // ============================================================================

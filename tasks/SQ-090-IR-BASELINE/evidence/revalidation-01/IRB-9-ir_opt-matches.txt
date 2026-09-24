@@ -1,2 +1,0 @@
-  Test #125: golden_opt_dce_ir_opt
-  Test #126: golden_opt_folding_ir_opt

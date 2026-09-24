@@ -63,11 +63,20 @@ IRProgram IRGenerator::generateModuleGraph(ModuleGraph& graph, SymbolTable& symb
     std::vector<VariableDeclNode*> allGlobalVars;
     nameToGlobal_.clear();
     globalSlotTypes_.clear();
+    program_ = &program;   // ADR-045: lifting sentetik fonksiyon ekler
+    nameToShared_.clear();
+    sharedSlotTypes_.clear();
     for (auto& unit : graph.units) {
         program.moduleRegistry.intern(unit.filePath);
         int moduleGlobalCount = 0;
         for (ASTNode* child : unit.ast->getChildren()) {
-            if (child->kind == ASTKind::VariableDecl) {
+            if (child->kind == ASTKind::VariableDecl &&
+                static_cast<VariableDeclNode*>(child)->isShared) {
+                // ADR-045: shared global — global slot DEĞİL, SharedSlots girdisi.
+                // Başlatıcısı yine main prelude'unda (SHARED_STORE) çalışır.
+                registerSharedGlobal(program, static_cast<VariableDeclNode*>(child));
+                allGlobalVars.push_back(static_cast<VariableDeclNode*>(child));
+            } else if (child->kind == ASTKind::VariableDecl) {
                 auto* vd = static_cast<VariableDeclNode*>(child);
                 nameToGlobal_[vd->name] = globalCount_++;
                 globalSlotTypes_[nameToGlobal_[vd->name]] = slotTypeFromTypeName(vd->varType);
@@ -107,18 +116,7 @@ IRProgram IRGenerator::generateModuleGraph(ModuleGraph& graph, SymbolTable& symb
                 // main'i barındıran modülden bağımsız — TÜM modüllerin
                 // global başlangıç ifadeleri burada, ön-geçişteki (graph.units)
                 // sırayla çalıştırılır.
-                for (VariableDeclNode* gv : allGlobalVars) {
-                    if (gv->initExpr) {
-                        int initSlot = generateExpression(gv->initExpr);
-                        emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
-                    } else {
-                        // Init'siz global: yerel bildirimle aynı sözleşme
-                        // (null / "" / örnek / boş dizi / tipli sıfır).
-                        int initSlot = freshSlot();
-                        emitDefaultValue(initSlot, gv->varType, gv->loc);
-                        emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
-                    }
-                }
+                emitGlobalInitializers(allGlobalVars);
                 for (size_t pi = preludeStart; pi < currentFunction_->instructions.size(); ++pi)
                     currentFunction_->instructions[pi].debugHidden = true;
             }
@@ -128,6 +126,7 @@ IRProgram IRGenerator::generateModuleGraph(ModuleGraph& graph, SymbolTable& symb
             finalizeSlotTypes(currentFunction_, fnDecl);
         }
     }
+    emitThreadGlobalInitFunction(program, allGlobalVars);
     return program;
 }
 
@@ -148,8 +147,14 @@ IRProgram IRGenerator::generate(ASTNode* programNode, SymbolTable& symbolTable,
     // "Global" değil — bu dosyanın (modülün) kendi değişkenleri.
     std::vector<VariableDeclNode*> globalVars;
     globalSlotTypes_.clear();
+    program_ = &program;   // ADR-045
+    nameToShared_.clear();
+    sharedSlotTypes_.clear();
     for (ASTNode* child : programNode->getChildren()) {
-        if (child->kind == ASTKind::VariableDecl) {
+        if (child->kind == ASTKind::VariableDecl && ((VariableDeclNode*) child)->isShared) {
+            registerSharedGlobal(program, (VariableDeclNode*) child);   // ADR-045
+            globalVars.push_back((VariableDeclNode*) child);
+        } else if (child->kind == ASTKind::VariableDecl) {
             auto* vd = (VariableDeclNode*) child;
             nameToGlobal_[vd->name] = globalCount_++;
             globalSlotTypes_[nameToGlobal_[vd->name]] = slotTypeFromTypeName(vd->varType);
@@ -187,18 +192,7 @@ IRProgram IRGenerator::generate(ASTNode* programNode, SymbolTable& symbolTable,
             // main'in başında global değişkenlerin init ifadelerini üret
             if (fnDecl->name == "main") {
                 const size_t preludeStart = currentFunction_->instructions.size();
-                for (VariableDeclNode* gv : globalVars) {
-                    if (gv->initExpr) {
-                        int initSlot = generateExpression(gv->initExpr);
-                        emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
-                    } else {
-                        // Init'siz global: yerel bildirimle aynı sözleşme
-                        // (null / "" / örnek / boş dizi / tipli sıfır).
-                        int initSlot = freshSlot();
-                        emitDefaultValue(initSlot, gv->varType, gv->loc);
-                        emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
-                    }
-                }
+                emitGlobalInitializers(globalVars);
                 for (size_t pi = preludeStart; pi < currentFunction_->instructions.size(); ++pi)
                     currentFunction_->instructions[pi].debugHidden = true;
             }
@@ -208,8 +202,69 @@ IRProgram IRGenerator::generate(ASTNode* programNode, SymbolTable& symbolTable,
             finalizeSlotTypes(currentFunction_, fnDecl);
         }
     }
+    emitThreadGlobalInitFunction(program, globalVars);
 
     return program;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADR-045 global başlatma (1-g, PLAN B — docs/threading-decisions.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void IRGenerator::emitGlobalInitializers(const std::vector<VariableDeclNode*>& vars) {
+    for (VariableDeclNode* gv : vars) {
+        // ADR-045: shared global — Pool/List'i runtime kurar (SharedSlots
+        // configure); primitifin başlatıcısı SHARED_STORE ile yazılır, yoksa
+        // atomik slot zaten 0/0.0/false'tur.
+        if (gv->isShared) {
+            auto it = nameToShared_.find(gv->name);
+            if (it == nameToShared_.end() || !gv->initExpr ||
+                gv->initExpr->kind == ASTKind::CollectionNew)
+                continue;
+            int initSlot = generateExpression(gv->initExpr);
+            if (sharedSlotTypes_[it->second] == SlotType::Float32) {   // saQut float = 32-bit
+                if (auto* e = dynamic_cast<ExpressionNode*>(gv->initExpr); e && e->resolvedType.isInt()) {
+                    int f = freshSlot();
+                    emitIntToFloat32(f, initSlot);
+                    initSlot = f;
+                }
+            }
+            emitThreadOp(Opcode::SHARED_STORE, -1, initSlot, it->second);
+            continue;
+        }
+        if (gv->initExpr) {
+            int initSlot = generateExpression(gv->initExpr);
+            emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
+        } else {
+            // Init'siz global: yerel bildirimle aynı sözleşme
+            // (null / "" / örnek / boş dizi / tipli sıfır).
+            int initSlot = freshSlot();
+            emitDefaultValue(initSlot, gv->varType, gv->loc);
+            emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
+        }
+    }
+}
+
+void IRGenerator::emitThreadGlobalInitFunction(IRProgram& program,
+                                               const std::vector<VariableDeclNode*>& vars) {
+    if (!needsThreadGlobalInit_) return;
+    nameToSlot_.clear();
+    shadowStack_.clear();
+    nextSlot_ = 0;
+    IRFunction irFn(kThreadGlobalInitName, 0);
+    irFn.moduleId = currentModuleId_;
+    program.addFunction(std::move(irFn));
+    currentFunction_ = program.findFunction(kThreadGlobalInitName);
+    std::vector<VariableDeclNode*> perThread;
+    for (VariableDeclNode* gv : vars)
+        if (!gv->isShared) perThread.push_back(gv);
+    emitGlobalInitializers(perThread);
+    int zeroSlot = freshSlot();
+    emitLoadConst(zeroSlot, 0);
+    emitReturn(zeroSlot);
+    for (auto& ins : currentFunction_->instructions) ins.debugHidden = true;
+    currentFunction_->slotCount = nextSlot_;
+    finalizeSlotTypes(currentFunction_, nullptr);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -291,9 +346,12 @@ void IRGenerator::generateStatementImpl(ASTNode* node) {
     // ── Blok: içindeki her deyimi sırayla üret ───────────────────────────
     case ASTKind::Block: {
         pushScope();
+        lockScopes_.emplace_back();   // ADR-045: blok bir kilit kapsamıdır
         for (ASTNode* child : node->getChildren()) {
             generateStatement(child);
         }
+        emitUnlocksFrom(lockScopes_.size() - 1);   // blok sonunda otomatik unlock
+        lockScopes_.pop_back();
         popScope();
         break;
     }
@@ -386,6 +444,7 @@ void IRGenerator::generateStatementImpl(ASTNode* node) {
         if (rs->value) {
             returnSlot = generateExpression(rs->value);
         }
+        emitUnlocksFrom(0);   // ADR-045: fonksiyondan çıkış tutulan kilitleri bırakır
         emitReturn(returnSlot, rs->loc.line, rs->loc.column);
         break;
     }
@@ -425,6 +484,7 @@ void IRGenerator::generateStatementImpl(ASTNode* node) {
 
         int loopStart = currentInstrIndex();
         loopContextStack_.push_back({});
+        loopContextStack_.back().lockDepth = lockScopes_.size();   // ADR-045
 
         int condSlot = generateExpression(ws->condition);
         int exitJump = emitJumpIfFalse(condSlot);
@@ -468,6 +528,7 @@ void IRGenerator::generateStatementImpl(ASTNode* node) {
 
         int loopStart = currentInstrIndex();
         loopContextStack_.push_back({});
+        loopContextStack_.back().lockDepth = lockScopes_.size();   // ADR-045
 
         int condSlot = fs->condition ? generateExpression(fs->condition) : -1;
         int exitJump = (condSlot != -1) ? emitJumpIfFalse(condSlot) : -1;
@@ -503,6 +564,7 @@ void IRGenerator::generateStatementImpl(ASTNode* node) {
 
         int loopStart = currentInstrIndex();
         loopContextStack_.push_back({});
+        loopContextStack_.back().lockDepth = lockScopes_.size();   // ADR-045
 
         if (dw->body)
             generateStatement(dw->body);
@@ -540,22 +602,35 @@ void IRGenerator::generateStatementImpl(ASTNode* node) {
     }
 
     case ASTKind::BreakStatement: {
+        // ADR-045: döngüden çıkarken döngü içinde alınan kilitleri bırak
+        if (!loopContextStack_.empty())
+            emitUnlocksFrom(loopContextStack_.back().lockDepth);
         int jumpIdx = emitJumpUnconditional(-1);
         if (!loopContextStack_.empty())
             loopContextStack_.back().breakJumps.push_back(jumpIdx);
         break;
     }
     case ASTKind::ContinueStatement: {
-        int jumpIdx = emitJumpUnconditional(-1);
         // Switch bağlamını atla — continue en yakın DÖNGÜYE ait (ADR-027)
+        int target = -1;
         for (int i = (int) loopContextStack_.size() - 1; i >= 0; --i) {
-            if (!loopContextStack_[i].isSwitch) {
-                loopContextStack_[i].continueJumps.push_back(jumpIdx);
-                break;
-            }
+            if (!loopContextStack_[i].isSwitch) { target = i; break; }
         }
+        if (target >= 0)
+            emitUnlocksFrom(loopContextStack_[target].lockDepth);   // ADR-045
+        int jumpIdx = emitJumpUnconditional(-1);
+        if (target >= 0)
+            loopContextStack_[target].continueJumps.push_back(jumpIdx);
         break;
     }
+
+    // ADR-045: lock / unlock / wait
+    case ASTKind::LockStatement:
+        generateLockStatement((LockStatementNode*) node);
+        break;
+    case ASTKind::WaitStatement:
+        generateWaitStatement((WaitStatementNode*) node);
+        break;
 
     // ── switch (expr) { case v1, v2: body; default: body; }  (ADR-027) ──
     //
@@ -575,6 +650,7 @@ void IRGenerator::generateStatementImpl(ASTNode* node) {
 
         // Switch bağlamı: break → out'a atlar; continue switch'e ait değil
         loopContextStack_.push_back({true, {}, {}});
+        loopContextStack_.back().lockDepth = lockScopes_.size();   // ADR-045
 
         std::vector<int> outJumps; // her case body sonundaki JMP → out (backpatch)
 
@@ -858,6 +934,12 @@ int IRGenerator::generateExpression(ASTNode* node) {
         auto* id = (IdentifierNode*) node;
         std::string name = id->parserToken.token ? id->parserToken.token->token : "";
 
+        if (isShared(name)) {             // ADR-045: atomik okuma
+            const int idx  = nameToShared_.at(name);
+            int tempSlot   = freshSlot();
+            emitThreadOp(Opcode::SHARED_LOAD, tempSlot, -1, idx).valueType = sharedSlotTypes_[idx];
+            return tempSlot;
+        }
         if (isGlobal(name)) {
             int tempSlot = freshSlot();
             emitLoadGlobal(tempSlot, getGlobalIndex(name));
@@ -905,6 +987,18 @@ int IRGenerator::generateExpression(ASTNode* node) {
             auto* lhsId = (IdentifierNode*) bin->Left;
             std::string varName = lhsId->parserToken.token->token;
 
+            if (isShared(varName)) {      // ADR-045: atomik yazma
+                const int idx = nameToShared_.at(varName);
+                if (sharedSlotTypes_[idx] == SlotType::Float32) {   // saQut float = 32-bit
+                    if (auto* e = dynamic_cast<ExpressionNode*>(bin->Right); e && e->resolvedType.isInt()) {
+                        int f = freshSlot();
+                        emitIntToFloat32(f, rhsSlot);
+                        rhsSlot = f;
+                    }
+                }
+                emitThreadOp(Opcode::SHARED_STORE, -1, rhsSlot, idx);
+                return rhsSlot;
+            }
             if (isGlobal(varName)) {
                 emitStoreGlobal(rhsSlot, getGlobalIndex(varName));
                 return rhsSlot;
@@ -929,6 +1023,26 @@ int IRGenerator::generateExpression(ASTNode* node) {
             // IndexExpressionNode'dur; parserToken.token çöp gösterir ve
             // derleyici SEGFAULT eder. L-value çözümlemesi dört biçimi de
             // tanır ve geri-yazmayı doğru talimatla yapar.
+            // ADR-045: shared += / -= → tek atomik RMW (yeni değer döner).
+            if ((bin->Operator == TokenType::PLUS_EQUAL || bin->Operator == TokenType::MINUS_EQUAL)) {
+                if (auto* sid = dynamic_cast<IdentifierNode*>(bin->Left);
+                    sid && sid->parserToken.token && isShared(sid->parserToken.token->token)) {
+                    const int idx = nameToShared_.at(sid->parserToken.token->token);
+                    int deltaSlot = generateExpression(bin->Right);
+                    if (sharedSlotTypes_[idx] == SlotType::Float32) {
+                        if (auto* e = dynamic_cast<ExpressionNode*>(bin->Right); e && e->resolvedType.isInt()) {
+                            int f = freshSlot();
+                            emitIntToFloat32(f, deltaSlot);
+                            deltaSlot = f;
+                        }
+                    }
+                    int nv = freshSlot();
+                    Instruction& rmw = emitThreadOp(Opcode::SHARED_RMW, nv, deltaSlot, idx);
+                    rmw.valueType  = sharedSlotTypes_[idx];
+                    rmw.int64Value = bin->Operator == TokenType::MINUS_EQUAL ? 1 : 0;
+                    return nv;
+                }
+            }
             LValue lv = resolveLValue(bin->Left);
             int rhsSlot = generateExpression(bin->Right);
 
@@ -1225,6 +1339,8 @@ int IRGenerator::generateExpression(ASTNode* node) {
     // ── ScopeCall: E::method(args) — built-in metod ─────────────────────
     case ASTKind::ScopeCall: {
         auto* sc = (ScopeCallNode*) node;
+        if (sc->threadOp != TI_None)          // ADR-045: Pool/List/Thread metotları
+            return generateThreadIntrinsic(sc);
 
         // Her argümanı hesapla
         std::vector<int> argSlots;
@@ -1258,6 +1374,25 @@ int IRGenerator::generateExpression(ASTNode* node) {
     // global sonradan yamanmış, alan ve eleman ise sessizce kayboluyordu.
     case ASTKind::Postfix: {
         auto* pf = (PostfixNode*) node;
+        // ADR-045: shared ++/-- atomik RMW (yeni değer döner; sonek eski değeri
+        // yeniden hesaplar: eski = yeni ∓ 1).
+        if (auto* pid = dynamic_cast<IdentifierNode*>(pf->operand);
+            pid && pid->parserToken.token && isShared(pid->parserToken.token->token)) {
+            const int  idx   = nameToShared_.at(pid->parserToken.token->token);
+            const bool isInc = pf->Operator == TokenType::PLUS_PLUS;
+            const bool isF   = sharedSlotTypes_[idx] == SlotType::Float32;   // saQut float
+            int one = emitOneConstant(pf->resolvedType, pf->loc);
+            int nv  = freshSlot();
+            Instruction& rmw = emitThreadOp(Opcode::SHARED_RMW, nv, one, idx);
+            rmw.valueType  = sharedSlotTypes_[idx];
+            rmw.int64Value = isInc ? 0 : 1;
+            if (pf->isPrefix) return nv;
+            int old = freshSlot();
+            emitBinaryOp(isF ? (isInc ? Opcode::F32SUB : Opcode::F32ADD)
+                             : (isInc ? Opcode::SUB : Opcode::ADD),
+                         old, nv, one);
+            return old;
+        }
         return generateIncDec(pf->operand, pf->Operator == TokenType::PLUS_PLUS,
                               pf->isPrefix, pf->resolvedType, pf->loc);
     }
@@ -1326,6 +1461,18 @@ int IRGenerator::generateExpression(ASTNode* node) {
         emitArrayGet(destSlot, arrSlot, idxSlot, idx->loc.line, idx->loc.column,
                      slotTypeFromType(idx->resolvedType), elemKind);
         return destSlot;
+    }
+
+    // ── ADR-045: thread { gövde } (lambda lifting, Faz 3-c) ────────────────
+    case ASTKind::ThreadExpr:
+        return generateThreadExpr((ThreadExprNode*) node);
+
+    // Pool(T)/List(T) yalnız shared global başlatıcısında (runtime kurar);
+    // başka bir yerde TypeChecker E014 verir — burada değer üretilmez.
+    case ASTKind::CollectionNew: {
+        int slot = freshSlot();
+        emitLoadConst(slot, 0);
+        return slot;
     }
 
     // ── CastExpression: expr as TargetType[?]  (ADR-026) ───────────────────
@@ -1547,7 +1694,10 @@ IRGenerator::LValue IRGenerator::resolveLValue(ASTNode* node) {
         const std::string& name = id->parserToken.token ? id->parserToken.token->token
                                                         : std::string{};
         if (name.empty()) return lv;
-        if (isGlobal(name)) {
+        if (isShared(name)) {             // ADR-045
+            lv.kind = LValue::Kind::Shared;
+            lv.globalIndex = nameToShared_.at(name);
+        } else if (isGlobal(name)) {
             lv.kind = LValue::Kind::Global;
             lv.globalIndex = getGlobalIndex(name);
         } else {
@@ -1603,6 +1753,10 @@ int IRGenerator::emitLValueLoad(const LValue& lv, const Type& t) {
     case LValue::Kind::Element:
         emitArrayGet(dest, lv.objSlot, lv.indexSlot, 0, 0, slotTypeFromType(t), lv.elemKind);
         break;
+    case LValue::Kind::Shared:        // ADR-045
+        emitThreadOp(Opcode::SHARED_LOAD, dest, -1, lv.globalIndex).valueType =
+            sharedSlotTypes_[lv.globalIndex];
+        break;
     case LValue::Kind::Invalid:
         break;
     }
@@ -1622,6 +1776,9 @@ void IRGenerator::emitLValueStore(const LValue& lv, int valueSlot, int line, int
         break;
     case LValue::Kind::Element:
         emitArraySet(lv.objSlot, lv.indexSlot, valueSlot, line, col, lv.elemKind);
+        break;
+    case LValue::Kind::Shared:        // ADR-045
+        emitThreadOp(Opcode::SHARED_STORE, -1, valueSlot, lv.globalIndex);
         break;
     case LValue::Kind::Invalid:
         break;
@@ -2104,7 +2261,8 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
     fn->slotTypes.assign(static_cast<size_t>(fn->slotCount), SlotType::Int);
 
     // 1. Parametre slot'ları (0..paramCount-1) — bildirilen tipten.
-    for (size_t i = 0; i < decl->params.size() && i < static_cast<size_t>(fn->slotCount); ++i)
+    // decl == nullptr: parametresiz sentetik fonksiyon (ADR-045 __init_globals).
+    for (size_t i = 0; decl && i < decl->params.size() && i < static_cast<size_t>(fn->slotCount); ++i)
         fn->slotTypes[i] = slotTypeFromTypeName(decl->params[i]->varType);
 
     // 2. Üreten opcode'dan türet. Slot türü sabit olduğundan (ADR-020) tek
@@ -2274,7 +2432,16 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
             case Opcode::ARRAY_GET:
             case Opcode::FIELD_GET:
             case Opcode::LOAD_GLOBAL:
+            // ADR-045: sonuç türü valueType'ta (shared slot / eleman / arg türü)
+            case Opcode::SHARED_LOAD:
+            case Opcode::SHARED_RMW:
+            case Opcode::POOL_POP:
+            case Opcode::LIST_GET:
+            case Opcode::THREAD_ARG:
                 if (ins.valueType != SlotType::Unknown) nk = ins.valueType;
+                break;
+            case Opcode::SHARED_EPOCH:
+                nk = SlotType::LongInt;
                 break;
             // FIELD_GET/ARRAY_GET/LOAD_GLOBAL: sonuç türü opcode'dan
             // belli değil (eleman/alan türü gerekir). Dilim 1.5 JIT'i bu
@@ -2337,7 +2504,7 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
         return true;
     };
 
-    for (size_t i = 0; i < decl->params.size() && i < static_cast<size_t>(fn->slotCount); ++i)
+    for (size_t i = 0; decl && i < decl->params.size() && i < static_cast<size_t>(fn->slotCount); ++i)
         if (decl->params[i]->varType.size() > 0 && decl->params[i]->varType.back() == '?')
             markNullable(static_cast<int>(i));
 
@@ -2356,6 +2523,9 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
                 if (ins.valueNullable && markNullable(ins.dest)) changed = true;
                 break;
             case Opcode::FIELD_GET:
+            case Opcode::POOL_POP:      // ADR-045: nullable eleman tipi
+            case Opcode::LIST_GET:
+            case Opcode::THREAD_ARG:
                 if (ins.valueNullable && markNullable(ins.dest)) changed = true;
                 break;
             case Opcode::CAST_STR_TO_INT:
@@ -2874,4 +3044,273 @@ void IRGenerator::patchJump(int instrIndex) {
 
 int IRGenerator::currentInstrIndex() const {
     return (int) currentFunction_->instructions.size();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADR-045 (Faz 3-c/3-d): izole thread modeli IR üretimi
+// ─────────────────────────────────────────────────────────────────────────────
+
+// shared global → SharedSlots girdisi. kind runtime SharedKind sırasıyla aynı.
+void IRGenerator::registerSharedGlobal(IRProgram& program, VariableDeclNode* vd) {
+    IRProgram::SharedSlotDesc d;
+    d.name = vd->name;
+    if (vd->varType == "float")      d.kind = 1;
+    else if (vd->varType == "bool")  d.kind = 2;
+    else if (vd->varType == "Pool")  d.kind = 3;
+    else if (vd->varType == "List")  d.kind = 4;
+    else                             d.kind = 0;   // int
+    const int idx = (int) program.sharedSlots.size();
+    program.sharedSlots.push_back(d);
+    nameToShared_[vd->name] = idx;
+    sharedSlotTypes_[idx]   = d.kind == 1 ? SlotType::Float32 : SlotType::Int;
+    program.usesThreads     = true;
+}
+
+Instruction& IRGenerator::emitThreadOp(Opcode op, int dest, int src, int sharedIdx) {
+    Instruction ins(op);
+    ins.dest       = dest;
+    ins.src        = src;
+    ins.intValue   = sharedIdx;
+    ins.sourceLine = currentLoc_.line;
+    ins.sourceCol  = currentLoc_.column;
+    currentFunction_->instructions.push_back(std::move(ins));
+    return currentFunction_->instructions.back();
+}
+
+// Tutulan kilitleri ters alınma sırasıyla bırakır (blok sonu, return, break,
+// continue). Derleme zamanı kaydı SİLİNMEZ: aynı kapsamın başka çıkış yolları
+// da bırakmalıdır. Runtime'da tutulmayan kilidi bırakmak etkisizdir (açık
+// `unlock` sonrası blok sonu UNLOCK'u güvenli).
+void IRGenerator::emitUnlocksFrom(size_t fromDepth) {
+    for (size_t l = lockScopes_.size(); l-- > fromDepth;)
+        for (auto it = lockScopes_[l].rbegin(); it != lockScopes_[l].rend(); ++it)
+            emitThreadOp(Opcode::UNLOCK, -1, -1, *it);
+}
+
+void IRGenerator::generateLockStatement(LockStatementNode* ls) {
+    std::vector<int> idxs;
+    for (ASTNode* t : ls->targets) {
+        auto* id = dynamic_cast<IdentifierNode*>(t);
+        if (!id || !id->parserToken.token) continue;
+        auto it = nameToShared_.find(id->parserToken.token->token);
+        if (it != nameToShared_.end()) idxs.push_back(it->second);
+    }
+    if (ls->isUnlock) {
+        for (int idx : idxs) emitThreadOp(Opcode::UNLOCK, -1, -1, idx);
+        return;
+    }
+    // Çoklu kilit slot indeksine göre sıralı alınır (sabit küresel sıra →
+    // kilit-kilit deadlock olmaz, ADR-045 §DİL 14).
+    std::sort(idxs.begin(), idxs.end());
+    idxs.erase(std::unique(idxs.begin(), idxs.end()), idxs.end());
+    for (int idx : idxs) {
+        emitThreadOp(Opcode::LOCK, -1, -1, idx);
+        if (!lockScopes_.empty()) lockScopes_.back().push_back(idx);
+    }
+}
+
+// wait(koşul):  top: e = SHARED_EPOCH; c = koşul; JIF_TRUE c → son;
+//               WAIT e; JMP top;  son:
+// Epoch koşuldan ÖNCE okunur: arada olan bir mutasyon epoch'u değiştirir ve
+// WAIT hemen döner (kayıp uyandırma yok).
+void IRGenerator::generateWaitStatement(WaitStatementNode* ws) {
+    program_->usesThreads = true;
+    const int top = currentInstrIndex();
+    int epochSlot = freshSlot();
+    emitThreadOp(Opcode::SHARED_EPOCH, epochSlot, -1, 0);
+    int condSlot = ws->condition ? generateExpression(ws->condition) : freshSlot();
+    int jDone = emitJumpIfTrue(condSlot);
+    emitThreadOp(Opcode::WAIT, -1, epochSlot, 0);
+    emitJumpUnconditional(top);
+    patchJump(jDone);
+}
+
+int IRGenerator::generateThreadIntrinsic(ScopeCallNode* sc) {
+    program_->usesThreads = true;
+    ASTNode* recv = sc->arguments.empty() ? nullptr : sc->arguments[0];
+    Type recvType;
+    if (auto* e = dynamic_cast<ExpressionNode*>(recv)) recvType = e->resolvedType;
+    const Type elem = recvType.elementType ? *recvType.elementType : Type::error();
+
+    int sharedIdx = 0;
+    if (auto* id = dynamic_cast<IdentifierNode*>(recv); id && id->parserToken.token) {
+        auto it = nameToShared_.find(id->parserToken.token->token);
+        if (it != nameToShared_.end()) sharedIdx = it->second;
+    }
+
+    // Pool/List'e giren değer eleman tipine genişletilir (int → float/double/
+    // decimal/longint): mesaj tipli kopyadır, alıcı eleman tipini bekler.
+    auto valueArg = [&](size_t i) {
+        int slot = generateExpression(sc->arguments[i]);
+        Type src;
+        if (auto* e = dynamic_cast<ExpressionNode*>(sc->arguments[i])) src = e->resolvedType;
+        if (!src.isInt() || !elem.isPrimitive()) return slot;
+        int w = freshSlot();
+        switch (elem.prim) {
+            case PrimitiveKind::Float:   emitIntToFloat32(w, slot); return w;
+            case PrimitiveKind::Double:  emitIntToFloat(w, slot);   return w;
+            case PrimitiveKind::Decimal: emitIntToDecimal(w, slot); return w;
+            case PrimitiveKind::LongInt: emitIntToLong(w, slot);    return w;
+            default:                     return slot;
+        }
+    };
+    auto typedResult = [&](Opcode op, int left) {
+        int d = freshSlot();
+        Instruction& ins = emitThreadOp(op, d, -1, sharedIdx);
+        ins.left          = left;
+        ins.valueType     = slotTypeFromType(elem);
+        ins.valueNullable = elem.nullable;
+        return d;
+    };
+
+    switch (sc->threadOp) {
+        case TI_PoolPush: {
+            int v = valueArg(1);
+            emitThreadOp(Opcode::POOL_PUSH, -1, v, sharedIdx);
+            return v;
+        }
+        case TI_PoolPop:
+            return typedResult(Opcode::POOL_POP, -1);
+        case TI_PoolSetMax: {
+            int v = generateExpression(sc->arguments[1]);
+            emitThreadOp(Opcode::POOL_SETMAX, -1, v, sharedIdx);
+            return v;
+        }
+        case TI_PoolLength: {
+            int d = freshSlot();
+            emitThreadOp(Opcode::POOL_LEN, d, -1, sharedIdx);
+            return d;
+        }
+        case TI_ListAppend: {
+            int v = valueArg(1);
+            emitThreadOp(Opcode::LIST_APPEND, -1, v, sharedIdx);
+            return v;
+        }
+        case TI_ListGet: {
+            int i = generateExpression(sc->arguments[1]);
+            return typedResult(Opcode::LIST_GET, i);
+        }
+        case TI_ListLength: {
+            int d = freshSlot();
+            emitThreadOp(Opcode::LIST_LEN, d, -1, sharedIdx);
+            return d;
+        }
+        case TI_ThreadStop:
+        case TI_ThreadJoin: {
+            int t = generateExpression(recv);
+            emitThreadOp(sc->threadOp == TI_ThreadStop ? Opcode::THREAD_STOP : Opcode::THREAD_JOIN,
+                         -1, t, 0);
+            return t;
+        }
+        case TI_ThreadRunning: {
+            int t = generateExpression(recv);
+            int d = freshSlot();
+            emitThreadOp(Opcode::THREAD_RUNNING, d, t, 0);
+            return d;
+        }
+        default:
+            break;
+    }
+    int z = freshSlot();
+    emitLoadConst(z, 0);
+    return z;
+}
+
+// Lambda lifting (Faz 3-c, karar günlüğü): gövde 0 parametreli sentetik
+// `__thread_<fn>_<n>` fonksiyonuna üretilir. Çağıran taraf THREAD_SPAWN ile
+// yakalanan yerellerin slotlarını verir (runtime tek mesajda deep copy'ler).
+// Sentetik fonksiyon: CALL __init_globals (thread'in kendi global kopyası),
+// her yakalanan için THREAD_ARG i → yerel slot, sonra gövde.
+int IRGenerator::generateThreadExpr(ThreadExprNode* te) {
+    program_->usesThreads  = true;
+    needsThreadGlobalInit_ = true;
+
+    // ── 1) Çağıran taraf ────────────────────────────────────────────────
+    std::vector<int> capSlots;
+    for (const auto& name : te->captures) capSlots.push_back(lookupVariable(name));
+    const std::string fnName = "__thread_" + currentFunction_->name + "_" +
+                               std::to_string(++threadCounter_);
+    const int dest = freshSlot();
+    {
+        Instruction spawn(Opcode::THREAD_SPAWN);
+        spawn.dest         = dest;
+        spawn.functionName = fnName;
+        spawn.argSlots     = capSlots;
+        spawn.sourceLine   = te->loc.line;
+        spawn.sourceCol    = te->loc.column;
+        currentFunction_->instructions.push_back(std::move(spawn));
+    }
+
+    // ── 2) Sentetik fonksiyon (üretici durumu kaydedilir) ──────────────
+    IRFunction* savedFn     = currentFunction_;
+    auto savedNameToSlot    = std::move(nameToSlot_);
+    auto savedShadow        = std::move(shadowStack_);
+    auto savedLoops         = std::move(loopContextStack_);
+    auto savedLocks         = std::move(lockScopes_);
+    const int savedNextSlot = nextSlot_;
+    const SourceLocation savedLoc = currentLoc_;
+    nameToSlot_.clear();
+    shadowStack_.clear();
+    loopContextStack_.clear();
+    lockScopes_.clear();
+    nextSlot_ = 0;
+
+    IRFunction irFn(fnName, 0);
+    irFn.moduleId = savedFn->moduleId;
+    program_->addFunction(std::move(irFn));
+    currentFunction_ = program_->findFunction(fnName);
+    funcReturnKind_[fnName]     = SlotType::Int;
+    funcReturnNullable_[fnName] = false;
+
+    pushScope();
+    {
+        Instruction init(Opcode::CALL);
+        init.dest         = freshSlot();
+        init.functionName = kThreadGlobalInitName;
+        init.debugHidden  = true;
+        init.sourceLine   = te->loc.line;
+        init.sourceCol    = te->loc.column;
+        currentFunction_->instructions.push_back(std::move(init));
+    }
+    for (size_t i = 0; i < te->captures.size(); ++i) {
+        const int slot = freshSlot();
+        registerVariable(te->captures[i], slot);
+        Instruction arg(Opcode::THREAD_ARG);
+        arg.dest          = slot;
+        arg.intValue      = (int) i;
+        arg.valueType     = slotTypeFromType(te->captureTypes[i]);
+        arg.valueNullable = te->captureTypes[i].nullable;
+        arg.debugHidden   = true;
+        arg.sourceLine    = te->loc.line;
+        arg.sourceCol     = te->loc.column;
+        currentFunction_->instructions.push_back(std::move(arg));
+    }
+    if (te->body) generateStatement(te->body);
+    if (currentFunction_->instructions.empty() ||
+        currentFunction_->instructions.back().opcode != Opcode::RETURN) {
+        const int z = freshSlot();
+        emitLoadConst(z, 0);
+        emitReturn(z, te->loc.line, te->loc.column);
+    }
+    popScope();
+
+    // Faz 5: satır → ilk IP (breakpoint eşlemesi; generateFunction ile aynı)
+    for (int i = 0; i < (int) currentFunction_->instructions.size(); ++i) {
+        const int sl = currentFunction_->instructions[i].sourceLine;
+        if (sl > 0 && !currentFunction_->instructions[i].debugHidden &&
+            currentFunction_->lineToFirstIP.find(sl) == currentFunction_->lineToFirstIP.end())
+            currentFunction_->lineToFirstIP[sl] = i;
+    }
+    currentFunction_->slotCount = nextSlot_;
+    finalizeSlotTypes(currentFunction_, nullptr);
+
+    // ── 3) Çağıran fonksiyona dön ──────────────────────────────────────
+    currentFunction_  = savedFn;
+    nameToSlot_       = std::move(savedNameToSlot);
+    shadowStack_      = std::move(savedShadow);
+    loopContextStack_ = std::move(savedLoops);
+    lockScopes_       = std::move(savedLocks);
+    nextSlot_         = savedNextSlot;
+    currentLoc_       = savedLoc;
+    return dest;
 }

@@ -150,4 +150,28 @@ public:
     std::string toJson(int depth = 0) override;
 };
 
+// ADR-045: lock a, b;  /  unlock a;
+// targets: IdentifierNode'lar (SymbolCollector çözer). lock kapsam (blok)
+// sonunda otomatik bırakılır; çoklu kilit slot indeksine göre sıralı alınır.
+class LockStatementNode : public StatementNode {
+public:
+    std::vector<ASTNode*> targets;
+    bool                  isUnlock = false;
+    LockStatementNode();
+    ~LockStatementNode() override { for (auto* t : targets) delete t; }
+    void log(int indent = 0) override;
+    std::string toJson(int depth = 0) override;
+};
+
+// ADR-045: wait(koşul); — koşul doğru olana kadar bekler (en az bir shared
+// sembol içermeli).
+class WaitStatementNode : public StatementNode {
+public:
+    ASTNode* condition = nullptr;
+    WaitStatementNode();
+    ~WaitStatementNode() override { delete condition; }
+    void log(int indent = 0) override;
+    std::string toJson(int depth = 0) override;
+};
+
 #endif

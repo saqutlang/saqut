@@ -53,6 +53,9 @@ struct Symbol {
     int                         hostFnId = -1;
     // FFI sembolünün ait olduğu gömülü modül adı ("math"); import çözümü için.
     std::string                 ffiModule;
+    // ADR-045: `shared` global (thread'ler arası görünür; heap dışında,
+    // SharedSlots tablosunda yaşar). shared tipin değil SEMBOLÜN özelliğidir.
+    bool                        isShared = false;
 };
 
 #endif // SAQUT_SYMBOL_SYMBOL

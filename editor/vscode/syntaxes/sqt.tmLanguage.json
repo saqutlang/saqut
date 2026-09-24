@@ -16,6 +16,12 @@
       "include": "#types_user"
     },
     {
+      "include": "#collection_new"
+    },
+    {
+      "include": "#keywords_thread"
+    },
+    {
       "include": "#keywords_control"
     },
     {
@@ -77,17 +83,63 @@
       "patterns": [
         {
           "name": "storage.type.sqt",
-          "match": "\\b(int|longint|float|double|decimal|byte|date|char|string|bool|void|auto)[ \\t]*\\?"
+          "match": "\\b(int|longint|float|double|decimal|byte|date|char|string|bool|void|auto|Pool|List|Thread)[ \\t]*\\?"
         },
         {
           "name": "storage.type.sqt",
-          "match": "\\b(int|longint|float|double|decimal|byte|date|char|string|bool|void|auto)[ \\t]*\\[\\]"
+          "match": "\\b(int|longint|float|double|decimal|byte|date|char|string|bool|void|auto|Pool|List|Thread)[ \\t]*\\[\\]"
         },
         {
           "name": "storage.type.sqt",
-          "match": "\\b(int|longint|float|double|decimal|byte|date|char|string|bool|void|auto)\\b"
+          "match": "\\b(int|longint|float|double|decimal|byte|date|char|string|bool|void|auto|Pool|List|Thread)\\b"
         }
       ]
+    },
+    "keywords_thread": {
+      "comment": "ADR-045: shared bir depolama niteleyicisi; thread/lock/unlock/wait kontrol akışı. keywords_control ve functions'tan önce gelir (wait( fonksiyon çağrısı sanılmasın).",
+      "patterns": [
+        {
+          "name": "storage.modifier.shared.sqt",
+          "match": "\\bshared\\b"
+        },
+        {
+          "name": "keyword.control.thread.sqt",
+          "match": "\\b(thread|lock|unlock|wait)\\b"
+        }
+      ]
+    },
+    "collection_new": {
+      "comment": "ADR-045: Pool(T) / List(T) — parantez içindeki argüman bir TİP adıdır (int, string[], Job?).",
+      "match": "\\b(Pool|List)\\s*(\\()\\s*([A-Za-z_$][A-Za-z0-9_$]*)((?:\\s*\\[\\])*)(\\s*\\?)?\\s*(\\))",
+      "captures": {
+        "1": {
+          "name": "storage.type.sqt"
+        },
+        "2": {
+          "name": "punctuation.definition.parameters.begin.sqt"
+        },
+        "3": {
+          "patterns": [
+            {
+              "name": "storage.type.sqt",
+              "match": "\\b(int|longint|float|double|decimal|byte|date|char|string|bool|void|auto|Pool|List|Thread)\\b"
+            },
+            {
+              "name": "entity.name.type.sqt",
+              "match": ".+"
+            }
+          ]
+        },
+        "4": {
+          "name": "storage.type.sqt"
+        },
+        "5": {
+          "name": "storage.type.sqt"
+        },
+        "6": {
+          "name": "punctuation.definition.parameters.end.sqt"
+        }
+      }
     },
     "keywords_module": {
       "name": "keyword.other.sqt",

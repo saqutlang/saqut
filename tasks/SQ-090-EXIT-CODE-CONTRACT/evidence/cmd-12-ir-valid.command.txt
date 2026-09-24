@@ -1,1 +1,0 @@
-saqut ir file:examples/fibonacci.sqt

@@ -1,3 +1,0 @@
-export int fortyTwo() {
-    return 42;
-}

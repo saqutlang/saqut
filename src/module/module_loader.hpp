@@ -51,7 +51,7 @@ public:
     // `saqut run --profile` (src/profiling/) için: verilirse her dosyanın
     // tokenize/parse süresi "token"/"parser" adları altında toplanır.
     // nullptr (varsayılan) = ölçüm yapılmaz, hiçbir ek maliyet yok.
-    void setProfiler(profiling::StageTimer* profiler) { profiler_ = profiler; }
+    void setProfiler(Profiling::StageTimer* profiler) { profiler_ = profiler; }
 
 private:
     // Tek bir dosyayı yükle, parse et, ImportDeclNode'larını takip et.
@@ -68,7 +68,7 @@ private:
     ModuleRegistry&   registry_;
     DiagnosticEngine& diag_;
     SourceOverlay     overlay_;
-    profiling::StageTimer* profiler_ = nullptr;
+    Profiling::StageTimer* profiler_ = nullptr;
 
     // Yüklemesi başlatılmış dosyalar (canonical path) — tekrar yüklemeyi
     // ve hata alan dosya için mükerrer tanıyı önler.

@@ -1,4 +1,0 @@
-compilation errors, cannot run program:
-/tmp/saqut-sq090-amendment01-fixtures-S66rsq/type_error.sqt:2:5: error [E003]: 'x': cannot assign string to int
-    hint: use explicit cast: `<expression> as int`
-— 1 error(s), 0 warning(s)

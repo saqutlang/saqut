@@ -42,15 +42,18 @@
 //   yaşar ve modül kimliklerini tutar; bu ise SourceLocation'ın altında,
 //   tokenizer'dan LSP'ye kadar her katmanda kullanılır.
 //
-// İŞ PARÇACIĞI GÜVENLİĞİ:
-//   Şu an derleme tek iş parçacıklıdır (public concurrency v1 dışı). intern()
-//   ve path() aynı anda farklı iş parçacıklarından çağrılırsa senkronizasyon
-//   gerekir; o gün geldiğinde burası tek değişecek yerdir.
+// İŞ PARÇACIĞI GÜVENLİĞİ (ADR-045, 1-e):
+//   Derleme tek iş parçacıklıdır. Koşu komutları (run/exec) derleme bitince
+//   freeze() çağırır; sonrasında yeni yol kaydı debug'da assert'tir ve kayıt
+//   defteri salt okunur olduğundan path() birden çok isolate'ten kilitsiz
+//   okunabilir. Zaten kayıtlı bir yolun intern()'ü (salt arama) serbesttir.
+//   LSP süreç içinde tekrar derlediği için dondurmaz.
 // ============================================================================
 
 #ifndef SAQUT_CORE_FILE_REGISTRY
 #define SAQUT_CORE_FILE_REGISTRY
 
+#include <cassert>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -71,6 +74,7 @@ public:
         if (path.empty()) return UNKNOWN_ID;
         auto it = index_.find(path);
         if (it != index_.end()) return it->second;
+        assert(!frozen_ && "FileRegistry::intern: freeze() sonrası yeni yol kaydı");
         const int id = static_cast<int>(paths_.size());
         paths_.push_back(path);
         index_.emplace(path, id);
@@ -89,6 +93,10 @@ public:
     // Kayıtlı dosya sayısı (UNKNOWN_ID dahil değil) — teşhis/test için.
     int fileCount() const { return static_cast<int>(paths_.size()) - 1; }
 
+    // Derleme sonu: kayıt defteri bundan sonra salt okunur (1-e).
+    void freeze() { frozen_ = true; }
+    bool frozen() const { return frozen_; }
+
 private:
     FileRegistry() {
         paths_.emplace_back(); // paths_[0] = "" → UNKNOWN_ID
@@ -96,6 +104,7 @@ private:
 
     std::vector<std::string>                 paths_;
     std::unordered_map<std::string, int>     index_;
+    bool                                     frozen_ = false;
 };
 
 #endif // SAQUT_CORE_FILE_REGISTRY

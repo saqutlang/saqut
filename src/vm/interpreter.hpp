@@ -13,6 +13,7 @@
 #ifndef SAQUT_VM_INTERPRETER
 #define SAQUT_VM_INTERPRETER
 
+#include <atomic>
 #include <vector>
 #include <optional>
 #include <functional>
@@ -44,10 +45,11 @@ struct TryFrame {
 // yapılır, yıkıcıda kaldırılır (Heap sağlayıcıyı sahiplenmez).
 class Interpreter : public RootSource {
 public:
-    explicit Interpreter(IRProgram& program) : program_(program) {
-        heap_.addRootSource(this);
-    }
-    ~Interpreter() override { heap_.removeRootSource(this); }
+    // ADR-045 (1-d): IRProgram salt okunur paylaşılır. Heap ve globalSlots
+    // Interpreter üyesi kalır (thread başına bir Interpreter); kurucu bunları
+    // bağlı isolate'e işaretçi olarak bağlar, yıkıcı önceki bağı geri koyar.
+    explicit Interpreter(const IRProgram& program);
+    ~Interpreter() override;
 
     // "main" fonksiyonunu bul ve çalıştır.
     // Tamamlandığında main'in dönüş değerini (int) döndürür.
@@ -65,7 +67,7 @@ public:
     // edilirse "vm-warmup" (initForDebug — frame/global kurulumu) ve
     // "vm-exec" (runUntilEvent'in ANA döngüsü, yani VM'in gerçekten
     // instruction çalıştırdığı kısım) ayrı ayrı raporlanır.
-    void setStageProfiler(profiling::StageTimer* p) { stageProfiler_ = p; }
+    void setStageProfiler(Profiling::StageTimer* p) { stageProfiler_ = p; }
 
     // Faz 7 (#105): program çıktısı kancası. DAP modunda print çıktısı
     // protokol stdout'unu kirletmesin diye DapHandler output event'ine
@@ -79,6 +81,7 @@ public:
     // (yalnızca ~Heap temizler — eski arena davranışı).
     // n > 0 → toplama eşiği (canlı ayak izi, bayt); n <= 0 → toplama kapalı.
     void setGCThreshold(int n) {
+        gcThreshold_ = n;   // ADR-045: spawn edilen thread'lere aktarılır
         if (n > 0) heap_.setMinCollectBytes(n);
         else       heap_.setCollectionEnabled(false);
     }
@@ -87,6 +90,18 @@ public:
     // #90: `--` sonrası argümanlar — sys::args() ile programa geçirilir.
     void setProgramArgs(std::vector<std::string> a) { programArgs_ = std::move(a); }
     const std::vector<std::string>& programArgs() const { return programArgs_; }
+
+    // ── ADR-045 (Faz 3-e): izole thread'ler ──────────────────────────────────
+    // Yeni thread'in Interpreter'ı: main yerine sentetik __thread_* giriş
+    // fonksiyonunu koşar; başlangıç mesajı (yakalananlar) bu heap'e açılır ve
+    // THREAD_ARG ile okunur. Ana olmayan Interpreter program başı/sonu
+    // (SharedSlots kurulumu, joinAll) yapmaz.
+    void setThreadEntry(const std::string& function, const std::vector<Value>& args) {
+        entryFunction_     = function;
+        threadArgs_        = args;
+        isMainInterpreter_ = false;
+    }
+    Heap& heap() { return heap_; }
 
     // ── DAP API ───────────────────────────────────────────────────────────────
     enum class RunState { Running, Paused, Finished };
@@ -139,7 +154,22 @@ public:
     std::string slotName(int frameDepth, int slotIndex) const;
 
 private:
-    IRProgram&             program_;
+    const IRProgram&       program_;
+    // ADR-045 (Faz 3-e)
+    std::string            entryFunction_     = "main";
+    std::vector<Value>     threadArgs_;          // GC kökü (collectRoots)
+    bool                   isMainInterpreter_ = true;
+    bool                   threadingActive_   = false;   // program_.usesThreads
+    std::atomic<uint32_t>* pollFlags_         = nullptr; // geri kenar yoklaması
+    int                    gcThreshold_       = 0;
+    void pollBackEdge();
+    void debugPausePoint();   // Faz 4: DAP all-stop park noktası
+    // Çerçeveyi kendisi alır (callStack_.back()); dispatch döngüsünün `frame`
+    // referansı dışarı kaçmasın diye — S1, docs/threading-decisions.md.
+    [[gnu::noinline]] void executeThreadOp(const Instruction& instr);
+    // Kurucuda bağlı isolate'in önceki heap/globalSlots bağı (yıkıcı geri koyar).
+    Heap*                  prevIsolateHeap_    = nullptr;
+    std::vector<Value>*    prevIsolateGlobals_ = nullptr;
     std::vector<CallFrame> callStack_;
     // #3 (2026-07-16): tek DÜZ global slot dizisi — LOAD_GLOBAL/STORE_GLOBAL
     // yürütülen fonksiyonun DEĞİL, IRGenerator'ın tüm programa yaydığı flat
@@ -157,7 +187,7 @@ private:
     std::vector<TryFrame>  tryStack_;
     std::optional<Value>   pendingThrow_;
     BenchVMTrace*          vmTrace_ = nullptr;  // profil hook (bench modunda non-null)
-    profiling::StageTimer* stageProfiler_ = nullptr;  // --profile hook
+    Profiling::StageTimer* stageProfiler_ = nullptr;  // --profile hook
     OutputSink             outputSink_;         // Faz 7 (#105): boş = std::cout
 
     // DAP durumu

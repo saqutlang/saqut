@@ -225,7 +225,9 @@ void TypeChecker::check(ASTNode* program) {
             checkFunction(child);
             break;
         case ASTKind::VariableDecl:
+            inGlobalDecl_ = true;   // ADR-045: shared / Pool / List kuralları
             checkStmt(child);
+            inGlobalDecl_ = false;
             break;
         default:
             break;
@@ -391,6 +393,12 @@ void TypeChecker::checkStmt(ASTNode* node) {
 
     switch (node->kind) {
     case ASTKind::Block: {
+        // ADR-045: blok bir kilit kapsamıdır (lock blok sonunda bırakılır).
+        heldLocks_.emplace_back();
+        struct LockLevelPop {
+            std::vector<std::vector<std::string>>& v;
+            ~LockLevelPop() { if (!v.empty()) v.pop_back(); }
+        } lockLevelPop{heldLocks_};
         // ADR-021: guard/sıralı narrowing — if (a == null) return; → sonrasında a non-null
         std::vector<std::string> guardNarrowed; // bu blokta guard'la daraltılanlar
         for (ASTNode* child : node->getChildren()) {
@@ -443,6 +451,39 @@ void TypeChecker::checkStmt(ASTNode* node) {
                 return Type::error();
             };
             targetType = resolveType(vd->varType);
+        }
+        // ── ADR-045: shared / Pool / List bildirim kuralları ───────────────
+        const bool isCollectionDecl = targetType.isPool() || targetType.isList();
+        if (vd->isShared) {
+            const bool okType = targetType.isInt() || isCollectionDecl ||
+                                (targetType.isPrimitive() && !targetType.nullable &&
+                                 (targetType.prim == PrimitiveKind::Float ||
+                                  targetType.prim == PrimitiveKind::Bool));
+            if (!okType && !targetType.isError())
+                diag_.report("E014", vd->loc,
+                             "shared '" + vd->name + "' has type " + targetType.toString() +
+                                 "; shared variables may only be int, float, bool, Pool or List",
+                             "shared string/struct/array is not supported in v1 — share data "
+                             "through a Pool or List of that type");
+        }
+        if (isCollectionDecl) {
+            const bool validDecl = inGlobalDecl_ && vd->isShared && vd->initExpr &&
+                                   vd->initExpr->kind == ASTKind::CollectionNew;
+            if (!validDecl) {
+                diag_.report("E014", vd->loc,
+                             "'" + vd->name + "': Pool and List can only be declared as shared "
+                             "globals initialized with Pool(T) / List(T)",
+                             "write at module scope: `shared " + vd->varType + " " + vd->name +
+                                 " = " + vd->varType + "(ElementType);`");
+                if (vd->initExpr) checkExpr(vd->initExpr);
+            } else {
+                allowCollectionNew_ = true;
+                checkExpr(vd->initExpr);
+                allowCollectionNew_ = false;
+            }
+            for (ASTNode* sib : vd->getChildren())
+                if (sib->kind == ASTKind::VariableDecl) checkStmt(sib);
+            break;
         }
         if (vd->initExpr) {
             Type srcType = checkExpr(vd->initExpr, targetType);
@@ -678,6 +719,69 @@ void TypeChecker::checkStmt(ASTNode* node) {
         break;
     }
 
+    // ADR-045: lock a, b; / unlock a;
+    case ASTKind::LockStatement: {
+        auto* ls = (LockStatementNode*) node;
+        std::vector<std::string> seenHere;
+        for (ASTNode* t : ls->targets) {
+            auto* id = dynamic_cast<IdentifierNode*>(t);
+            Symbol* sym = id ? id->resolvedSymbol : nullptr;
+            const std::string name = (id && id->parserToken.token) ? id->parserToken.token->token : "?";
+            if (!sym) continue;   // E001 zaten raporlandı
+            const Type& ty = sym->type;
+            const bool primitiveShared =
+                sym->isShared && ty.isPrimitive() &&
+                (ty.isInt() || ty.prim == PrimitiveKind::Float || ty.prim == PrimitiveKind::Bool);
+            if (!primitiveShared) {
+                diag_.report("E017", t->loc,
+                             "'" + name + "' cannot be " + (ls->isUnlock ? "unlocked" : "locked") +
+                                 ": lock target must be a shared int, float or bool",
+                             "declare it at module scope: `shared int " + name + " = 0;`");
+                continue;
+            }
+            if (ls->isUnlock) {
+                bool found = false;
+                for (auto lvl = heldLocks_.rbegin(); lvl != heldLocks_.rend() && !found; ++lvl)
+                    for (auto it = lvl->begin(); it != lvl->end(); ++it)
+                        if (*it == name) { lvl->erase(it); found = true; break; }
+                if (!found)
+                    diag_.report("E017", t->loc, "unlock of '" + name + "' which is not held here",
+                                 "only a lock taken with `lock " + name + ";` in an enclosing "
+                                 "block of the same function can be unlocked");
+            } else {
+                bool already = std::find(seenHere.begin(), seenHere.end(), name) != seenHere.end();
+                for (auto& lvl : heldLocks_)
+                    if (std::find(lvl.begin(), lvl.end(), name) != lvl.end()) already = true;
+                if (already) {
+                    diag_.report("E017", t->loc, "lock '" + name + "' is already held",
+                                 "a lock cannot be taken twice (it would deadlock)");
+                    continue;
+                }
+                seenHere.push_back(name);
+                if (!heldLocks_.empty()) heldLocks_.back().push_back(name);
+            }
+        }
+        break;
+    }
+
+    // ADR-045: wait(koşul);
+    case ASTKind::WaitStatement: {
+        auto* ws = (WaitStatementNode*) node;
+        if (anyLockHeld())
+            diag_.report("E019", ws->loc, "wait inside a lock scope is not allowed in v1",
+                         "release the lock before waiting (`unlock x;`) or move the wait out "
+                         "of the locked block");
+        if (ws->condition) {
+            checkExpr(ws->condition);
+            if (!referencesShared(ws->condition))
+                diag_.report("E018", ws->condition->loc,
+                             "wait condition must reference at least one shared variable",
+                             "a condition over only local values can never change while "
+                             "waiting — wait on a shared int/float/bool or a Pool/List length");
+        }
+        break;
+    }
+
     default:
         break;
     }
@@ -854,6 +958,31 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             Type leftType = checkExpr(bin->Left);
             Type rightType = checkExpr(bin->Right, leftType);
             bool isLit = bin->Right && bin->Right->kind == ASTKind::Literal;
+            // ── ADR-045 ────────────────────────────────────────────────────
+            if (auto* lid = dynamic_cast<IdentifierNode*>(bin->Left)) {
+                const std::string lname =
+                    lid->parserToken.token ? lid->parserToken.token->token : "?";
+                if (lid->capturedInThread)
+                    diag_.report("E016", bin->loc,
+                                 "cannot assign to '" + lname +
+                                     "' inside a thread body: a captured variable is a copy",
+                                 "declare a new local inside the thread (`int my" + lname + " = " +
+                                     lname + ";`) or share the value through a shared global");
+                if (lid->resolvedSymbol && lid->resolvedSymbol->isShared) {
+                    const bool nonAtomicRmw =
+                        (bin->Operator == TokenType::EQUAL &&
+                         referencesSymbol(bin->Right, lid->resolvedSymbol)) ||
+                        bin->Operator == TokenType::STAR_EQUAL ||
+                        bin->Operator == TokenType::SLASH_EQUAL ||
+                        bin->Operator == TokenType::PERCENT_EQUAL;
+                    if (nonAtomicRmw)
+                        diag_.report("W008", bin->loc,
+                                     "update of shared '" + lname +
+                                         "' is not atomic (separate load and store)",
+                                     "use `" + lname + " += ...;` / `" + lname +
+                                         " -= ...;` or take `lock " + lname + ";` first");
+                }
+            }
             // #259: bağlam adı hedefin kaynaktaki biçimidir (`x`, `p.name`,
             // `a[i]`); eskiden sabit "assignment" yazılıyor, ipucu
             // `int? assignment = null;` gibi anlamsız kod öneriyordu.
@@ -1299,6 +1428,17 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                              "++ / -- requires a writable location (variable, field or "
                              "array element)",
                              "assign to a variable first: `int t = <expression>; t++;`");
+            // ADR-045: yakalanan kopya değiştirilemez. (shared ++/-- IR'de
+            // atomik RMW'dir — uyarı gerekmez.)
+            else if (auto* pid = dynamic_cast<IdentifierNode*>(pf->operand)) {
+                const std::string pname =
+                    pid->parserToken.token ? pid->parserToken.token->token : "?";
+                if (pid->capturedInThread)
+                    diag_.report("E016", pf->loc,
+                                 "cannot modify '" + pname +
+                                     "' inside a thread body: a captured variable is a copy",
+                                 "declare a new local inside the thread and modify that");
+            }
             // ADR-021: nullable operand artırılamaz — null'a 1 eklenemez.
             else if (opType.nullable)
                 diag_.report("E003", pf->loc,
@@ -1516,6 +1656,10 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 elemType = recvType;
                 lookupName = recvType.structName;
                 isStruct = true;
+            } else if (recvType.isPool() || recvType.isList() || recvType.isThread()) {
+                // ADR-045: Pool/List/Thread intrinsic metotları
+                result = checkThreadIntrinsic(sc, recvType, argTypes);
+                break;
             } else {
                 if (!recvType.isError())
                     diag_.report("E001", sc->loc,
@@ -1726,9 +1870,6 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         bool tgtIsBool = targetBase.isPrimitive() && targetBase.prim == PrimitiveKind::Bool;
 
         // bool↔int/float forbidden (ADR-026: "keep forbidden from start for safety")
-        bool srcIsNumeric = srcType.isPrimitive() && !srcIsBool;
-        bool tgtIsNumeric = targetBase.isPrimitive() && !tgtIsBool;
-
         if (tgtIsBool && !srcIsBool && !srcType.isError()) {
             // Hint KAYNAK TİPE göre ayrışır. Genel "value != 0" önerisi string
             // için çalışmaz: `s != 0` derlenir ama anlamlı bir sonuç vermez,
@@ -1856,6 +1997,72 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         break;
     }
 
+    // ── ADR-045: thread { gövde } ──────────────────────────────────────────
+    case ASTKind::ThreadExpr: {
+        auto* te = (ThreadExprNode*) node;
+        for (size_t i = 0; i < te->captures.size(); ++i) {
+            const Type& ct = te->captureTypes[i];
+            if (!ct.isError() && !isSendable(ct))
+                diag_.report("E015", te->loc,
+                             "type " + ct.toString() + " is not sendable: thread body captures '" +
+                                 te->captures[i] + "'",
+                             "only int/float/bool/byte/decimal/string/date/enum values, arrays "
+                             "and structs of them and Thread handles can cross a thread boundary");
+        }
+        // Gövde void bir fonksiyon gibi denetlenir (return thread'i bitirir);
+        // çevreleyen fonksiyonun kilit kapsamı ve daraltmaları geçmez.
+        const Type savedRet     = currentReturnType_;
+        const bool savedInFn    = inFunction_;
+        auto       savedLocks   = std::move(heldLocks_);
+        auto       savedNarrow  = narrowedNonNull_;
+        heldLocks_.clear();
+        currentReturnType_ = Type::Void();
+        inFunction_        = true;
+        if (te->body) checkStmt(te->body);
+        currentReturnType_ = savedRet;
+        inFunction_        = savedInFn;
+        heldLocks_         = std::move(savedLocks);
+        narrowedNonNull_   = std::move(savedNarrow);
+        result = Type::thread();
+        break;
+    }
+
+    // ── ADR-045: Pool(T) / List(T) ─────────────────────────────────────────
+    case ASTKind::CollectionNew: {
+        auto* cn = (CollectionNewNode*) node;
+        std::function<Type(const std::string&)> resolveType = [&](const std::string& name) -> Type {
+            if (!name.empty() && name.back() == '?') {
+                Type base = resolveType(name.substr(0, name.size() - 1));
+                return base.isError() ? Type::error() : base.asNullable();
+            }
+            Type t = Type::fromName(name);
+            if (!t.isError()) return t;
+            if (table_.structLayouts.count(name)) return Type::structType(name);
+            if (table_.isEnumName(name)) return Type::enumType(name);
+            if (name.size() > 2 && name.substr(name.size() - 2) == "[]") {
+                Type elem = resolveType(name.substr(0, name.size() - 2));
+                if (!elem.isError()) return Type::array(elem);
+            }
+            return Type::error();
+        };
+        Type elem = resolveType(cn->elemTypeName);
+        if (!allowCollectionNew_)
+            diag_.report("E014", cn->loc,
+                         std::string(cn->isPool ? "Pool" : "List") +
+                             "(T) is only allowed as the initializer of a shared global",
+                         "declare at module scope: `shared " + std::string(cn->isPool ? "Pool" : "List") +
+                             " name = " + (cn->isPool ? "Pool" : "List") + "(" + cn->elemTypeName + ");`");
+        if (elem.isError()) { result = Type::error(); break; }
+        if (!isSendable(elem))
+            diag_.report("E015", cn->loc,
+                         "type " + elem.toString() + " is not sendable (" +
+                             (cn->isPool ? "Pool" : "List") + " element type)",
+                         "elements are deep-copied between threads; Pool/List/function values "
+                         "cannot be elements");
+        result = cn->isPool ? Type::pool(elem) : Type::list(elem);
+        break;
+    }
+
     default:
         result = Type::error();
         break;
@@ -1866,4 +2073,215 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         exprNode->resolvedType = result;
 
     return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADR-045 (Faz 3-b) yardımcıları
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool TypeChecker::isSendable(const Type& t) const {
+    std::unordered_set<std::string> seen;
+    return isSendableImpl(t, seen);
+}
+
+// Gönderilebilir: skaler primitifler (void hariç), enum, Thread (id), ve
+// bunlardan oluşan dizi/struct'lar (nullable dahil). Pool/List/fonksiyon değil.
+bool TypeChecker::isSendableImpl(const Type& t, std::unordered_set<std::string>& seen) const {
+    switch (t.kind) {
+        case TypeKind::Primitive: return !t.isVoid();
+        case TypeKind::Enum:
+        case TypeKind::Thread:    return true;
+        case TypeKind::Array:     return t.elementType && isSendableImpl(*t.elementType, seen);
+        case TypeKind::Struct: {
+            if (!seen.insert(t.structName).second) return true;   // özyinelemeli struct
+            auto it = table_.structLayouts.find(t.structName);
+            if (it == table_.structLayouts.end()) return true;
+            for (const auto& field : it->second)
+                if (!isSendableImpl(field.second, seen)) return false;
+            return true;
+        }
+        case TypeKind::Error:     return true;   // önceki hata; zincirleme tanı yok
+        case TypeKind::Pool:
+        case TypeKind::List:
+        case TypeKind::Function:  return false;
+    }
+    return false;
+}
+
+bool TypeChecker::referencesSymbol(ASTNode* node, const Symbol* sym) {
+    if (!node) return false;
+    switch (node->kind) {
+        case ASTKind::Identifier:
+            return static_cast<IdentifierNode*>(node)->resolvedSymbol == sym;
+        case ASTKind::BinaryExpression: {
+            auto* b = static_cast<BinaryExpressionNode*>(node);
+            return referencesSymbol(b->Left, sym) || referencesSymbol(b->Right, sym);
+        }
+        case ASTKind::Call: {
+            auto* c = static_cast<CallExpressionNode*>(node);
+            if (referencesSymbol(c->callee, sym)) return true;
+            for (auto* a : c->arguments) if (referencesSymbol(a, sym)) return true;
+            return false;
+        }
+        case ASTKind::Postfix:
+            return referencesSymbol(static_cast<PostfixNode*>(node)->operand, sym);
+        case ASTKind::MemberAccess:
+            return referencesSymbol(static_cast<MemberAccessNode*>(node)->object, sym);
+        case ASTKind::IndexExpression: {
+            auto* ie = static_cast<IndexExpressionNode*>(node);
+            return referencesSymbol(ie->object, sym) || referencesSymbol(ie->index, sym);
+        }
+        case ASTKind::ArrayLiteral:
+            for (auto* e : static_cast<ArrayLiteralNode*>(node)->elements)
+                if (referencesSymbol(e, sym)) return true;
+            return false;
+        case ASTKind::ScopeCall:
+            for (auto* a : static_cast<ScopeCallNode*>(node)->arguments)
+                if (referencesSymbol(a, sym)) return true;
+            return false;
+        case ASTKind::CastExpression:
+            return referencesSymbol(static_cast<CastExpressionNode*>(node)->operand, sym);
+        default:
+            return false;
+    }
+}
+
+bool TypeChecker::referencesShared(ASTNode* node) {
+    if (!node) return false;
+    switch (node->kind) {
+        case ASTKind::Identifier: {
+            auto* s = static_cast<IdentifierNode*>(node)->resolvedSymbol;
+            return s && s->isShared;
+        }
+        case ASTKind::BinaryExpression: {
+            auto* b = static_cast<BinaryExpressionNode*>(node);
+            return referencesShared(b->Left) || referencesShared(b->Right);
+        }
+        case ASTKind::Call: {
+            auto* c = static_cast<CallExpressionNode*>(node);
+            for (auto* a : c->arguments) if (referencesShared(a)) return true;
+            return false;
+        }
+        case ASTKind::Postfix:
+            return referencesShared(static_cast<PostfixNode*>(node)->operand);
+        case ASTKind::MemberAccess:
+            return referencesShared(static_cast<MemberAccessNode*>(node)->object);
+        case ASTKind::IndexExpression: {
+            auto* ie = static_cast<IndexExpressionNode*>(node);
+            return referencesShared(ie->object) || referencesShared(ie->index);
+        }
+        case ASTKind::ArrayLiteral:
+            for (auto* e : static_cast<ArrayLiteralNode*>(node)->elements)
+                if (referencesShared(e)) return true;
+            return false;
+        case ASTKind::ScopeCall:
+            for (auto* a : static_cast<ScopeCallNode*>(node)->arguments)
+                if (referencesShared(a)) return true;
+            return false;
+        case ASTKind::CastExpression:
+            return referencesShared(static_cast<CastExpressionNode*>(node)->operand);
+        default:
+            return false;
+    }
+}
+
+Type TypeChecker::checkThreadIntrinsic(ScopeCallNode* sc, const Type& recv,
+                                       const std::vector<Type>& argTypes) {
+    const std::string& m    = sc->methodName;
+    const size_t       argc = argTypes.empty() ? 0 : argTypes.size() - 1;   // alıcı hariç
+    const std::string  kind = recv.isPool() ? "Pool" : recv.isList() ? "List" : "Thread";
+
+    auto needArgs = [&](size_t n) {
+        if (argc == n) return true;
+        diag_.report("E008", sc->loc,
+                     "'" + m + "' expects " + std::to_string(n) + " argument(s), " +
+                         std::to_string(argc) + " given",
+                     "see the " + kind + " method list in docs/threading-guide.md");
+        return false;
+    };
+    auto argIsLit = [&](size_t i) {
+        return i < sc->arguments.size() && sc->arguments[i] &&
+               sc->arguments[i]->kind == ASTKind::Literal;
+    };
+    auto blockingInLock = [&](const std::string& what) {
+        if (anyLockHeld())
+            diag_.report("W009", sc->loc, what + " inside a lock scope may block while holding the lock",
+                         "release the lock first, or keep locked sections short");
+    };
+
+    // Pool/List değerleri yalnız shared global adıyla kullanılabilir (v1 kısıtı).
+    if (recv.isPool() || recv.isList()) {
+        auto* id = sc->arguments.empty() ? nullptr : dynamic_cast<IdentifierNode*>(sc->arguments[0]);
+        if (!id || !id->resolvedSymbol || !id->resolvedSymbol->isShared) {
+            diag_.report("E014", sc->loc,
+                         kind + " values can only be used through their shared global name",
+                         "call the method directly on the shared global: `name." + m + "(...)`");
+            return Type::error();
+        }
+    }
+    const Type elem = recv.elementType ? *recv.elementType : Type::error();
+
+    if (recv.isPool()) {
+        if (m == "push") {
+            sc->threadOp = TI_PoolPush;
+            if (needArgs(1)) checkAssign(elem, argTypes[1], argIsLit(1), sc->loc, "push argument");
+            blockingInLock("push");
+            return Type::Void();
+        }
+        if (m == "pop") {
+            sc->threadOp = TI_PoolPop;
+            needArgs(0);
+            blockingInLock("pop");
+            return elem;
+        }
+        if (m == "setMax") {
+            sc->threadOp = TI_PoolSetMax;
+            if (needArgs(1)) checkAssign(Type::Int(), argTypes[1], argIsLit(1), sc->loc, "setMax argument");
+            return Type::Void();
+        }
+        if (m == "length") {
+            sc->threadOp = TI_PoolLength;
+            needArgs(0);
+            return Type::Int();
+        }
+    } else if (recv.isList()) {
+        if (m == "append") {
+            sc->threadOp = TI_ListAppend;
+            if (needArgs(1)) checkAssign(elem, argTypes[1], argIsLit(1), sc->loc, "append argument");
+            return Type::Void();
+        }
+        if (m == "get") {
+            sc->threadOp = TI_ListGet;
+            if (needArgs(1)) checkAssign(Type::Int(), argTypes[1], argIsLit(1), sc->loc, "get index");
+            return elem;
+        }
+        if (m == "length") {
+            sc->threadOp = TI_ListLength;
+            needArgs(0);
+            return Type::Int();
+        }
+    } else {
+        if (m == "stop") {
+            sc->threadOp = TI_ThreadStop;
+            needArgs(0);
+            return Type::Void();
+        }
+        if (m == "join") {
+            sc->threadOp = TI_ThreadJoin;
+            needArgs(0);
+            blockingInLock("join");
+            return Type::Void();
+        }
+        if (m == "running") {
+            sc->threadOp = TI_ThreadRunning;
+            needArgs(0);
+            return Type::Bool();
+        }
+    }
+    const std::string methods = recv.isPool()   ? "push, pop, setMax, length"
+                              : recv.isList()   ? "append, get, length"
+                                                : "stop, join, running";
+    diag_.report("E001", sc->loc, "'" + m + "' is not a method of " + kind,
+                 kind + " methods: " + methods);
+    return Type::error();
 }

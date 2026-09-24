@@ -1,9 +1,0 @@
-IR DUMP
-
-NAME=main PARAMS=0 SLOTS=3
-    0  LOAD_STRING     s0 = "/tmp/saqut-ir-baseline-never-created"
-    1  CALLHOST        __ffi__(s0)
-    2  LOAD_CONST      s2 = 0
-    3  RETURN          return s2
-
-END

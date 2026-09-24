@@ -1,0 +1,40 @@
+// ADR-045 örneği: yakalama kopyadır, globaller thread başınadır.
+// Thread gövdesi n, s, p, arr'ı başlangıçta KOPYA olarak alır; p/arr
+// üzerindeki değişiklikler yalnız kopyayı etkiler. Global g'nin başlatıcısı
+// thread'de yeniden çalışır (10), main'in atadığı 20 görünmez.
+struct Point {
+    int x;
+    int y;
+}
+
+shared List out = List(string);
+int g = 10;
+
+int main() {
+    int n = 5;
+    string s = "abc";
+    Point p;
+    p.x = 1;
+    p.y = 2;
+    int[] arr = [1, 2, 3];
+    g = 20;
+
+    Thread t = thread {
+        g = g + 1;
+        p.x = 100;
+        arr[0] = 42;
+        out.append(s + ":" + (n as string) + ":" + (g as string) + ":" +
+                   (p.x as string) + ":" + (arr[0] as string));
+    };
+    t.join();
+
+    print(out.get(0));
+    print("\n");
+    print(g);
+    print(" ");
+    print(p.x);
+    print(" ");
+    print(arr[0]);
+    print("\n");
+    return 0;
+}

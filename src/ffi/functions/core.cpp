@@ -17,14 +17,17 @@
 #include <iostream>
 #include "ffi/host_functions.hpp"
 #include "ffi/host_bridge.hpp"
+#include "runtime/output_lock.hpp"
 
 static int core_print(HostCallFrame* f) {
     if (f->argc < 1) { f->ret = HostSlot::voidVal(); return 0; }
     std::string text = fromHostSlot(f->args[0]).toString();
+    // ADR-045 §18: print çağrı başına atomik (1-f).
     if (f->env && f->env->outputSink) {
+        std::lock_guard<std::mutex> lock(programOutputMutex());
         (*static_cast<std::function<void(const std::string&)>*>(f->env->outputSink))(text);
     } else {
-        std::cout << text << std::flush;
+        writeProgramOutput(std::cout, text);
     }
     f->ret = HostSlot::voidVal();
     return 0;

@@ -1,1 +1,0 @@
-saqut check file:tests/lsp/fixtures/syntax_error_recovery.sqt

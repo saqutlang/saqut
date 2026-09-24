@@ -1,0 +1,12 @@
+# ADR-045: Pool/List/Thread receiver'da nokta tamamlama metotları önerir
+# (push/pop/setMax/length, append/get/length, join/stop/running).
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"rootUri":null,"capabilities":{}}}
+{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file://%FIXDIR%/completion_threading.sqt","languageId":"sqt","version":1,"text":"shared Pool jobs = Pool(int);\nshared List seen = List(int);\nint main() {\n    Thread t = thread { jobs.push(1); };\n    jobs.\n    return 0;\n}\n"}}}
+# jobs. → Pool metotları
+{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"file://%FIXDIR%/completion_threading.sqt"},"position":{"line":4,"character":9}}}
+{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file://%FIXDIR%/completion_threading.sqt","version":2},"contentChanges":[{"text":"shared Pool jobs = Pool(int);\nshared List seen = List(int);\nint main() {\n    Thread t = thread { jobs.push(1); };\n    seen.\n    return 0;\n}\n"}]}}
+# seen. → List metotları
+{"jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":{"textDocument":{"uri":"file://%FIXDIR%/completion_threading.sqt"},"position":{"line":4,"character":9}}}
+{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file://%FIXDIR%/completion_threading.sqt","version":3},"contentChanges":[{"text":"shared Pool jobs = Pool(int);\nshared List seen = List(int);\nint main() {\n    Thread t = thread { jobs.push(1); };\n    t.\n    return 0;\n}\n"}]}}
+# t. → Thread metotları
+{"jsonrpc":"2.0","id":4,"method":"textDocument/completion","params":{"textDocument":{"uri":"file://%FIXDIR%/completion_threading.sqt"},"position":{"line":4,"character":6}}}

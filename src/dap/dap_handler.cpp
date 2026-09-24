@@ -27,8 +27,20 @@
 #include "vm/value.hpp"
 #include "gc/gc_object.hpp"
 #include "gc/gc_heap.hpp"
+#include "runtime/threading/park.hpp"
+#include "runtime/threading/shared_slots.hpp"
+#include "runtime/threading/thread_runtime.hpp"
+#include "runtime/threading/thread_table.hpp"
+#include <cstdlib>
 #include <sstream>
 #include <climits>
+
+// ADR-045 Faz 4: park katmanının deadlock işleyicisi düz bir fonksiyon
+// işaretçisidir; etkin DAP oturumuna buradan ulaşılır.
+static DapHandler* g_activeDap = nullptr;
+static void dapDeadlockHandler(const std::string& report) {
+    if (g_activeDap) g_activeDap->serveDeadlock(report);
+}
 
 // ── Yardımcı: DAP response oluştur ──────────────────────────────────────────
 
@@ -225,37 +237,43 @@ void DapHandler::sendTermination(bool withExit) {
 void DapHandler::reportStepResult() {
     if (!vm_) return;
     if (vm_->state() == Interpreter::RunState::Paused)
-        sendEvent("stopped", {{"reason","step"}, {"threadId",1}});
-    else if (vm_->state() == Interpreter::RunState::Finished)
+        sendStopped({{"reason","step"}, {"threadId",1}});
+    else if (vm_->state() == Interpreter::RunState::Finished) {
+        finishProgram();
         sendTermination(true);
+    }
 }
 
 void DapHandler::runWithBudget() {
     if (!vm_) return;
     invalidateVarRefs(); // koşu devam ediyor → eski variablesReference'lar öldü
+    pauseWorkers(false); // ADR-045 Faz 4: continue/step tüm thread'leri sürdürür
 
     while (true) {
         Interpreter::RunReason reason = vm_->runUntilEvent(kRunBudgetChunk, -1);
+        drainWorkerOutput();   // ADR-045 Faz 4
+        syncThreadEvents();
 
         switch (reason) {
             case Interpreter::RunReason::Breakpoint: {
                 nlohmann::json body = {{"reason","breakpoint"}, {"threadId",1}};
                 auto hit = bpIds_.find(vm_->currentLocation());
                 if (hit != bpIds_.end()) body["hitBreakpointIds"] = {hit->second};
-                sendEvent("stopped", body);
+                sendStopped(body);
                 drainPendingRequests();
                 return;
             }
             case Interpreter::RunReason::StepDone:
-                sendEvent("stopped", {{"reason","step"}, {"threadId",1}});
+                sendStopped({{"reason","step"}, {"threadId",1}});
                 drainPendingRequests();
                 return;
             case Interpreter::RunReason::Finished:
+                finishProgram();
                 sendTermination(true);
                 drainPendingRequests();
                 return;
             case Interpreter::RunReason::Error:
-                sendEvent("stopped", {{"reason","exception"}, {"threadId",1}});
+                sendStopped({{"reason","exception"}, {"threadId",1}});
                 drainPendingRequests();
                 return;
             case Interpreter::RunReason::BudgetExhausted:
@@ -269,8 +287,7 @@ void DapHandler::runWithBudget() {
                             // DAP sırası: response ÖNCE, stopped SONRA
                             JsonRpc::writeMessage(out_,
                                 makeResponse(seq, "pause", {}));
-                            sendEvent("stopped",
-                                {{"reason","pause"}, {"threadId",1}});
+                            sendStopped({{"reason","pause"}, {"threadId",1}});
                             drainPendingRequests();
                             return;
                         }
@@ -353,6 +370,9 @@ nlohmann::json DapHandler::handleInitialize(const nlohmann::json& req) {
         {"supportsExceptionInfoRequest",     false},
         {"supportsEvaluateForHovers",        true},
         {"supportTerminateDebuggee",         true}
+        // ADR-045 Faz 4: continue/step tüm thread'leri sürdürür (gdb
+        // scheduler-locking off). supportsSingleThreadExecutionRequests
+        // bildirilmez — DAP varsayılanı false (yanıt Faz 4 öncesiyle aynı).
     };
 
     // DAP kuralı: ÖNCE response, SONRA initialized event
@@ -411,9 +431,26 @@ nlohmann::json DapHandler::handleLaunch(const nlohmann::json& req) {
 
     // Faz 7 (#105): print çıktısını output event'ine yönlendir — protokol
     // stdout'una çıplak bayt sızmaz, VS Code Debug Console'da görünür.
+    // ADR-045 Faz 4: sink işçi thread'lere de kopyalanır; onlar protokol
+    // akışına doğrudan yazmaz (DAP thread'inin yazılarıyla karışırdı) —
+    // kuyruğa koyar, DAP thread'i boşaltır.
+    dapThread_ = std::this_thread::get_id();
     vm_->setOutputSink([this](const std::string& text) {
-        sendEvent("output", {{"category", "stdout"}, {"output", text}});
+        if (std::this_thread::get_id() == dapThread_) {
+            sendEvent("output", {{"category", "stdout"}, {"output", text}});
+        } else {
+            std::lock_guard<std::mutex> lk(workerOutMu_);
+            workerOut_.push_back(text);
+        }
     });
+
+    // ADR-045 Faz 4: thread programı — deadlock süreci öldürmez, stopped olur.
+    usesThreads_ = irProgram_->usesThreads;
+    if (usesThreads_) {
+        g_activeDap = this;
+        saqut::threading::setDeadlockHandler(&dapDeadlockHandler);
+        saqut::threading::ThreadTable::instance().setRecordLifecycleEvents(true);
+    }
 
     // VM'i ilklendir ama çalıştırma — configurationDone'da başlatılacak
     vm_->initForDebug();
@@ -490,10 +527,12 @@ nlohmann::json DapHandler::handleConfigurationDone(const nlohmann::json& req) {
         // D-1: tek komut çalıştırmak yerine `main`'in ilk görünür satırına
         // kadar ilerle (global başlatıcı prelude'u gizli çalışır).
         vm_->stepToFirstLine();
-        if (vm_->state() == Interpreter::RunState::Finished)
+        if (vm_->state() == Interpreter::RunState::Finished) {
+            finishProgram();
             sendTermination(true);
-        else
-            sendEvent("stopped", {{"reason","entry"}, {"threadId",1}});
+        } else {
+            sendStopped({{"reason","entry"}, {"threadId",1}});
+        }
     } else {
         runWithBudget();
     }
@@ -518,6 +557,12 @@ nlohmann::json DapHandler::handleContinue(const nlohmann::json& req) {
 nlohmann::json DapHandler::handleNext(const nlohmann::json& req) {
     int seq = req.value("seq", 0);
 
+    // ADR-045 Faz 4 (PLAN B): adımlama yalnız ana thread'de.
+    if (req.value("arguments", nlohmann::json::object()).value("threadId", 1) != 1)
+        return makeResponse(seq, "next",
+            {{"error", "stepping is only supported on the main thread (v1)"}}, false);
+    pauseWorkers(false);
+
     // ÖNCE response yaz
     nlohmann::json resp = makeResponse(seq, "next", {});
     JsonRpc::writeMessage(out_, resp);
@@ -538,6 +583,12 @@ nlohmann::json DapHandler::handleNext(const nlohmann::json& req) {
 nlohmann::json DapHandler::handleStepIn(const nlohmann::json& req) {
     int seq = req.value("seq", 0);
 
+    // ADR-045 Faz 4 (PLAN B): adımlama yalnız ana thread'de.
+    if (req.value("arguments", nlohmann::json::object()).value("threadId", 1) != 1)
+        return makeResponse(seq, "stepIn",
+            {{"error", "stepping is only supported on the main thread (v1)"}}, false);
+    pauseWorkers(false);
+
     // ÖNCE response yaz
     nlohmann::json resp = makeResponse(seq, "stepIn", {});
     JsonRpc::writeMessage(out_, resp);
@@ -557,6 +608,12 @@ nlohmann::json DapHandler::handleStepIn(const nlohmann::json& req) {
 
 nlohmann::json DapHandler::handleStepOut(const nlohmann::json& req) {
     int seq = req.value("seq", 0);
+
+    // ADR-045 Faz 4 (PLAN B): adımlama yalnız ana thread'de.
+    if (req.value("arguments", nlohmann::json::object()).value("threadId", 1) != 1)
+        return makeResponse(seq, "stepOut",
+            {{"error", "stepping is only supported on the main thread (v1)"}}, false);
+    pauseWorkers(false);
 
     // ÖNCE response yaz
     nlohmann::json resp = makeResponse(seq, "stepOut", {});
@@ -587,23 +644,63 @@ nlohmann::json DapHandler::handleThreads(const nlohmann::json& req) {
     int seq = req.value("seq", 0);
     nlohmann::json threads = nlohmann::json::array();
     threads.push_back({{"id", 1}, {"name", "main"}});
+    // ADR-045 Faz 4: canlı işçi thread'ler ("thread#N @ dosya:satır").
+    if (usesThreads_) {
+        for (auto* t : saqut::threading::ThreadTable::instance().snapshot())
+            if (t->id != 1 && !t->finished())
+                threads.push_back({{"id", t->id}, {"name", t->name}});
+    }
     return makeResponse(seq, "threads", {{"threads", threads}});
 }
 
 nlohmann::json DapHandler::handleStackTrace(const nlohmann::json& req) {
     int seq = req.value("seq", 0);
     nlohmann::json frames = nlohmann::json::array();
+    const int threadId =
+        req.value("arguments", nlohmann::json::object()).value("threadId", 1);
 
-    if (vm_) {
-        int depth = vm_->callDepth();
-        for (int i = 0; i < depth; ++i) {
-            frames.push_back({
-                {"id",     i},
-                {"name",   vm_->frameFunctionName(i)},
-                {"line",   vm_->frameSourceLine(i)},
-                {"column", 0},
-                {"source", {{"path", vm_->frameSourceFile(i)}}}
-            });
+    if (threadId == 1) {
+        if (vm_) {
+            int depth = vm_->callDepth();
+            for (int i = 0; i < depth; ++i) {
+                frames.push_back({
+                    {"id",     i},
+                    {"name",   vm_->frameFunctionName(i)},
+                    {"line",   vm_->frameSourceLine(i)},
+                    {"column", 0},
+                    {"source", {{"path", vm_->frameSourceFile(i)}}}
+                });
+            }
+        }
+    } else if (usesThreads_) {
+        // ADR-045 Faz 4: işçi thread — yalnız park'tayken (all-stop) okunur;
+        // bloklanmış thread'in üst frame adı "[bekliyor: ...]" ile işaretlenir.
+        auto* core = saqut::threading::ThreadTable::instance().find(threadId);
+        if (core) {
+            const auto info = saqut::threading::parkInfoOf(*core);
+            const std::string mark = (info.parked && info.where != "debug pause")
+                                         ? "[bekliyor: " + info.where + "] " : "";
+            int d0 = 0;
+            Interpreter* w = frameInterpreter(threadId * 100, d0);
+            if (w) {
+                const int depth = std::min(w->callDepth(), 100);
+                for (int i = 0; i < depth; ++i) {
+                    frames.push_back({
+                        {"id",     threadId * 100 + i},
+                        {"name",   (i == 0 ? mark : std::string()) + w->frameFunctionName(i)},
+                        {"line",   w->frameSourceLine(i)},
+                        {"column", 0},
+                        {"source", {{"path", w->frameSourceFile(i)}}}
+                    });
+                }
+            } else {
+                frames.push_back({
+                    {"id",     threadId * 100},
+                    {"name",   info.parked ? "[bekliyor: " + info.where + "]" : "[çalışıyor]"},
+                    {"line",   0},
+                    {"column", 0}
+                });
+            }
         }
     }
 
@@ -622,6 +719,13 @@ nlohmann::json DapHandler::handleScopes(const nlohmann::json& req) {
         {"variablesReference", 1000 + frameId},
         {"expensive",          false}
     });
+    // ADR-045 Faz 4: shared primitif değerleri, Pool ve List uzunlukları.
+    if (usesThreads_)
+        scopes.push_back({
+            {"name",               "Shared"},
+            {"variablesReference", kSharedScopeRef},
+            {"expensive",          false}
+        });
     return makeResponse(seq, "scopes", {{"scopes", scopes}});
 }
 
@@ -629,6 +733,10 @@ nlohmann::json DapHandler::handleVariables(const nlohmann::json& req) {
     int seq     = req.value("seq", 0);
     nlohmann::json args = req.value("arguments", nlohmann::json::object());
     int ref     = args.value("variablesReference", 0);
+
+    // ADR-045 Faz 4: "Shared" scope (frame aralığından önce ele alınır).
+    if (ref == kSharedScopeRef)
+        return makeResponse(seq, "variables", {{"variables", sharedVariables()}});
 
     // Dal sırası önemli: child ref'ler 100000+, frame (scope) ref'leri
     // 1000+frameId — önce child aralığını ele, yoksa 100000 "frame 99000"
@@ -643,15 +751,17 @@ nlohmann::json DapHandler::handleVariables(const nlohmann::json& req) {
 
     // Frame variable'ları (ref >= 1000)
     if (ref >= 1000) {
-        int frameId = ref - 1000;
+        // ADR-045 Faz 4: frameId işçi thread çerçevesini de gösterebilir.
+        int depth = 0;
+        Interpreter* fvm = frameInterpreter(ref - 1000, depth);
         nlohmann::json vars = nlohmann::json::array();
 
-        if (vm_ && frameId < vm_->callDepth()) {
+        if (fvm && depth < fvm->callDepth()) {
             // IRFunction'daki slot sayısını al
-            int slotCount = vm_->frameSlotCount(frameId);
+            int slotCount = fvm->frameSlotCount(depth);
             for (int slot = 0; slot < slotCount; ++slot) {
-                Value v = vm_->readSlotInFrame(frameId, slot);
-                std::string name = vm_->slotName(frameId, slot);
+                Value v = fvm->readSlotInFrame(depth, slot);
+                std::string name = fvm->slotName(depth, slot);
                 if (name.empty()) continue;  // geçici/adsız slotları atla
 
                 vars.push_back({
@@ -683,6 +793,7 @@ nlohmann::json DapHandler::handleTerminate(const nlohmann::json& req) {
     JsonRpc::writeMessage(out_, resp);
 
     invalidateVarRefs();
+    shutdownThreads();   // ADR-045: işçiler IRProgram'ı kullanıyor — önce bitmeli
     vm_.reset();
     irProgram_.reset();
     sendTermination(false);
@@ -692,9 +803,147 @@ nlohmann::json DapHandler::handleTerminate(const nlohmann::json& req) {
 nlohmann::json DapHandler::handleDisconnect(const nlohmann::json& req) {
     int seq = req.value("seq", 0);
     invalidateVarRefs();
+    shutdownThreads();   // ADR-045
     vm_.reset();
     irProgram_.reset();
     return makeResponse(seq, "disconnect", {});
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADR-045 Faz 4: çok thread'li programlar
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DapHandler::drainWorkerOutput() {
+    std::vector<std::string> out;
+    {
+        std::lock_guard<std::mutex> lk(workerOutMu_);
+        out.swap(workerOut_);
+    }
+    for (auto& text : out)
+        sendEvent("output", {{"category", "stdout"}, {"output", text}});
+}
+
+void DapHandler::syncThreadEvents() {
+    if (!usesThreads_) return;
+    // S3: ThreadTable'ın yaşam döngüsü kuyruğundan — iki tur arasında
+    // başlayıp biten kısa ömürlü thread'ler de started+exited olarak görünür.
+    for (const auto& ev : saqut::threading::ThreadTable::instance().drainLifecycleEvents())
+        sendEvent("thread", {{"reason", ev.started ? "started" : "exited"},
+                             {"threadId", ev.id}});
+}
+
+void DapHandler::pauseWorkers(bool on) {
+    if (usesThreads_) saqut::threading::setDebugPauseAll(on);
+}
+
+// All-stop: ana thread durduğunda işçiler bir sonraki yoklama noktasında park
+// eder (pop/wait'te bekleyenler zaten durmuş sayılır).
+void DapHandler::sendStopped(nlohmann::json body) {
+    if (usesThreads_) {
+        pauseWorkers(true);
+        drainWorkerOutput();
+        syncThreadEvents();
+        body["allThreadsStopped"] = true;
+    }
+    sendEvent("stopped", body);
+}
+
+// main döndü: açık thread'ler beklenir (CLI ile aynı semantik), sonra olaylar.
+void DapHandler::finishProgram() {
+    if (!usesThreads_) return;
+    pauseWorkers(false);
+    saqut::threading::programEnd();
+    drainWorkerOutput();
+    syncThreadEvents();
+}
+
+void DapHandler::shutdownThreads() {
+    if (!usesThreads_) return;
+    auto& table = saqut::threading::ThreadTable::instance();
+    for (auto* t : table.snapshot())
+        if (t->id != 1 && !t->finished()) table.requestStop(t->id);
+    pauseWorkers(false);
+    table.joinAll();
+    drainWorkerOutput();
+    syncThreadEvents();   // son exited olayları
+    table.setRecordLifecycleEvents(false);
+    usesThreads_ = false;
+    if (g_activeDap == this) {
+        g_activeDap = nullptr;
+        saqut::threading::setDeadlockHandler(nullptr);
+    }
+}
+
+Interpreter* DapHandler::frameInterpreter(int frameId, int& depth) const {
+    if (frameId < 100) {
+        depth = frameId;
+        return vm_.get();
+    }
+    if (!usesThreads_) return nullptr;
+    const int threadId = frameId / 100;
+    depth = frameId % 100;
+    auto* core = saqut::threading::ThreadTable::instance().find(threadId);
+    if (!core || !core->debugTarget) return nullptr;
+    // Yalnız park'taki (all-stop'ta duraklatılmış ya da bloklanmış) thread'in
+    // çerçeveleri sabittir.
+    if (!saqut::threading::parkInfoOf(*core).parked) return nullptr;
+    return static_cast<Interpreter*>(core->debugTarget);
+}
+
+nlohmann::json DapHandler::sharedVariables() const {
+    using namespace saqut::threading;
+    nlohmann::json vars = nlohmann::json::array();
+    auto& slots = SharedSlots::instance();
+    for (int i = 0; i < slots.size(); ++i) {
+        SharedSlot& s = slots.at(i);
+        std::string value;
+        switch (s.kind) {
+            case SharedKind::Int:   value = std::to_string(slots.loadInt(i)); break;
+            case SharedKind::Float: value = formatFloat32Print(slots.loadFloat(i)); break;
+            case SharedKind::Bool:  value = slots.loadBool(i) ? "true" : "false"; break;
+            case SharedKind::Pool:  value = "Pool(length=" + std::to_string(slots.pool(i).length()) + ")"; break;
+            case SharedKind::List:  value = "List(length=" + std::to_string(slots.list(i).length()) + ")"; break;
+        }
+        vars.push_back({{"name", s.name}, {"value", value}, {"type", ""},
+                        {"variablesReference", 0}});
+    }
+    return vars;
+}
+
+// Deadlock (park katmanı çağırır; tüm thread'ler park'ta — DAP thread'i de
+// içeride bloklu). Süreci öldürmek yerine stopped(exception) gönderir ve
+// istekleri burada yanıtlar; ilerleme istekleri reddedilir, terminate /
+// disconnect süreci 70 ile sonlandırır.
+void DapHandler::serveDeadlock(const std::string& report) {
+    sendEvent("output", {{"category", "stderr"}, {"output", report}});
+    sendEvent("stopped", {{"reason", "exception"},
+                          {"description", "deadlock: all threads are blocked"},
+                          {"text", report},
+                          {"threadId", 1},
+                          {"allThreadsStopped", true}});
+    while (true) {
+        auto msg = reader_.readMessage();
+        if (msg.is_null() || msg.is_discarded()) {
+            if (reader_.eof()) std::_Exit(70);
+            continue;
+        }
+        const std::string cmd = msg.value("command", "");
+        const int seq = msg.value("seq", 0);
+        if (cmd == "continue" || cmd == "next" || cmd == "stepIn" || cmd == "stepOut" ||
+            cmd == "pause") {
+            JsonRpc::writeMessage(out_, makeResponse(seq, cmd,
+                {{"error", "program is deadlocked (all threads are blocked)"}}, false));
+            continue;
+        }
+        if (cmd == "terminate" || cmd == "disconnect") {
+            JsonRpc::writeMessage(out_, makeResponse(seq, cmd, {}));
+            sendEvent("terminated", {});
+            out_.flush();
+            std::_Exit(70);
+        }
+        auto resp = dispatch(msg);
+        if (!resp.is_null()) JsonRpc::writeMessage(out_, resp);
+    }
 }
 
 // ── evaluate ─────────────────────────────────────────────────────────────────

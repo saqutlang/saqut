@@ -1,4 +1,0 @@
--- Release modu (statik, optimize)
--- Configuring done (0.0s)
--- Generating done (0.0s)
--- Build files have been written to: /tmp/saqut-sq090-amendment02-build-wbStc9

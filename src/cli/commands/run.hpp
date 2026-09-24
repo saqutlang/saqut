@@ -22,16 +22,18 @@
 #include "ir/ir_generator.hpp"
 #include "vm/interpreter.hpp"
 #include "mir/mir_backend.hpp"
+#include "runtime/compiled_program.hpp"
+#include "runtime/isolate.hpp"
 #include "profiling/stage_timer.hpp"
 
 inline int cmdRun(const CliArgs& args) {
     std::string filePath = inputFilePath(args);
     if (filePath.empty()) { std::cerr << "error: no input file\n"; return saqut::exit_code::kUsageError; }
 
-    // src/profiling/ (--profile): args.profile false ise timer kullanılmaz,
+    // src/Profiling/ (--profile): args.profile false ise timer kullanılmaz,
     // ScopedStage'ler no-op kalır (StageTimer::ScopedStage tasarımı gereği).
-    profiling::StageTimer  stageTimer;
-    profiling::StageTimer* profilerPtr = args.profile ? &stageTimer : nullptr;
+    Profiling::StageTimer  stageTimer;
+    Profiling::StageTimer* profilerPtr = args.profile ? &stageTimer : nullptr;
 
     // ── Aşama 1: Tüm modülleri yükle (BFS parse) ─────────────────────────
     ModuleRegistry   registry;
@@ -76,7 +78,7 @@ inline int cmdRun(const CliArgs& args) {
 
     // ── Aşama 4 (opsiyonel): Optimizasyon ────────────────────────────────
     if (args.optimize) {
-        profiling::StageTimer::ScopedStage _prof(profilerPtr, "optimize");
+        Profiling::StageTimer::ScopedStage _prof(profilerPtr, "optimize");
         CompilerConfig   cfg;
         DiagnosticEngine optDiag;
         // --profile: "geçiş" = fixpoint tur sayısı (her modül için ayrı ayrı
@@ -94,9 +96,11 @@ inline int cmdRun(const CliArgs& args) {
     IRGenerator irGenerator;
     IRProgram   program;
     {
-        profiling::StageTimer::ScopedStage _prof(profilerPtr, "ir-gen");
+        Profiling::StageTimer::ScopedStage _prof(profilerPtr, "ir-gen");
         program = irGenerator.generateModuleGraph(graph, symbolTable);
     }
+    // ADR-045 (1-e): derleme bitti; dosya kayıt defteri koşu boyunca salt okunur.
+    FileRegistry::instance().freeze();
     // --profile: "instr" = üretilen toplam IR talimatı (tüm fonksiyonlar).
     if (profilerPtr) {
         long long totalInstr = 0;
@@ -128,8 +132,18 @@ inline int cmdRun(const CliArgs& args) {
         // + native derleme) ve "jit-exec" (yalnizca calistirma) mir_backend
         // TARAFINDAN ayri ayri raporlanir, burada tek bir "vm/jit" ile
         // sarilmiyor (kullanici talimati: bu ikisi karistirilmasin).
-        bool jitOk = mir_backend::tryCompileAndRunProgram(
-            program, jitResult, reason, args.programArgs, profilerPtr);
+        // ADR-045 (c4): CompiledProgram'ın sahibi run komutudur. Yıkım sırası:
+        // (thread'ler join) → koşu isolate'i serbest → CompiledProgram yıkımı
+        // (MIR_gen_finish/MIR_finish) — unique_ptr kapsam sonunda.
+        std::unique_ptr<CompiledProgram> compiled =
+            mir_backend::compileProgram(program, reason, profilerPtr);
+        bool jitOk = compiled != nullptr;
+        if (jitOk) {
+            Isolate&     iso = Isolate::current();
+            IsolateGuard guard(iso, compiled.get());
+            mir_backend::runOnIsolate(*compiled, iso, jitResult, args.programArgs,
+                                      profilerPtr);
+        }
         if (jitOk) {
             if (args.verbose) std::cerr << "[jit] whole program ran on the JIT (VM not used)\n";
             // --gc-stats: VM ve JIT AYNI formatta raporlar — iki backend aynı

@@ -18,6 +18,14 @@
 
 #include "parser/ast_node.hpp"
 
+// ADR-045: Pool/List/Thread alıcılı intrinsic metotlar (ScopeCallNode::threadOp).
+enum ThreadIntrinsic : int {
+    TI_None = 0,
+    TI_PoolPush, TI_PoolPop, TI_PoolSetMax, TI_PoolLength,
+    TI_ListAppend, TI_ListGet, TI_ListLength,
+    TI_ThreadStop, TI_ThreadJoin, TI_ThreadRunning,
+};
+
 class PostfixNode : public ExpressionNode {
 public:
     ASTNode*  operand  = nullptr;
@@ -79,6 +87,9 @@ public:
     std::string methodName;     // "push", "pop", "upper", "toJson", ...
     std::vector<ASTNode*> arguments;
     int         builtinId = -1; // TypeChecker çözer; IR codegen kullanır
+    // ADR-045: Pool/List/Thread alıcılı intrinsic metot (ThreadIntrinsic);
+    // 0 = değil. TypeChecker çözer; IR SHARED/POOL/LIST/THREAD opcode'u üretir.
+    int         threadOp = 0;
     // ADR-033 (#85): UFCS nokta çağrısı — expr.method(args) şekeri.
     // true ise leftTypeName boştur, receiver arguments[0]'dadır; kategori
     // TypeChecker'da receiver TİPİNDEN çözülür. IR aynı CALLHOST'a düşer.
@@ -98,6 +109,31 @@ public:
     bool        targetNullable = false; // as int? → true
     CastExpressionNode();
     ~CastExpressionNode() override { delete operand; }
+    void log(int indent = 0) override;
+    std::string toJson(int depth = 0) override;
+};
+
+// ADR-045: thread { gövde } — ifade; tipi Thread. Gövde hemen başlayan yeni bir
+// thread'de (kendi isolate'inde) çalışır. SymbolCollector yakalanan yerelleri
+// (çevreleyen fonksiyonun yerel/parametreleri) captures/captureTypes'a yazar;
+// IRGenerator gövdeyi 0 parametreli sentetik fonksiyona kaldırır (Faz 3-c).
+class ThreadExprNode : public ExpressionNode {
+public:
+    ASTNode*                 body = nullptr;   // BlockNode
+    std::vector<std::string> captures;         // yakalanan yerel adları (ilk görülme sırası)
+    std::vector<Type>        captureTypes;     // captures ile aynı sıra
+    ThreadExprNode();
+    ~ThreadExprNode() override { delete body; }
+    void log(int indent = 0) override;
+    std::string toJson(int depth = 0) override;
+};
+
+// ADR-045: Pool(T) / List(T) — argüman ifade değil TİP adıdır (§DİL YÜZEYİ 13).
+class CollectionNewNode : public ExpressionNode {
+public:
+    bool        isPool = true;    // false → List
+    std::string elemTypeName;     // "int", "Job", "string[]", "int?" ...
+    CollectionNewNode();
     void log(int indent = 0) override;
     std::string toJson(int depth = 0) override;
 };

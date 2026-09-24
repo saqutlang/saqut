@@ -1,5 +1,0 @@
-/tmp/saqut-sq090-baseline-fixtures-sYNDsc/syntax_error.sqt:1:12: error [E901]: unexpected token ':' — expected a statement
-/tmp/saqut-sq090-baseline-fixtures-sYNDsc/syntax_error.sqt:1:18: error [E904]: expected variable name
-/tmp/saqut-sq090-baseline-fixtures-sYNDsc/syntax_error.sqt:1:1: error [E007]: unknown type: 'func'
-    hint: known types: int, float, double, decimal, bool, string. if using a struct, define it first: `struct func { ... }`, or an enum: `enum func { ... }`
-— 3 error(s), 0 warning(s)

@@ -1,8 +1,0 @@
-cmake configure log for amendment-02 build
-Build dir: /tmp/saqut-sq090-amendment02-build-wbStc9
-Source: /home/saqut/Masaüstü/saqutcompiler
-Generator: Ninja
-Build type: Release
-
-Full output saved in: 02-configure-output.txt
-Exit code: 0

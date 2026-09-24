@@ -99,6 +99,8 @@ enum class ASTKind {
     TryStatement,         // try { body } catch (Error e) { handler }  (ADR-025)
     ThrowStatement,       // throw <ifade>;                             (ADR-025)
     SwitchStatement,      // switch (expr) { case v: ... default: ... } (ADR-027)
+    LockStatement,        // lock a, b;  /  unlock a;                    (ADR-045)
+    WaitStatement,        // wait(koşul);                                (ADR-045)
 
     /* ====== İfadeler (Expressions) ====== */
     BinaryExpression,     // İkili işlem: sol OP sağ.
@@ -127,6 +129,8 @@ enum class ASTKind {
                           //   leftTypeName: "int", "string", "Person" ...
                           //   methodName: "push", "upper", "toJson" ...
                           //   arguments: argümanlar (receiver dahil)
+    ThreadExpr,           // thread { gövde } — ifade, tipi Thread       (ADR-045)
+    CollectionNew,        // Pool(T) / List(T) — tip argümanlı intrinsic (ADR-045)
 
     /* ====== Hata Kurtarma (Faz 2 — LSP/DAP kurtarma planı) ====== */
     Error,                // Panic-mode kurtarma yer tutucusu: parser bu noktada

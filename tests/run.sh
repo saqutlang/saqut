@@ -6,7 +6,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CXX="${CXX:-g++}"
 FLAGS=(-std=c++20 -Wall -Wextra -I"$ROOT/src")
-SAQUT="$ROOT/build/saqut"
+# SAQUT ortam değişkeniyle başka bir build (Debug / TSan) sınanabilir.
+SAQUT="${SAQUT:-$ROOT/build/saqut}"
 
 # ── Birim testler ─────────────────────────────────────────────────────────────
 for t in test_type test_diagnostic test_opcode test_value_rep_contract test_cfg test_host_abi test_decimal_core; do
@@ -132,10 +133,31 @@ while IFS= read -r -d '' sqt; do
         echo "    gerçek   : $(echo "$actual"   | head -1)"
         FAIL=$((FAIL + 1))
     fi
-done < <(find "$ROOT/tests/golden" -name "*.sqt" -print0 | sort -z)
+done < <(find "$ROOT/tests/golden" "$ROOT/examples/threading" -name "*.sqt" -print0 | sort -z)
 
 echo "  $PASS geçti, $FAIL başarısız"
 [ "$FAIL" -eq 0 ] || exit 1
+
+# ── ADR-045: thread uyarı fixture'ları (.warning) ────────────────────────────
+# Uyarı programı bloklamaz; stderr beklenen W-kodunu `[Wxxx]` biçiminde
+# içermeli. (E-kodları yukarıdaki .compile_error mekanizmasıyla sınanır.)
+echo "=== thread uyarilari ==="
+WPASS=0; WFAIL=0
+while IFS= read -r -d '' wfile; do
+    wsqt="${wfile%.warning}.sqt"
+    want=$(cat "$wfile")
+    set +e
+    werr=$("$SAQUT" run "$wsqt" 2>&1 >/dev/null)
+    set -e
+    if echo "$werr" | grep -q "\[$want\]"; then
+        WPASS=$((WPASS + 1))
+    else
+        echo "  FAIL (warning): ${wsqt#"$ROOT"/} — beklenen [$want]"
+        WFAIL=$((WFAIL + 1))
+    fi
+done < <(find "$ROOT/tests/golden" -name "*.warning" -print0 | sort -z)
+echo "  $WPASS geçti, $WFAIL başarısız"
+[ "$WFAIL" -eq 0 ] || exit 1
 
 # ── Diferansiyel test (#92): VM ≡ MIR JIT ────────────────────────────────────
 # Her golden fixture'ı hem VM hem JIT ile koşup stdout+exit code'u bayt-bayt
@@ -185,7 +207,7 @@ while IFS= read -r -d '' sqt; do
         echo "    JIT : $(echo "$jit_out" | head -1)"
         DFAIL=$((DFAIL + 1))
     fi
-done < <(find "$ROOT/tests/golden" -name "*.sqt" -print0 | sort -z)
+done < <(find "$ROOT/tests/golden" "$ROOT/examples/threading" -name "*.sqt" -print0 | sort -z)
 
 echo "  $DPASS geçti, $DFAIL başarısız, $DSKIP atlandı (JIT henüz desteklemiyor)"
 [ "$DFAIL" -eq 0 ] || exit 1
@@ -351,7 +373,7 @@ while IFS= read -r f; do
             optpass=$((optpass+1))
         fi
     done
-done < <(find "$ROOT/tests/golden" -name '*.sqt' | sort)
+done < <(find "$ROOT/tests/golden" "$ROOT/examples/threading" -name '*.sqt' | sort)
 if [ "$optfail" -gt 0 ]; then exit 1; fi
 echo "  $optpass geçti, 0 başarısız"
 

@@ -182,7 +182,7 @@ static int fs_fileSize(HostCallFrame* f) {
 static int fs_createDirectory(HostCallFrame* f) {
     const std::string& path = hostAsString(f->args[0]);
     std::error_code ec;
-    bool created = std::filesystem::create_directory(path, ec);
+    std::filesystem::create_directory(path, ec);  // varolan dizinde false döner, hata değil
     if (ec) { f->err.set("cannot create directory '" + path + "': " + ec.message(), "E_HOST"); return 1; }
     f->ret = HostSlot::voidVal();
     return 0;

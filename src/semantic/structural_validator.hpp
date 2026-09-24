@@ -27,6 +27,7 @@ public:
 private:
     void walkDecl(ASTNode* node);
     void walkStmt(ASTNode* node);
+    void walkThreadBodies(ASTNode* expr);   // ADR-045
 
     DiagnosticEngine& diag_;
     int  loopDepth_   = 0; // döngü + switch derinliği (break için)

@@ -100,6 +100,14 @@ struct Heap {
                                          >= nextCollectBytes_;
     }
 
+    // ADR-045 (Faz 2-g): thread uyumadan (park) önce — son toplamadan beri
+    // tahsis eşiğin yarısına ulaştıysa şimdi topla; uyuyan thread'in çöpü
+    // uzun süre tutulmasın. Çağrıldığı yer bir safepoint olmalıdır.
+    long long collectBeforePark() {
+        if (!collectionEnabled_) return 0;
+        return allocatedSinceCollect_ * 2 >= nextCollectBytes_ ? collect() : 0;
+    }
+
     // ── Kök sağlayıcılar ────────────────────────────────────────────────────
     //
     // Sağlayıcının ömrü kaydından uzun olmalıdır; Heap sahiplenmez.

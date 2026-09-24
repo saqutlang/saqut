@@ -1,0 +1,41 @@
+// ADR-045 örneği: append-only List. Dört thread eşzamanlı olarak 250'şer eleman
+// ekler; main hepsini bekleyip uzunluğu ve eleman toplamını yazar (sıra
+// thread'lere göre değişebilir, toplam değişmez).
+shared List log = List(int);
+
+int main() {
+    Thread a = thread {
+        for (int i = 0; i < 250; i = i + 1) {
+            log.append(i);
+        }
+    };
+    Thread b = thread {
+        for (int i = 250; i < 500; i = i + 1) {
+            log.append(i);
+        }
+    };
+    Thread c = thread {
+        for (int i = 500; i < 750; i = i + 1) {
+            log.append(i);
+        }
+    };
+    Thread d = thread {
+        for (int i = 750; i < 1000; i = i + 1) {
+            log.append(i);
+        }
+    };
+    a.join();
+    b.join();
+    c.join();
+    d.join();
+
+    int sum = 0;
+    for (int i = 0; i < log.length(); i = i + 1) {
+        sum = sum + log.get(i);
+    }
+    print(log.length());
+    print("\n");
+    print(sum);
+    print("\n");
+    return 0;
+}

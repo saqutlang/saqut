@@ -16,6 +16,7 @@
 #include <sys/resource.h>
 #include "mir/mir_backend.hpp"
 
+#include <cassert>
 #include <cstring>
 #include <cstddef>  // offsetof — JIT direct-memory view alanları (Aşama 0 spike)
 #include <chrono>
@@ -26,6 +27,16 @@
 #include "ffi/host_bridge.hpp"
 #include "ffi/host_registry.hpp"
 #include "gc/shadow_stack.hpp"
+#include "runtime/isolate.hpp"
+#include "runtime/jit_runtime.hpp"
+#include "runtime/const_pool.hpp"
+#include "runtime/compiled_program.hpp"
+#include "runtime/output_lock.hpp"
+#include "runtime/threading/message.hpp"
+#include "runtime/threading/park.hpp"
+#include "runtime/threading/shared_slots.hpp"
+#include "runtime/threading/thread_runtime.hpp"
+#include "runtime/threading/thread_table.hpp"
 #include "ir/ir_liveness.hpp"
 #include "data/array.hpp"
 
@@ -56,114 +67,29 @@ namespace mir_backend {
 
 namespace {
 
-// ── JIT çalışma bağlamı (runtime context) ───────────────────────────────────
-//
-// JIT'in ÇALIŞMA ZAMANI durumunun tamamı bu tek yapıda toplanır (refactor,
-// davranış değişikliği yok). Öncesinde bu alanlar dosyaya dağınık
-// g_jit* global'leri olarak yayılmıştı — her biri ayrı sahiplik noktası
-// olduğundan çok-thread'li çalışmanın önünde engeldi.
-//
-// Bugün süreç-ömrü TEK örnek vardır ve rt() ile erişilir. Thread desteği
-// geldiğinde tek değişiklik rt()'nin deposunu thread_local yapmak olur;
-// çağıran taraf değişmez. (MIRPLAN §9: MIR_context paylaşımı ve shadow
-// stack ile aynı model.)
-//
-// Derleme-zamanı tablolar (intern edilmiş string havuzu, shadow-stack
-// kodgen kararları) burada DEĞİLDİR — bunlar MIR context'ine ve üretilen
-// koda gömülüdür; çalışma zamanında mutasyonları yoktur.
+// Program-ömürlü (immortal) veriye gömülü adres. ADR-045 kuralı: makine koduna
+// yalnızca işaret ettiği veri immutable VE tüm isolate'lerden uzun yaşarsa
+// gömülebilir. Debug'da: non-null VE CompiledProgram'ın sahip olduğu veri
+// (ConstPool nesnesi ya da programStrings; c3 üyelik kaydı).
+static MIR_op_t embedProgramPtr(MIR_context_t ctx, const CompiledProgram& cp,
+                                const void* p) {
+    assert(p != nullptr);
+    assert(cp.ownsEmbeddable(p) && "embedProgramPtr: program-ömürlü olmayan adres");
+    (void)cp;
+    return MIR_new_int_op(ctx, reinterpret_cast<int64_t>(p));
+}
 
-// ADR-025 deterministik stacktrace çerçevesi (yalnızca try'lı fonksiyonlar).
-struct JitTraceFrame {
-    std::string name;
-    std::string file;
-    int         line = 0;
-    int         col  = 0;
-};
+// JIT çalışma bağlamı (JitRuntime) artık Isolate üyesidir (ADR-045, Faz 1).
+// Tanım: src/runtime/jit_runtime.hpp. Erişim: rt() -> Isolate::current().jit.
 
-// STRUCT_NEW metadata'sı: VM fieldNames + ADR-021 nullable zero-init
-// maskesi. Derleme sırasında doldurulur, çalışmada salt okunur.
-struct JitStructMeta {
-    std::shared_ptr<std::vector<std::string>> names;
-    std::vector<bool>                         nullableMask;
-};
 
-struct JitRuntime {
-    // GC: JIT ve VM AYNI Heap'i paylaşır (jitSetHeap ile bağlanır). Toplama
-    // eşiği/politikası Heap'in kendisindedir — backend'ler yalnızca
-    // safepoint'lerinde collectIfNeeded() çağırır.
-    Heap* heap = nullptr;
-
-    // Hata yayılımı (#110): VM'in pendingThrow_ karşılığı — hata tek
-    // bayrakta durur, kodgen her hata-üretebilen talimattan sonra kontrol
-    // eder. errorLine/Col: jitSetError defaults için son hata konumu.
-    StructObject* pendingError = nullptr;
-    int64_t       errorLine    = 0;
-    int64_t       errorCol     = 0;
-
-    // Global slot'ların JIT tarafı görünümü (VM globalSlots_ ile aynı
-    // değerler, ham register temsillerinde) + nullable çağrı kanalı.
-    std::vector<int64_t> globalI;
-    std::vector<double>   globalD;
-    std::vector<void*>    globalP;
-    int64_t               callNullArgs[64]{};
-    int64_t               callRetNull = 0;
-
-    // Bench profil sayaçları — nullptr ise sayaç artırılmaz (sıfır ek yük).
-    JitCallCounters* benchCounters = nullptr;
-
-    // Deterministik iz yığını (ADR-025) — yalnızca try'lı fonksiyonlar.
-    std::vector<JitTraceFrame> traceStack;
-
-    // #254: saQut çağrı derinliği (VM callStack_ boyunun karşılığı) ve
-    // native yığın koruması. stackBase çalıştırma girişinde kaydedilir.
-    int64_t     callDepth  = 0;
-    const char* stackBase  = nullptr;
-    size_t      stackBudget = 0;
-
-    // STRUCT_NEW talimat başına bir kayıt (derleme sırasında dolar).
-    std::vector<JitStructMeta> structMeta;
-
-    // Host çağrı ABI'si (#222): çağrılar arasında yeniden kullanılan
-    // scratch/owner — çağrı başına tahsis yapmamanın yolu. Argümanlar
-    // MIR'den tek tek geçirilemez (değişken arite), bu yüzden sabit bir
-    // tampona yazılır (tek iş parçacığı varsayımı, MIRPLAN §9).
-    static constexpr int kMaxHostArgs = 8;
-    HostSlot      hostArgs[JitRuntime::kMaxHostArgs];
-    HostRetOwner  hostRetOwner;
-    HostCallFrame hostFrame;
-    HostEnv*      hostEnv = nullptr;
-
-    // Fallible cast null kanalı: cast_begin nullable-mod bayrağını tutar,
-    // null sonucu cast_null_check'e taşır.
-    bool    castNullable = false;
-    int64_t castNull     = 0;
-
-    // jitNewString/jitBoxDecimal'in heap bağlı değilken (test/izole
-    // kullanım) sızdırmadan çalışması için yedek havuzlar — normal yol
-    // heap->allocString/allocDecimal'dir.
-    std::vector<std::unique_ptr<StringObject>>  stringFallback;
-    std::vector<std::unique_ptr<DecimalObject>> decimalFallback;
-};
-
-// Tek erişim noktası.
-//
-// Depo FONKSİYON-İÇİ static DEĞİL, namespace kapsamındadır. Fonksiyon-içi
-// static her erişimde "başlatıldı mı?" guard'ı kontrol ettirir (C++
-// thread-safe statics); rt() sıcak yolda çok çağrılır — tek bir
-// rt_jit_host_call gövdesinde 28 kez — ve profilde bu guard tek başına
-// koşunun %25.86'sını alıyordu (perf, dizi push döngüsü).
-//
-// Namespace kapsamlı nesnenin başlatması program yüklenirken bir kez yapılır;
-// erişim sabit adrestir, kontrol yoktur. JitRuntime'ın kurucusu trivial
-// (POD üyeler + boş vector'ler), dolayısıyla statik başlatma sırası sorunu
-// doğurmaz: ilk kullanımdan önce sıfırlanmış olur.
-//
-// THREAD NOTU: bugün süreç-ömrü tek örnek; thread desteğinde bu satır
-// `thread_local JitRuntime g_jitRuntime;` olur (MIRPLAN §9 modeli) — o
-// biçimde de guard maliyeti yoktur.
-JitRuntime g_jitRuntime;
-
-JitRuntime& rt() { return g_jitRuntime; }
+// Tek erişim noktası: JitRuntime artık Isolate üyesidir (ADR-045, Faz 1).
+// Koşu başına g_jitRuntime global'i yerine thread başına Isolate::current().jit.
+// c2: sıcak yol — kontrolsüz TLS okuması, debug'da bağlı olma assert'i.
+JitRuntime& rt() {
+    assert(t_isolate && "rt(): bağlı isolate yok");
+    return t_isolate->jit;
+}
 
 StringObject*  jitNewString(std::string v);
 DecimalObject* jitBoxDecimal(const DecimalValue& v);
@@ -345,6 +271,9 @@ struct JitRootSource : RootSource {
         for (void* global : rt().globalP)
             sink.acceptObject(static_cast<Object*>(global));
         sink.acceptObject(rt().pendingError);
+        // ADR-045: thread başlangıç argümanları ve hazırlanan spawn tamponu.
+        for (const Value& v : rt().threadArgs) sink.acceptValue(v);
+        for (const Value& v : rt().spawnArgs)  sink.acceptValue(v);
 
         // Host çağrısı için HAZIRLANMAKTA olan argüman tamponu. Argümanlar
         // teker teker yazılır (rt_jit_host_arg_*) ve çağrı en sonda yapılır;
@@ -381,14 +310,17 @@ void jitMaybeCollect() {
 }
 
 // Koşu heap'i koşu sonunda yıkıldığı için sayaçları hayatta tutan depo.
+// ADR-045: thread başına (her isolate kendi koşusunun sayaçlarını yazar;
+// CLI ana thread'in değerini okur) — süreç-global olsaydı veri yarışıydı.
 GcStats& lastRunGcStatsStorage() {
-    static GcStats stats;
+    static thread_local GcStats stats;
     return stats;
 }
 
 // --gc-threshold'ün JIT karşılığı. 0 = ayarlanmadı (Heap varsayılanı).
-int& gcThresholdForNextRunStorage() {
-    static int bytes = 0;
+// ADR-045: ana thread bir kez yazar, tüm isolate'ler koşu başında okur.
+std::atomic<int>& gcThresholdForNextRunStorage() {
+    static std::atomic<int> bytes{0};
     return bytes;
 }
 
@@ -522,14 +454,16 @@ extern "C" void rt_jit_array_set_p(void* a, int64_t idx, void* v) {
 
 // STRUCT_NEW metadata'sı: VM fieldNames'i ve ADR-021 nullable zero-init
 // maskesini IRFunction'dan okur. JIT'te talimat başına bir kayıt indeksi
-// geçirilir; tablo derleme sırasında doldurulur. Depolama: rt().structMeta.
+// geçirilir; tablo derleme sırasında doldurulur. Depolama: CompiledProgram::structMeta
+// (program düzeyi, thread başına kopyalanmaz); koşuda Isolate::program üzerinden.
 
 extern "C" void* rt_jit_struct_new(int64_t fieldCount, int64_t metaId) {
     if (!rt().heap) return nullptr;
     jitMaybeCollect();
     auto* obj = rt().heap->allocStruct((int)fieldCount);
-    if (metaId >= 0 && metaId < (int64_t)rt().structMeta.size()) {
-        const auto& m = rt().structMeta[(size_t)metaId];
+    const CompiledProgram* prog = Isolate::current().program;
+    if (prog && metaId >= 0 && metaId < (int64_t)prog->structMeta.size()) {
+        const auto& m = prog->structMeta[(size_t)metaId];
         obj->fieldNames = m.names;
         size_t n = std::min(m.nullableMask.size(), obj->fields.size());
         for (size_t i = 0; i < n; ++i)
@@ -567,6 +501,261 @@ extern "C" void rt_jit_field_set_d(void* o, int64_t idx, double v) {
 }
 extern "C" void rt_jit_field_set_p(void* o, int64_t idx, void* v) {
     *jitFieldAt(o, idx) = jitUnboxForSlot(ArrayElemKind::Ref, v);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADR-045 (Faz 3-f): izole thread modeli trampolinleri
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Durdurma (t.stop()): bloklayan trampolin stop ile dönerse ya da geri kenar
+// yoklaması stop bitini görürse pendingError'a ÖLÜMSÜZ bir nöbetçi (sentinel)
+// konur. Codegen thread programlarında catch dallarının önüne
+// rt_jit_error_catchable kontrolü koyar: nöbetçi hiçbir catch'e girmez,
+// fonksiyonlar boyunca yayılır ve thread girişinde temiz çıkış sayılır.
+
+StructObject* jitStopSentinel() {
+    static StructObject* sentinel = [] {
+        auto* s = new StructObject(5);
+        s->immortal   = true;
+        s->fieldNames = errorStructFieldNames();
+        for (auto& f : s->fields) f = Value::fromInt(0);
+        return s;
+    }();
+    return sentinel;
+}
+
+static void jitRaiseStop() {
+    if (!rt().pendingError) rt().pendingError = jitStopSentinel();
+}
+
+extern "C" int64_t rt_jit_error_catchable() {
+    return rt().pendingError != jitStopSentinel() ? 1 : 0;
+}
+
+extern "C" int64_t rt_jit_poll() {
+    std::atomic<uint32_t>* flags = saqut::threading::currentPollFlags();
+    if (flags && (flags->load(std::memory_order_acquire) & saqut::threading::pollbits::kStop)) {
+        jitRaiseStop();
+        return 1;
+    }
+    return 0;
+}
+
+// JIT ham register değeri → Value (mesaj serileştirmesi için). Pointer
+// türlerinde kopya YOK: serileştirme yalnız okur (string/struct/dizi nesnesi
+// register/shadow stack'te canlıdır).
+static Value jitValueFromI(int64_t v, int64_t kind, int64_t isNull) {
+    if (isNull) return Value::null();
+    if ((SlotType)kind == SlotType::Date) return Value::fromDate(v);
+    return Value::fromLongInt(v);
+}
+static Value jitValueFromD(double v, int64_t isNull) {
+    return isNull ? Value::null() : Value::fromFloat(v);
+}
+static Value jitValueFromP(void* p, int64_t kind, int64_t isNull) {
+    if (isNull || !p) return Value::null();
+    auto* o = static_cast<Object*>(p);
+    if ((SlotType)kind == SlotType::Str || o->type == ObjectType::String)
+        return Value::fromStringObject(o);
+    if (o->type == ObjectType::Decimal)
+        return Value::fromDecimal(static_cast<DecimalObject*>(o)->val);
+    return Value::fromRef(o);
+}
+
+// Value → JIT ham register (POOL_POP / LIST_GET / THREAD_ARG sonucu).
+// threadLastNull nullable hedefin bayrağını taşır.
+static int64_t jitRawI(const Value& v) {
+    rt().threadLastNull = v.kind == ValueKind::Null ? 1 : 0;
+    return v.kind == ValueKind::Null ? 0 : v.asI64();
+}
+static double jitRawD(const Value& v) {
+    rt().threadLastNull = v.kind == ValueKind::Null ? 1 : 0;
+    return v.kind == ValueKind::Null ? 0.0 : v.asDouble();
+}
+static void* jitRawP(const Value& v) {
+    rt().threadLastNull = v.kind == ValueKind::Null ? 1 : 0;
+    if (v.kind == ValueKind::Null) return nullptr;
+    if (v.kind == ValueKind::Decimal) return jitBoxDecimal(v.decimalValue());
+    return v.ref();   // String: deserialize'ın bu heap'e açtığı StringObject
+}
+
+extern "C" int64_t rt_jit_thread_last_null() { return rt().threadLastNull; }
+
+// ── shared primitifler ──────────────────────────────────────────────────────
+extern "C" int64_t rt_jit_shared_load_i(int64_t idx) {
+    auto& s = saqut::threading::SharedSlots::instance();
+    if (s.at((int)idx).kind == saqut::threading::SharedKind::Bool) return s.loadBool((int)idx) ? 1 : 0;
+    return (int64_t)(int32_t)s.loadInt((int)idx);
+}
+extern "C" double rt_jit_shared_load_d(int64_t idx) {
+    return saqut::threading::SharedSlots::instance().loadFloat((int)idx);
+}
+extern "C" void rt_jit_shared_store_i(int64_t idx, int64_t v) {
+    auto& s = saqut::threading::SharedSlots::instance();
+    if (s.at((int)idx).kind == saqut::threading::SharedKind::Bool) s.storeBool((int)idx, v != 0);
+    else                                                            s.storeInt((int)idx, v);
+}
+extern "C" void rt_jit_shared_store_d(int64_t idx, double v) {
+    saqut::threading::SharedSlots::instance().storeFloat((int)idx, (double)(float)v);
+}
+extern "C" int64_t rt_jit_shared_rmw_i(int64_t idx, int64_t delta, int64_t sub) {
+    auto& s = saqut::threading::SharedSlots::instance();
+    return (int64_t)(int32_t)s.addInt((int)idx, sub ? -delta : delta);
+}
+extern "C" double rt_jit_shared_rmw_d(int64_t idx, double delta, int64_t sub) {
+    auto& s = saqut::threading::SharedSlots::instance();
+    return s.addFloat32((int)idx, sub ? -delta : delta);
+}
+extern "C" void rt_jit_lock(int64_t idx)   { saqut::threading::lockShared((int)idx, 0); }
+extern "C" void rt_jit_unlock(int64_t idx) { saqut::threading::unlockShared((int)idx); }
+extern "C" int64_t rt_jit_shared_epoch() { return (int64_t)saqut::threading::sharedEpoch(); }
+extern "C" void rt_jit_wait(int64_t epoch) {
+    if (!saqut::threading::parkUntilEpochChanges((uint64_t)epoch,
+                                                 saqut::threading::currentStopToken(), "wait"))
+        jitRaiseStop();
+}
+
+// ── Pool / List ─────────────────────────────────────────────────────────────
+static void jitPoolPush(int64_t idx, const Value& v) {
+    auto& pool = saqut::threading::SharedSlots::instance().pool((int)idx);
+    if (!pool.push(saqut::threading::makeMessage(v), saqut::threading::currentStopToken()))
+        jitRaiseStop();
+}
+extern "C" void rt_jit_pool_push_i(int64_t idx, int64_t v, int64_t kind, int64_t isNull) {
+    jitPoolPush(idx, jitValueFromI(v, kind, isNull));
+}
+extern "C" void rt_jit_pool_push_d(int64_t idx, double v, int64_t isNull) {
+    jitPoolPush(idx, jitValueFromD(v, isNull));
+}
+extern "C" void rt_jit_pool_push_p(int64_t idx, void* v, int64_t kind, int64_t isNull) {
+    jitPoolPush(idx, jitValueFromP(v, kind, isNull));
+}
+
+// pop: stop → nöbetçi + nötr değer (çağıran kod hata kontrolüyle yayılır).
+static bool jitPoolPop(int64_t idx, Value& out) {
+    saqut::threading::MessageBuffer m;
+    auto& pool = saqut::threading::SharedSlots::instance().pool((int)idx);
+    if (!pool.pop(m, saqut::threading::currentStopToken())) {
+        jitRaiseStop();
+        return false;
+    }
+    out = saqut::threading::deserialize(m, *rt().heap);
+    return true;
+}
+extern "C" int64_t rt_jit_pool_pop_i(int64_t idx) {
+    Value v; return jitPoolPop(idx, v) ? jitRawI(v) : 0;
+}
+extern "C" double rt_jit_pool_pop_d(int64_t idx) {
+    Value v; return jitPoolPop(idx, v) ? jitRawD(v) : 0.0;
+}
+extern "C" void* rt_jit_pool_pop_p(int64_t idx) {
+    Value v; return jitPoolPop(idx, v) ? jitRawP(v) : nullptr;
+}
+extern "C" int64_t rt_jit_pool_len(int64_t idx) {
+    return saqut::threading::SharedSlots::instance().pool((int)idx).length();
+}
+extern "C" void rt_jit_pool_setmax(int64_t idx, int64_t max) {
+    saqut::threading::SharedSlots::instance().pool((int)idx).setMax(max);
+}
+
+static void jitListAppend(int64_t idx, const Value& v) {
+    auto& slots = saqut::threading::SharedSlots::instance();
+    if (!slots.list((int)idx).append(saqut::threading::makeMessage(v)))
+        jitSetError("List '" + slots.at((int)idx).name + "' is full", "E_LIST_FULL");
+}
+extern "C" void rt_jit_list_append_i(int64_t idx, int64_t v, int64_t kind, int64_t isNull) {
+    jitListAppend(idx, jitValueFromI(v, kind, isNull));
+}
+extern "C" void rt_jit_list_append_d(int64_t idx, double v, int64_t isNull) {
+    jitListAppend(idx, jitValueFromD(v, isNull));
+}
+extern "C" void rt_jit_list_append_p(int64_t idx, void* v, int64_t kind, int64_t isNull) {
+    jitListAppend(idx, jitValueFromP(v, kind, isNull));
+}
+
+static bool jitListGet(int64_t idx, int64_t i, Value& out) {
+    auto& slots = saqut::threading::SharedSlots::instance();
+    const saqut::threading::MessageBuffer* m = slots.list((int)idx).get(i);
+    if (!m) {
+        jitSetError("List index " + std::to_string(i) + " out of range (length " +
+                        std::to_string(slots.list((int)idx).length()) + ")",
+                    "E_LIST_INDEX");
+        return false;
+    }
+    out = saqut::threading::deserialize(*m, *rt().heap);
+    return true;
+}
+extern "C" int64_t rt_jit_list_get_i(int64_t idx, int64_t i) {
+    Value v; return jitListGet(idx, i, v) ? jitRawI(v) : 0;
+}
+extern "C" double rt_jit_list_get_d(int64_t idx, int64_t i) {
+    Value v; return jitListGet(idx, i, v) ? jitRawD(v) : 0.0;
+}
+extern "C" void* rt_jit_list_get_p(int64_t idx, int64_t i) {
+    Value v; return jitListGet(idx, i, v) ? jitRawP(v) : nullptr;
+}
+extern "C" int64_t rt_jit_list_len(int64_t idx) {
+    return saqut::threading::SharedSlots::instance().list((int)idx).length();
+}
+
+// ── Thread ──────────────────────────────────────────────────────────────────
+extern "C" void rt_jit_spawn_begin() { rt().spawnArgs.clear(); }
+extern "C" void rt_jit_spawn_arg_i(int64_t v, int64_t kind, int64_t isNull) {
+    rt().spawnArgs.push_back(jitValueFromI(v, kind, isNull));
+}
+extern "C" void rt_jit_spawn_arg_d(double v, int64_t isNull) {
+    rt().spawnArgs.push_back(jitValueFromD(v, isNull));
+}
+extern "C" void rt_jit_spawn_arg_p(void* v, int64_t kind, int64_t isNull) {
+    rt().spawnArgs.push_back(jitValueFromP(v, kind, isNull));
+}
+
+// Yeni thread: kendi Isolate'i, aynı CompiledProgram (aynı makine kodu),
+// giriş __thread_* fonksiyonu; başlangıç mesajı o thread'in heap'ine açılır.
+extern "C" int64_t rt_jit_spawn_commit(const char* entryName, const char* location) {
+    auto msg = std::make_shared<saqut::threading::MessageBuffer>();
+    saqut::threading::serializeValues(rt().spawnArgs, *msg);
+    rt().spawnArgs.clear();
+    const CompiledProgram* prog = Isolate::current().program;
+    std::vector<std::string> pargs;
+    if (rt().hostEnv && rt().hostEnv->programArgs) pargs = *rt().hostEnv->programArgs;
+    const std::string entry = entryName ? entryName : "";
+    saqut::threading::ThreadCore& core = saqut::threading::ThreadTable::instance().spawn(
+        location ? location : "",
+        [prog, entry, msg, pargs](saqut::threading::ThreadCore& self) {
+            Isolate      iso;
+            IsolateGuard guard(iso, prog);
+            self.isolate = &iso;
+            int rc = 0;
+            mir_backend::runOnIsolate(*prog, iso, rc, pargs, nullptr, nullptr, 1, nullptr, {},
+                                      entry, msg.get());
+            self.isolate = nullptr;
+        });
+    return core.id;
+}
+
+extern "C" int64_t rt_jit_thread_arg_i(int64_t i) {
+    return (size_t)i < rt().threadArgs.size() ? jitRawI(rt().threadArgs[(size_t)i]) : 0;
+}
+extern "C" double rt_jit_thread_arg_d(int64_t i) {
+    return (size_t)i < rt().threadArgs.size() ? jitRawD(rt().threadArgs[(size_t)i]) : 0.0;
+}
+extern "C" void* rt_jit_thread_arg_p(int64_t i) {
+    return (size_t)i < rt().threadArgs.size() ? jitRawP(rt().threadArgs[(size_t)i]) : nullptr;
+}
+extern "C" void rt_jit_thread_stop(int64_t tid) {
+    saqut::threading::ThreadTable::instance().requestStop((int)tid);
+}
+extern "C" void rt_jit_thread_join(int64_t tid) {
+    auto* target = saqut::threading::ThreadTable::instance().find((int)tid);
+    if (target && !saqut::threading::park([target] { return target->finished(); },
+                                          saqut::threading::currentStopToken(),
+                                          "join " + target->name))
+        jitRaiseStop();
+}
+extern "C" int64_t rt_jit_thread_running(int64_t tid) {
+    auto* target = saqut::threading::ThreadTable::instance().find((int)tid);
+    return target && !target->finished() ? 1 : 0;
 }
 
 // ── #227: birleşik host çağrı trampolini ────────────────────────────────────
@@ -712,7 +901,7 @@ extern "C" int64_t rt_jit_host_ret_is_null() {
 // #120: VM (9ac66d5) trailing "\n" eklemeyi bıraktı (console:: FFI hazırlığı,
 // #115) — JIT aynı hizaya getirildi, yalnızca flush eklendi.
 extern "C" void rt_jit_print_int(int64_t v) {
-    std::cout << v << std::flush;
+    writeProgramOutput(std::cout, std::to_string(v));   // ADR-045 §18 (1-f)
 }
 
 // ── print(float) trampoline'i — VM'in Value::toString() Float dalıyla BİREBİR
@@ -720,7 +909,7 @@ extern "C" void rt_jit_print_int(int64_t v) {
 // eşleşmesi buna bağlı (value.hpp:94-102). ──────────────────────────────────
 extern "C" void rt_jit_print_float(double v) {
     // #114: biçim tek kaynaktan (core/float_format.hpp) — VM senkronu
-    std::cout << formatDoublePrint(v) << std::flush;
+    writeProgramOutput(std::cout, formatDoublePrint(v));
 }
 
 // ── print(float32) trampoline'i — VM'in Value::toString() Float32 dalıyla BİREBİR
@@ -728,7 +917,7 @@ extern "C" void rt_jit_print_float(double v) {
 // çağrı öncesi F2D ile double'a genişletilip buraya double gelir. ─────────────
 extern "C" void rt_jit_print_float32(double v) {
     // #114: biçim tek kaynaktan (core/float_format.hpp) — VM senkronu
-    std::cout << formatFloat32Print(v) << std::flush;
+    writeProgramOutput(std::cout, formatFloat32Print(v));
 }
 
 // ── print(string) trampoline'i (Dilim 3, ADR-037). Argüman, JIT register'ında
@@ -736,7 +925,7 @@ extern "C" void rt_jit_print_float32(double v) {
 // Value::toString() String dalı ham içeriği döndürür (value.hpp:104); #120
 // öncesi print host'u "\n" ekliyordu, artık eklemiyor (VM ile birebir). ──────
 extern "C" void rt_jit_print_str(void* strObj) {
-    std::cout << static_cast<StringObject*>(strObj)->data << std::flush;
+    writeProgramOutput(std::cout, static_cast<StringObject*>(strObj)->data);
 }
 
 // ── Runtime string havuzu (Dilim 3). LOAD_STRING sabitleri derleme zamanı
@@ -975,7 +1164,7 @@ extern "C" void* rt_jit_str_to_decimal(void* s) {
         return nullptr;  // ulaşılmaz
     }
 }
-extern "C" void rt_jit_print_decimal(void* d) { std::cout << jitDV(d).toString() << std::flush; }
+extern "C" void rt_jit_print_decimal(void* d) { writeProgramOutput(std::cout, jitDV(d).toString()); }
 
 // Sıfıra bölme — bu Dilim'de try/catch (ENTER_TRY/THROW) reddedildiğinden
 // yakalanamaz; VM'de de aynı program uncaught throw ile sonlanırdı.
@@ -1027,7 +1216,7 @@ extern "C" double rt_jit_pow_d(double base, double exp) {
 }
 
 extern "C" float rt_jit_pow_f(float base, float exp) {
-    return std::powf(base, exp);
+    return ::powf(base, exp);
 }
 
 // #241: ondalık kalan. MIR'de native fmod yok; gövde VM'in çağırdığı
@@ -1153,6 +1342,12 @@ bool opcodeSupported(const Instruction& instr, const std::vector<bool>& fnNullab
             return instr.src >= 0;  // void RETURN (src=-1) bu dilimde yok
         case Opcode::ARRAY_GET:
         case Opcode::FIELD_GET:
+        // ADR-045: mesajdan açılan değerin register türü valueType'tan gelir.
+        case Opcode::POOL_POP:
+        case Opcode::LIST_GET:
+        case Opcode::THREAD_ARG:
+        case Opcode::SHARED_LOAD:
+        case Opcode::SHARED_RMW:
             // valueType (ADR-039) eleman/alan türünü taşır. Unknown ise tür
             // IR'de kaybolmuştur ve JIT hangi register genişliğini kullanacağını
             // bilemez — ham 64-bit okumak string/float elemanlarda yanlış
@@ -1304,109 +1499,58 @@ struct FuncEntry {
 
 }  // namespace
 
-bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
-                              UnsupportedReason& outReason,
-                              const std::vector<std::string>& programArgs,
-                              profiling::StageTimer* profiler,
-                              JitCallCounters* counters,
-                              int executionRuns,
-                              std::vector<long long>* executionSamplesUs,
-                              const std::function<void(int, int)>& executionProgress) {
-    if (!wholeProgramSupported(program, outReason)) return false;
+}  // namespace mir_backend
 
-    // Bench sayaçlarını aktif et (profiler ile bağımsız — sayaçlar profil
-    // çalışmasında bile istenebilir; nullptr ise trampoline'lar atlar).
-    struct BenchCountersGuard {
-        JitCallCounters* prev;
-        ~BenchCountersGuard() { rt().benchCounters = prev; }
-    } benchGuard{ rt().benchCounters };
-    rt().benchCounters = counters;
-
-    // Bu koşunun heap'i. Ömrü KOŞUYA bağlıdır (süreç ömrüne değil): koşu
-    // bitince yıkılır ve tahsis ettiği her nesne serbest kalır. Aynı süreçte
-    // arka arkaya program çalıştıran gömülü kullanım için bu şarttır.
-    Heap runHeap;
-    if (const int gcThreshold = gcThresholdForNextRunStorage(); gcThreshold != 0) {
-        if (gcThreshold > 0) runHeap.setMinCollectBytes(gcThreshold);
-        else                 runHeap.setCollectionEnabled(false);
+CompiledProgram::~CompiledProgram() {
+    // ADR-045 yıkım sırası: koşan isolate kalmamalı → MIR_gen_finish →
+    // MIR_finish. Native koda gömülü ConstPool/structMeta verisi bundan
+    // sonra erişilmez.
+    assert(activeIsolates.load() == 0);
+    if (mirCtx) {
+        MIR_gen_finish(mirCtx);
+        MIR_finish(mirCtx);
     }
+}
 
-    // Bağlanan her şey koşu sonunda çözülmelidir — heap yığında olduğundan
-    // ona işaret eden global bağlar (kök sağlayıcı kaydı, string kancası,
-    // host ortamı) heap'ten uzun yaşarsa serbest bırakılmış belleğe bakar.
-    struct RunHeapBinding {
-        Heap* heap = nullptr;
-        ~RunHeapBinding() {
-            if (heap) lastRunGcStatsStorage() = heap->stats();
-            jitSetHeap(nullptr);
-            setValueStringHeap(nullptr);
-            jitShadowStack().clear();
-            rt().pendingError = nullptr;
-            rt().globalP.clear();
-        }
-    } runHeapBinding{ &runHeap };
+namespace mir_backend {
 
-    static HostEnv jitEnv;
-    jitEnv.programArgs = &programArgs;
-    jitEnv.heap        = &runHeap;
-    jitSetHostEnv(&jitEnv);
-    jitSetHeap(&runHeap);
-    // Tek string modeli: Value::fromString de aynı heap'e tahsis etsin —
-    // VM ve JIT aynı string dünyasını paylaşır.
-    setValueStringHeap(&runHeap);
-    rt().globalI.assign((size_t)program.globalCount, 0);
-    rt().globalD.assign((size_t)program.globalCount, 0.0);
-    rt().globalP.assign((size_t)program.globalCount, nullptr);
-    std::fill(std::begin(rt().callNullArgs), std::end(rt().callNullArgs), 0);
-    rt().callRetNull = 0;
-    rt().castNullable = false;
-    rt().castNull = 0;
-    rt().pendingError = nullptr;
-    rt().errorLine = 0;
-    rt().errorCol = 0;
-    jitShadowStack().clear();
-    rt().structMeta.clear();
-    rt().traceStack.clear();
-    rt().callDepth = 0;
-    {
-        // Native yığın bütçesi: RLIMIT_STACK'tan 1 MB güvenlik payı düşülür
-        // (host çağrıları ve MIR çerçeveleri için). Sınırsız ya da okunamazsa
-        // 8 MB varsayılır.
-        char here = 0;
-        rt().stackBase = &here;
-        struct rlimit rl {};
-        size_t total = 8u * 1024 * 1024;
-        if (getrlimit(RLIMIT_STACK, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY)
-            total = static_cast<size_t>(rl.rlim_cur);
-        const size_t margin = 1024u * 1024;
-        rt().stackBudget = total > 2 * margin ? total - margin : total / 2;
-    }
+std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
+                                                UnsupportedReason& outReason,
+                                                Profiling::StageTimer* profiler) {
+    // ADR-045 §RUNTIME 6: derleme hiçbir isolate bağlı değilken çalışır.
+    NoIsolateScope noIsolate;
+    if (!wholeProgramSupported(program, outReason)) return nullptr;
 
     if (program.findFunction("main") == nullptr) {
         outReason.functionName = "main";
         outReason.opcodeName   = "(fonksiyon bulunamadi)";
-        return false;
+        return nullptr;
     }
 
+    auto compiledProgram = std::make_unique<CompiledProgram>();
+
     // "jit-warmup" — IR->MIR çeviri + gerçek native derleme (MIR_gen dahil).
-    // compiled() çağrısı bu kapsamın DIŞINDA ("jit-exec"); RAII kapsamı
-    // compiled()'dan hemen önce reset() ile kapatılır.
-    std::optional<profiling::StageTimer::ScopedStage> profWarmup;
+    // compiled() çağrısı bu kapsamın DIŞINDA ("jit-exec", runOnIsolate).
+    std::optional<Profiling::StageTimer::ScopedStage> profWarmup;
     profWarmup.emplace(profiler, "jit-warmup");
 
     MIR_context_t ctx = MIR_init();
+    compiledProgram->mirCtx = ctx;
     MIR_module_t  mod = MIR_new_module(ctx, "saqut_jit_dilim1");
 
     // ── print/fatal-hata trampolinleri (dış C fonksiyonları) ────────────
-    MIR_item_t printProto      = MIR_new_proto(ctx, "print_proto", 0, nullptr, 1, MIR_T_I64, "v");
-    MIR_item_t printImport     = MIR_new_import(ctx, "rt_jit_print_int");
-    MIR_item_t printFProto     = MIR_new_proto(ctx, "print_f_proto", 0, nullptr, 1, MIR_T_D, "v");
-    MIR_item_t printFImport    = MIR_new_import(ctx, "rt_jit_print_float");
+    // print_* öğeleri artık lowering'de doğrudan kullanılmıyor (print host
+    // çağrısı üzerinden gider) ama MIR modülüne proto/import olarak kaydolurlar;
+    // kayıt yan etkisini değiştirmemek için tutulur.
+    [[maybe_unused]] MIR_item_t printProto     = MIR_new_proto(ctx, "print_proto", 0, nullptr, 1, MIR_T_I64, "v");
+    [[maybe_unused]] MIR_item_t printImport    = MIR_new_import(ctx, "rt_jit_print_int");
+    [[maybe_unused]] MIR_item_t printFProto    = MIR_new_proto(ctx, "print_f_proto", 0, nullptr, 1, MIR_T_D, "v");
+    [[maybe_unused]] MIR_item_t printFImport   = MIR_new_import(ctx, "rt_jit_print_float");
     // ADR-040: float32 print (arg F2D ile double'a genişletilir → MIR_T_D)
-    MIR_item_t printF32Proto   = MIR_new_proto(ctx, "print_f32_proto", 0, nullptr, 1, MIR_T_D, "v");
-    MIR_item_t printF32Import  = MIR_new_import(ctx, "rt_jit_print_float32");
-    MIR_item_t printSProto     = MIR_new_proto(ctx, "print_s_proto", 0, nullptr, 1, MIR_T_I64, "v");
-    MIR_item_t printSImport    = MIR_new_import(ctx, "rt_jit_print_str");
+    [[maybe_unused]] MIR_item_t printF32Proto  = MIR_new_proto(ctx, "print_f32_proto", 0, nullptr, 1, MIR_T_D, "v");
+    [[maybe_unused]] MIR_item_t printF32Import = MIR_new_import(ctx, "rt_jit_print_float32");
+    [[maybe_unused]] MIR_item_t printSProto    = MIR_new_proto(ctx, "print_s_proto", 0, nullptr, 1, MIR_T_I64, "v");
+    [[maybe_unused]] MIR_item_t printSImport   = MIR_new_import(ctx, "rt_jit_print_str");
     // STRING_CONCAT / string ==,!= runtime call'ları (ret I64 pointer/bool, 2×I64 arg)
     MIR_type_t i64Ret          = MIR_T_I64;
     MIR_var_t  strConcatArgs[2] = {{MIR_T_I64, "a", 0}, {MIR_T_I64, "b", 0}};
@@ -1578,8 +1722,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     MIR_item_t globalStorePProto = MIR_new_proto_arr(ctx, "global_store_p_proto", 0, nullptr, 2, globalIVars);
     MIR_item_t globalStorePImport = MIR_new_import(ctx, "rt_jit_global_store_p");
 
-    MIR_item_t printDProto     = MIR_new_proto(ctx, "print_d_proto", 0, nullptr, 1, MIR_T_I64, "v");
-    MIR_item_t printDImport    = MIR_new_import(ctx, "rt_jit_print_decimal");
+    [[maybe_unused]] MIR_item_t printDProto  = MIR_new_proto(ctx, "print_d_proto", 0, nullptr, 1, MIR_T_I64, "v");
+    [[maybe_unused]] MIR_item_t printDImport = MIR_new_import(ctx, "rt_jit_print_decimal");
     MIR_var_t  zeroErrVars[2]  = {{MIR_T_I64, "line", 0}, {MIR_T_I64, "col", 0}};
     MIR_item_t divZeroProto    = MIR_new_proto_arr(ctx, "divzero_proto", 0, nullptr, 2, zeroErrVars);
     MIR_item_t divZeroImport   = MIR_new_import(ctx, "rt_jit_div_zero");
@@ -1625,6 +1769,73 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                                {MIR_T_I64, "l", 0}, {MIR_T_I64, "c", 0}};
     MIR_item_t throwPProto = MIR_new_proto_arr(ctx, "throw_p_proto", 0, nullptr, 4, throwPVars);
     MIR_item_t throwPImport = MIR_new_import(ctx, "rt_jit_throw_p");
+
+    // ── ADR-045 (Faz 3-f): izole thread modeli trampolinleri ─────────────
+    MIR_var_t  thrI1[1]   = {{MIR_T_I64, "a", 0}};
+    MIR_var_t  thrI2[2]   = {{MIR_T_I64, "a", 0}, {MIR_T_I64, "b", 0}};
+    MIR_var_t  thrI3[3]   = {{MIR_T_I64, "a", 0}, {MIR_T_I64, "b", 0}, {MIR_T_I64, "c", 0}};
+    MIR_var_t  thrI4[4]   = {{MIR_T_I64, "a", 0}, {MIR_T_I64, "b", 0},
+                             {MIR_T_I64, "c", 0}, {MIR_T_I64, "d", 0}};
+    MIR_var_t  thrID[2]   = {{MIR_T_I64, "a", 0}, {MIR_T_D, "b", 0}};
+    MIR_var_t  thrIDI[3]  = {{MIR_T_I64, "a", 0}, {MIR_T_D, "b", 0}, {MIR_T_I64, "c", 0}};
+    MIR_var_t  thrDI[2]   = {{MIR_T_D, "a", 0}, {MIR_T_I64, "b", 0}};
+    MIR_item_t thrI_0     = MIR_new_proto_arr(ctx, "thr_i_0", 1, &i64Ret, 0, nullptr);
+    MIR_item_t thrV_0     = MIR_new_proto_arr(ctx, "thr_v_0", 0, nullptr, 0, nullptr);
+    MIR_item_t thrI_I     = MIR_new_proto_arr(ctx, "thr_i_i", 1, &i64Ret, 1, thrI1);
+    MIR_item_t thrD_I     = MIR_new_proto_arr(ctx, "thr_d_i", 1, &dRet, 1, thrI1);
+    MIR_item_t thrV_I     = MIR_new_proto_arr(ctx, "thr_v_i", 0, nullptr, 1, thrI1);
+    MIR_item_t thrV_II    = MIR_new_proto_arr(ctx, "thr_v_ii", 0, nullptr, 2, thrI2);
+    MIR_item_t thrI_II    = MIR_new_proto_arr(ctx, "thr_i_ii", 1, &i64Ret, 2, thrI2);
+    MIR_item_t thrD_II    = MIR_new_proto_arr(ctx, "thr_d_ii", 1, &dRet, 2, thrI2);
+    MIR_item_t thrV_ID    = MIR_new_proto_arr(ctx, "thr_v_id", 0, nullptr, 2, thrID);
+    MIR_item_t thrI_III   = MIR_new_proto_arr(ctx, "thr_i_iii", 1, &i64Ret, 3, thrI3);
+    MIR_item_t thrD_IDI   = MIR_new_proto_arr(ctx, "thr_d_idi", 1, &dRet, 3, thrIDI);
+    MIR_item_t thrV_III   = MIR_new_proto_arr(ctx, "thr_v_iii", 0, nullptr, 3, thrI3);
+    MIR_item_t thrV_IIII  = MIR_new_proto_arr(ctx, "thr_v_iiii", 0, nullptr, 4, thrI4);
+    MIR_item_t thrV_IDI   = MIR_new_proto_arr(ctx, "thr_v_idi", 0, nullptr, 3, thrIDI);
+    MIR_item_t thrV_DI    = MIR_new_proto_arr(ctx, "thr_v_di", 0, nullptr, 2, thrDI);
+    MIR_item_t impCatchable   = MIR_new_import(ctx, "rt_jit_error_catchable");
+    MIR_item_t impPoll        = MIR_new_import(ctx, "rt_jit_poll");
+    MIR_item_t impLastNull    = MIR_new_import(ctx, "rt_jit_thread_last_null");
+    MIR_item_t impSLoadI      = MIR_new_import(ctx, "rt_jit_shared_load_i");
+    MIR_item_t impSLoadD      = MIR_new_import(ctx, "rt_jit_shared_load_d");
+    MIR_item_t impSStoreI     = MIR_new_import(ctx, "rt_jit_shared_store_i");
+    MIR_item_t impSStoreD     = MIR_new_import(ctx, "rt_jit_shared_store_d");
+    MIR_item_t impSRmwI       = MIR_new_import(ctx, "rt_jit_shared_rmw_i");
+    MIR_item_t impSRmwD       = MIR_new_import(ctx, "rt_jit_shared_rmw_d");
+    MIR_item_t impLock        = MIR_new_import(ctx, "rt_jit_lock");
+    MIR_item_t impUnlock      = MIR_new_import(ctx, "rt_jit_unlock");
+    MIR_item_t impEpoch       = MIR_new_import(ctx, "rt_jit_shared_epoch");
+    MIR_item_t impWait        = MIR_new_import(ctx, "rt_jit_wait");
+    MIR_item_t impPushI       = MIR_new_import(ctx, "rt_jit_pool_push_i");
+    MIR_item_t impPushD       = MIR_new_import(ctx, "rt_jit_pool_push_d");
+    MIR_item_t impPushP       = MIR_new_import(ctx, "rt_jit_pool_push_p");
+    MIR_item_t impPopI        = MIR_new_import(ctx, "rt_jit_pool_pop_i");
+    MIR_item_t impPopD        = MIR_new_import(ctx, "rt_jit_pool_pop_d");
+    MIR_item_t impPopP        = MIR_new_import(ctx, "rt_jit_pool_pop_p");
+    MIR_item_t impPoolLen     = MIR_new_import(ctx, "rt_jit_pool_len");
+    MIR_item_t impPoolSetMax  = MIR_new_import(ctx, "rt_jit_pool_setmax");
+    MIR_item_t impAppendI     = MIR_new_import(ctx, "rt_jit_list_append_i");
+    MIR_item_t impAppendD     = MIR_new_import(ctx, "rt_jit_list_append_d");
+    MIR_item_t impAppendP     = MIR_new_import(ctx, "rt_jit_list_append_p");
+    MIR_item_t impListGetI    = MIR_new_import(ctx, "rt_jit_list_get_i");
+    MIR_item_t impListGetD    = MIR_new_import(ctx, "rt_jit_list_get_d");
+    MIR_item_t impListGetP    = MIR_new_import(ctx, "rt_jit_list_get_p");
+    MIR_item_t impListLen     = MIR_new_import(ctx, "rt_jit_list_len");
+    MIR_item_t impSpawnBegin  = MIR_new_import(ctx, "rt_jit_spawn_begin");
+    MIR_item_t impSpawnArgI   = MIR_new_import(ctx, "rt_jit_spawn_arg_i");
+    MIR_item_t impSpawnArgD   = MIR_new_import(ctx, "rt_jit_spawn_arg_d");
+    MIR_item_t impSpawnArgP   = MIR_new_import(ctx, "rt_jit_spawn_arg_p");
+    MIR_item_t impSpawnCommit = MIR_new_import(ctx, "rt_jit_spawn_commit");
+    MIR_item_t impArgI        = MIR_new_import(ctx, "rt_jit_thread_arg_i");
+    MIR_item_t impArgD        = MIR_new_import(ctx, "rt_jit_thread_arg_d");
+    MIR_item_t impArgP        = MIR_new_import(ctx, "rt_jit_thread_arg_p");
+    MIR_item_t impThrStop     = MIR_new_import(ctx, "rt_jit_thread_stop");
+    MIR_item_t impThrJoin     = MIR_new_import(ctx, "rt_jit_thread_join");
+    MIR_item_t impThrRunning  = MIR_new_import(ctx, "rt_jit_thread_running");
+    // Thread programı mı: catch-atlama ve geri kenar yoklaması yalnız bunlarda
+    // üretilir (tek thread codegen'i birebir aynı kalır).
+    const bool threadProgram = program.usesThreads;
     // İz (trace) çağrı trampolinleri: yalnızca try içeren fonksiyonlarda
     // (MIRPLAN §7.1) fonksiyon giriş/çıkışında çağrılır — deterministik
     // stacktrace'in fonksiyon zinciri (ADR-025).
@@ -1634,23 +1845,14 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     MIR_item_t traceLeaveProto = MIR_new_proto(ctx, "trace_leave_proto", 0, nullptr, 0);
     MIR_item_t traceLeaveImport = MIR_new_import(ctx, "rt_jit_trace_leave");
 
-    // ── String sabit havuzu (Dilim 3, ADR-037). LOAD_STRING derleme zamanında
-    // string'i kutular; StringObject* pointer'ı native koda int sabiti olarak
-    // gömülür (JIT in-process, pointer geçerli). intern tablosu aynı içeriği
-    // tek nesneye indirger → döngüde tekrar kutulama/leak yok. Nesneler bu
-    // fonksiyon kapsamı boyunca (native compiled() çağrısı dahil) yaşar.
+    // ── String sabitleri: program-ömürlü immortal ConstPool (ADR-045, c3:
+    // CompiledProgram::constPool). LOAD_STRING'in kutuladığı StringObject*
+    // pointer'ı native koda int sabiti olarak gömülür (JIT in-process, pointer
+    // geçerli). ConstPool nesneleri immortal işaretlenir; GC onları
+    // işaretlemez/süpürmez; CompiledProgram yıkılınca serbest kalır. intern, aynı içeriği tek nesneye indirger →
+    // döngüde tekrar kutulama/leak yok.
     // NOT: AOT (#81) bu yolu runtime call'a (rt_intern_string + string_data)
     // çevirmeli — farklı process'te derleme-zamanı host pointer'ı gömülemez.
-    std::vector<std::unique_ptr<StringObject>>     stringPool;
-    std::unordered_map<std::string, StringObject*> internTable;
-    auto internString = [&](const std::string& s) -> StringObject* {
-        auto it = internTable.find(s);
-        if (it != internTable.end()) return it->second;
-        stringPool.push_back(std::make_unique<StringObject>(s));
-        StringObject* obj = stringPool.back().get();
-        internTable.emplace(s, obj);
-        return obj;
-    };
 
     // ── Aşama 1: TÜM fonksiyonlar için proto + forward (ileri-referanslı
     // CALL çözümü, MIRPLAN §2). Tip-imzalar slotTypes'tan (MIRPLAN §3). ──
@@ -1707,6 +1909,10 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
             case Opcode::POW: case Opcode::LPOW:
             case Opcode::ARRAY_GET: case Opcode::ARRAY_SET:
             case Opcode::CALLHOST: case Opcode::THROW:
+            // ADR-045: bloklayanlar stop nöbetçisi yayar; List hata üretir.
+            case Opcode::POOL_PUSH: case Opcode::POOL_POP:
+            case Opcode::LIST_APPEND: case Opcode::LIST_GET:
+            case Opcode::WAIT: case Opcode::THREAD_JOIN:
                 return true;
             default:
                 return false;
@@ -1867,8 +2073,10 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                 program.moduleRegistry.filePath(fn.moduleId);
             MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 4,
                 MIR_new_ref_op(ctx, traceEnterProto), MIR_new_ref_op(ctx, traceEnterImport),
-                MIR_new_int_op(ctx, reinterpret_cast<int64_t>(fn.name.c_str())),
-                MIR_new_int_op(ctx, reinterpret_cast<int64_t>(file.c_str()))));
+                embedProgramPtr(ctx, *compiledProgram,
+                                compiledProgram->internProgramString(fn.name)),
+                embedProgramPtr(ctx, *compiledProgram,
+                                compiledProgram->internProgramString(file))));
         }
 
         auto R = [&](int slot) { return MIR_new_reg_op(ctx, regs[static_cast<size_t>(slot)]); };
@@ -2071,9 +2279,20 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
             // yaptığı iş (rt_jit_error_pending çağırıp bayrağı sorgulamak)
             // burada gereksizdir — cevabı önceden biliyoruz. Ölçülen fark:
             // bölme yollarında 11x, aynı döngü bölmesiz 53x.
+            // ADR-045: thread programında stop nöbetçisi hiçbir catch'e girmez.
+            auto emitStopSkipsCatch = [&]() {
+                if (!threadProgram) return;
+                MIR_reg_t ok = newTmp("catchable");
+                MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 3,
+                    MIR_new_ref_op(ctx, thrI_0), MIR_new_ref_op(ctx, impCatchable),
+                    MIR_new_reg_op(ctx, ok)));
+                MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_BF,
+                    MIR_new_label_op(ctx, propagateLabel), MIR_new_reg_op(ctx, ok)));
+            };
             auto emitJumpToErrorTarget = [&]() {
                 if (handlerTarget[i] >= 0) {
                     int errorSlot = handlerErrorSlot[i];
+                    emitStopSkipsCatch();
                     MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 3,
                         MIR_new_ref_op(ctx, errTakeProto),
                         MIR_new_ref_op(ctx, errTakeImport), R(errorSlot)));
@@ -2118,6 +2337,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                 case Opcode::DMOD:
                 case Opcode::ARRAY_GET:
                 case Opcode::ARRAY_SET:
+                case Opcode::LIST_GET:      // ADR-045: E_LIST_INDEX
+                case Opcode::LIST_APPEND:   // ADR-045: E_LIST_FULL
                     // NOT: CALLHOST bu listede DEĞİLDİR — konumu kendi
                     // çağrısıyla birlikte taşır (hızlı yolda host_call2
                     // parametresi, genel yolda aşağıdaki ayrı emit). Burada
@@ -2152,10 +2373,10 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                 case Opcode::LOAD_STRING: {
                     // Sabit string'i derleme zamanı kutula, pointer'ını int
                     // sabiti olarak register'a taşı (ADR-037: Str = I64 pointer).
-                    StringObject* obj = internString(instr.stringValue);
+                    StringObject* obj = compiledProgram->internString(instr.stringValue);
                     MIR_append_insn(ctx, func,
                         MIR_new_insn(ctx, MIR_MOV, R(instr.dest),
-                            MIR_new_int_op(ctx, reinterpret_cast<int64_t>(obj))));
+                            embedProgramPtr(ctx, *compiledProgram, obj)));
                     break;
                 }
                 case Opcode::STRING_CONCAT:
@@ -2285,10 +2506,14 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     break;
                 // ── Decimal (Dilim 3) — kutulu; sabit derleme zamanı, aritmetik call ──
                 case Opcode::LOAD_DECIMAL: {
-                    DecimalObject* obj = jitBoxDecimal(instr.decimalValue);
+                    // Decimal literali program-ömürlü ConstPool'a (ADR-045):
+                    // heap'e dokunmaz, gömülen adres immortal (immutability
+                    // şartı yalnız PAYLAŞILAN nesneler için; scratch owner
+                    // hariç, bkz. ADR-045).
+                    DecimalObject* obj = compiledProgram->internDecimal(instr.decimalValue);
                     MIR_append_insn(ctx, func,
                         MIR_new_insn(ctx, MIR_MOV, R(instr.dest),
-                            MIR_new_int_op(ctx, reinterpret_cast<int64_t>(obj))));
+                            embedProgramPtr(ctx, *compiledProgram, obj)));
                     break;
                 }
                 case Opcode::DADD:
@@ -2688,17 +2913,28 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                         MIR_append_insn(ctx, func, MIR_new_insn(ctx, cmpOp(instr, MIR_NE, MIR_DNE, MIR_FNE), R(instr.dest), R(instr.left), R(instr.right)));
                     }
                     break;
+                // ADR-045 (Faz 3-g): thread programında geri kenar yoklaması —
+                // stop istendiyse nöbetçi kurulur ve (catch'e girmeden) yayılır.
                 case Opcode::JMP:
-                    MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_JMP, MIR_new_label_op(ctx, labelAt[static_cast<size_t>(instr.jumpTarget)])));
-                    break;
                 case Opcode::JIF_FALSE:
-                    MIR_append_insn(ctx, func,
-                        MIR_new_insn(ctx, MIR_BF, MIR_new_label_op(ctx, labelAt[static_cast<size_t>(instr.jumpTarget)]), R(instr.cond)));
+                case Opcode::JIF_TRUE: {
+                    if (threadProgram && instr.jumpTarget <= (int)i) {
+                        MIR_reg_t stop = newTmp("poll");
+                        MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 3,
+                            MIR_new_ref_op(ctx, thrI_0), MIR_new_ref_op(ctx, impPoll),
+                            MIR_new_reg_op(ctx, stop)));
+                        MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_BT,
+                            MIR_new_label_op(ctx, propagateLabel), MIR_new_reg_op(ctx, stop)));
+                    }
+                    MIR_label_t target = labelAt[static_cast<size_t>(instr.jumpTarget)];
+                    if (instr.opcode == Opcode::JMP)
+                        MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_JMP, MIR_new_label_op(ctx, target)));
+                    else
+                        MIR_append_insn(ctx, func,
+                            MIR_new_insn(ctx, instr.opcode == Opcode::JIF_FALSE ? MIR_BF : MIR_BT,
+                                         MIR_new_label_op(ctx, target), R(instr.cond)));
                     break;
-                case Opcode::JIF_TRUE:
-                    MIR_append_insn(ctx, func,
-                        MIR_new_insn(ctx, MIR_BT, MIR_new_label_op(ctx, labelAt[static_cast<size_t>(instr.jumpTarget)]), R(instr.cond)));
-                    break;
+                }
                 case Opcode::CALL: {
                     const FuncEntry& callee = funcMap.at(instr.functionName);
                     // #254: derinlik/yığın koruması — aşılırsa çağrı yapılmaz,
@@ -3003,8 +3239,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                         if (nullIt != fn.structFieldNullable.end())
                             m.nullableMask = nullIt->second;
                         if (m.names || !m.nullableMask.empty()) {
-                            metaId = (int64_t)rt().structMeta.size();
-                            rt().structMeta.push_back(std::move(m));
+                            metaId = (int64_t)compiledProgram->structMeta.size();
+                            compiledProgram->structMeta.push_back(std::move(m));
                         }
                     }
                     MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 5,
@@ -3045,6 +3281,157 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                         MIR_new_ref_op(ctx, isD ? fsetDImport : (isP ? fsetPImport : fsetIImport)),
                         R(instr.dest), MIR_new_int_op(ctx, instr.intValue),
                         isD ? asDoubleOperand(instr.right) : R(instr.right)));
+                    break;
+                }
+                // ── ADR-045 (Faz 3-f): izole thread modeli ──────────────
+                // Hepsi rt_jit_* trampolinlerine iner. Değer türü: kaynak için
+                // slot türü, hedef için valueType; Float32 hedef D2F ile.
+                case Opcode::SHARED_LOAD:
+                case Opcode::SHARED_STORE:
+                case Opcode::SHARED_RMW:
+                case Opcode::LOCK:
+                case Opcode::UNLOCK:
+                case Opcode::POOL_PUSH:
+                case Opcode::POOL_POP:
+                case Opcode::POOL_LEN:
+                case Opcode::POOL_SETMAX:
+                case Opcode::LIST_APPEND:
+                case Opcode::LIST_GET:
+                case Opcode::LIST_LEN:
+                case Opcode::SHARED_EPOCH:
+                case Opcode::WAIT:
+                case Opcode::THREAD_SPAWN:
+                case Opcode::THREAD_ARG:
+                case Opcode::THREAD_STOP:
+                case Opcode::THREAD_JOIN:
+                case Opcode::THREAD_RUNNING: {
+                    auto call = [&](MIR_item_t proto, MIR_item_t imp, std::vector<MIR_op_t> ops) {
+                        std::vector<MIR_op_t> all{MIR_new_ref_op(ctx, proto), MIR_new_ref_op(ctx, imp)};
+                        all.insert(all.end(), ops.begin(), ops.end());
+                        MIR_append_insn(ctx, func, MIR_new_insn_arr(ctx, MIR_CALL, all.size(), all.data()));
+                    };
+                    auto idxOp = MIR_new_int_op(ctx, instr.intValue);
+                    auto isDKind = [](SlotType k) { return k == SlotType::Float || k == SlotType::Float32; };
+                    auto isPKind = [](SlotType k) {
+                        return k == SlotType::Ref || k == SlotType::Str || k == SlotType::Decimal;
+                    };
+                    // D sonucu dest'e: Float32 dest → geçici D + D2F, değilse doğrudan.
+                    auto callD = [&](MIR_item_t proto, MIR_item_t imp, std::vector<MIR_op_t> args) {
+                        if (slotKindOf(fn, instr.dest) == SlotType::Float32) {
+                            std::string tn = "thrd" + std::to_string(f32ToDCounter++);
+                            MIR_reg_t tmp = MIR_new_func_reg(ctx, func->u.func, MIR_T_D, tn.c_str());
+                            args.insert(args.begin(), MIR_new_reg_op(ctx, tmp));
+                            call(proto, imp, args);
+                            MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_D2F, R(instr.dest),
+                                                                    MIR_new_reg_op(ctx, tmp)));
+                        } else {
+                            args.insert(args.begin(), R(instr.dest));
+                            call(proto, imp, args);
+                        }
+                    };
+                    // POOL_POP / LIST_GET / THREAD_ARG: türüne göre i/d/p + null bayrağı.
+                    auto typedGet = [&](MIR_item_t impI, MIR_item_t impD, MIR_item_t impP,
+                                        MIR_item_t protoI, MIR_item_t protoD,
+                                        std::vector<MIR_op_t> args) {
+                        const SlotType vt = instr.valueType;
+                        if (isDKind(vt)) {
+                            callD(protoD, impD, args);
+                        } else {
+                            args.insert(args.begin(), R(instr.dest));
+                            call(protoI, isPKind(vt) ? impP : impI, args);
+                            if (isPKind(vt)) emitShadowSet(instr.dest, (int)i + 1);
+                        }
+                        if (isNullableSlot(instr.dest))
+                            call(thrI_0, impLastNull,
+                                 {MIR_new_reg_op(ctx, nullFlagRegs[static_cast<size_t>(instr.dest)])});
+                    };
+                    // POOL_PUSH / LIST_APPEND / spawn argümanı: kaynak slot türüne göre.
+                    auto typedPut = [&](int srcSlot, MIR_item_t impI, MIR_item_t impD, MIR_item_t impP,
+                                        bool withIdx) {
+                        const SlotType vk = slotKindOf(fn, srcSlot);
+                        std::vector<MIR_op_t> args;
+                        if (withIdx) args.push_back(idxOp);
+                        if (isDKind(vk)) {
+                            args.push_back(asDoubleOperand(srcSlot));
+                            args.push_back(nullBitOf(srcSlot));
+                            call(withIdx ? thrV_IDI : thrV_DI, impD, args);
+                        } else {
+                            args.push_back(R(srcSlot));
+                            args.push_back(MIR_new_int_op(ctx, (int64_t)vk));
+                            args.push_back(nullBitOf(srcSlot));
+                            call(withIdx ? thrV_IIII : thrV_III, isPKind(vk) ? impP : impI, args);
+                        }
+                    };
+
+                    switch (instr.opcode) {
+                    case Opcode::SHARED_LOAD:
+                        if (instr.valueType == SlotType::Float32)
+                            callD(thrD_I, impSLoadD, {idxOp});
+                        else
+                            call(thrI_I, impSLoadI, {R(instr.dest), idxOp});
+                        break;
+                    case Opcode::SHARED_STORE:
+                        if (isDKind(slotKindOf(fn, instr.src)))
+                            call(thrV_ID, impSStoreD, {idxOp, asDoubleOperand(instr.src)});
+                        else
+                            call(thrV_II, impSStoreI, {idxOp, R(instr.src)});
+                        break;
+                    case Opcode::SHARED_RMW: {
+                        auto subOp = MIR_new_int_op(ctx, instr.int64Value);
+                        if (instr.valueType == SlotType::Float32)
+                            callD(thrD_IDI, impSRmwD, {idxOp, asDoubleOperand(instr.src), subOp});
+                        else
+                            call(thrI_III, impSRmwI, {R(instr.dest), idxOp, R(instr.src), subOp});
+                        break;
+                    }
+                    case Opcode::LOCK:   call(thrV_I, impLock, {idxOp});   break;
+                    case Opcode::UNLOCK: call(thrV_I, impUnlock, {idxOp}); break;
+                    case Opcode::POOL_PUSH:
+                        typedPut(instr.src, impPushI, impPushD, impPushP, true);
+                        break;
+                    case Opcode::LIST_APPEND:
+                        typedPut(instr.src, impAppendI, impAppendD, impAppendP, true);
+                        break;
+                    case Opcode::POOL_POP:
+                        typedGet(impPopI, impPopD, impPopP, thrI_I, thrD_I, {idxOp});
+                        break;
+                    case Opcode::LIST_GET:
+                        typedGet(impListGetI, impListGetD, impListGetP, thrI_II, thrD_II,
+                                 {idxOp, R(instr.left)});
+                        break;
+                    case Opcode::THREAD_ARG:
+                        typedGet(impArgI, impArgD, impArgP, thrI_I, thrD_I, {idxOp});
+                        break;
+                    case Opcode::POOL_LEN: call(thrI_I, impPoolLen, {R(instr.dest), idxOp}); break;
+                    case Opcode::LIST_LEN: call(thrI_I, impListLen, {R(instr.dest), idxOp}); break;
+                    case Opcode::POOL_SETMAX:
+                        call(thrV_II, impPoolSetMax, {idxOp, R(instr.src)});
+                        break;
+                    case Opcode::SHARED_EPOCH: call(thrI_0, impEpoch, {R(instr.dest)}); break;
+                    case Opcode::WAIT:         call(thrV_I, impWait, {R(instr.src)});    break;
+                    case Opcode::THREAD_SPAWN: {
+                        call(thrV_0, impSpawnBegin, {});
+                        for (int s : instr.argSlots)
+                            typedPut(s, impSpawnArgI, impSpawnArgD, impSpawnArgP, false);
+                        std::string file = program.moduleRegistry.filePath(fn.moduleId);
+                        if (auto slash = file.find_last_of('/'); slash != std::string::npos)
+                            file = file.substr(slash + 1);
+                        const char* entryStr = compiledProgram->internProgramString(instr.functionName);
+                        const char* locStr   = compiledProgram->internProgramString(
+                            file + ":" + std::to_string(instr.sourceLine));
+                        call(thrI_II, impSpawnCommit,
+                             {R(instr.dest), embedProgramPtr(ctx, *compiledProgram, entryStr),
+                              embedProgramPtr(ctx, *compiledProgram, locStr)});
+                        break;
+                    }
+                    case Opcode::THREAD_STOP: call(thrV_I, impThrStop, {R(instr.src)}); break;
+                    case Opcode::THREAD_JOIN: call(thrV_I, impThrJoin, {R(instr.src)}); break;
+                    case Opcode::THREAD_RUNNING:
+                        call(thrI_I, impThrRunning, {R(instr.dest), R(instr.src)});
+                        break;
+                    default:
+                        break;
+                    }
                     break;
                 }
                 case Opcode::ENTER_TRY:
@@ -3432,6 +3819,7 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                     MIR_new_label_op(ctx, noError), MIR_new_reg_op(ctx, pending)));
                 if (handlerTarget[i] >= 0) {
                     int errorSlot = handlerErrorSlot[i];
+                    emitStopSkipsCatch();   // ADR-045
                     MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 3,
                         MIR_new_ref_op(ctx, errTakeProto),
                         MIR_new_ref_op(ctx, errTakeImport), R(errorSlot)));
@@ -3564,6 +3952,46 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     MIR_load_external(ctx, "rt_jit_call_enter",  reinterpret_cast<void*>(rt_jit_call_enter));
     MIR_load_external(ctx, "rt_jit_call_leave",  reinterpret_cast<void*>(rt_jit_call_leave));
     MIR_load_external(ctx, "rt_jit_pow_negative", reinterpret_cast<void*>(rt_jit_pow_negative));
+    // ADR-045 (Faz 3-f)
+    MIR_load_external(ctx, "rt_jit_error_catchable", reinterpret_cast<void*>(rt_jit_error_catchable));
+    MIR_load_external(ctx, "rt_jit_poll", reinterpret_cast<void*>(rt_jit_poll));
+    MIR_load_external(ctx, "rt_jit_thread_last_null", reinterpret_cast<void*>(rt_jit_thread_last_null));
+    MIR_load_external(ctx, "rt_jit_shared_load_i", reinterpret_cast<void*>(rt_jit_shared_load_i));
+    MIR_load_external(ctx, "rt_jit_shared_load_d", reinterpret_cast<void*>(rt_jit_shared_load_d));
+    MIR_load_external(ctx, "rt_jit_shared_store_i", reinterpret_cast<void*>(rt_jit_shared_store_i));
+    MIR_load_external(ctx, "rt_jit_shared_store_d", reinterpret_cast<void*>(rt_jit_shared_store_d));
+    MIR_load_external(ctx, "rt_jit_shared_rmw_i", reinterpret_cast<void*>(rt_jit_shared_rmw_i));
+    MIR_load_external(ctx, "rt_jit_shared_rmw_d", reinterpret_cast<void*>(rt_jit_shared_rmw_d));
+    MIR_load_external(ctx, "rt_jit_lock", reinterpret_cast<void*>(rt_jit_lock));
+    MIR_load_external(ctx, "rt_jit_unlock", reinterpret_cast<void*>(rt_jit_unlock));
+    MIR_load_external(ctx, "rt_jit_shared_epoch", reinterpret_cast<void*>(rt_jit_shared_epoch));
+    MIR_load_external(ctx, "rt_jit_wait", reinterpret_cast<void*>(rt_jit_wait));
+    MIR_load_external(ctx, "rt_jit_pool_push_i", reinterpret_cast<void*>(rt_jit_pool_push_i));
+    MIR_load_external(ctx, "rt_jit_pool_push_d", reinterpret_cast<void*>(rt_jit_pool_push_d));
+    MIR_load_external(ctx, "rt_jit_pool_push_p", reinterpret_cast<void*>(rt_jit_pool_push_p));
+    MIR_load_external(ctx, "rt_jit_pool_pop_i", reinterpret_cast<void*>(rt_jit_pool_pop_i));
+    MIR_load_external(ctx, "rt_jit_pool_pop_d", reinterpret_cast<void*>(rt_jit_pool_pop_d));
+    MIR_load_external(ctx, "rt_jit_pool_pop_p", reinterpret_cast<void*>(rt_jit_pool_pop_p));
+    MIR_load_external(ctx, "rt_jit_pool_len", reinterpret_cast<void*>(rt_jit_pool_len));
+    MIR_load_external(ctx, "rt_jit_pool_setmax", reinterpret_cast<void*>(rt_jit_pool_setmax));
+    MIR_load_external(ctx, "rt_jit_list_append_i", reinterpret_cast<void*>(rt_jit_list_append_i));
+    MIR_load_external(ctx, "rt_jit_list_append_d", reinterpret_cast<void*>(rt_jit_list_append_d));
+    MIR_load_external(ctx, "rt_jit_list_append_p", reinterpret_cast<void*>(rt_jit_list_append_p));
+    MIR_load_external(ctx, "rt_jit_list_get_i", reinterpret_cast<void*>(rt_jit_list_get_i));
+    MIR_load_external(ctx, "rt_jit_list_get_d", reinterpret_cast<void*>(rt_jit_list_get_d));
+    MIR_load_external(ctx, "rt_jit_list_get_p", reinterpret_cast<void*>(rt_jit_list_get_p));
+    MIR_load_external(ctx, "rt_jit_list_len", reinterpret_cast<void*>(rt_jit_list_len));
+    MIR_load_external(ctx, "rt_jit_spawn_begin", reinterpret_cast<void*>(rt_jit_spawn_begin));
+    MIR_load_external(ctx, "rt_jit_spawn_arg_i", reinterpret_cast<void*>(rt_jit_spawn_arg_i));
+    MIR_load_external(ctx, "rt_jit_spawn_arg_d", reinterpret_cast<void*>(rt_jit_spawn_arg_d));
+    MIR_load_external(ctx, "rt_jit_spawn_arg_p", reinterpret_cast<void*>(rt_jit_spawn_arg_p));
+    MIR_load_external(ctx, "rt_jit_spawn_commit", reinterpret_cast<void*>(rt_jit_spawn_commit));
+    MIR_load_external(ctx, "rt_jit_thread_arg_i", reinterpret_cast<void*>(rt_jit_thread_arg_i));
+    MIR_load_external(ctx, "rt_jit_thread_arg_d", reinterpret_cast<void*>(rt_jit_thread_arg_d));
+    MIR_load_external(ctx, "rt_jit_thread_arg_p", reinterpret_cast<void*>(rt_jit_thread_arg_p));
+    MIR_load_external(ctx, "rt_jit_thread_stop", reinterpret_cast<void*>(rt_jit_thread_stop));
+    MIR_load_external(ctx, "rt_jit_thread_join", reinterpret_cast<void*>(rt_jit_thread_join));
+    MIR_load_external(ctx, "rt_jit_thread_running", reinterpret_cast<void*>(rt_jit_thread_running));
 
     MIR_gen_init(ctx);
     //MIR_output(ctx,stdout);
@@ -3578,12 +4006,126 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     for (auto& name : program.functionOrder) {
         void* p = MIR_gen(ctx, funcMap.at(name).callRef);
         if (name == "main") mainPtr = p;
+        compiledProgram->entries[name] = p;   // ADR-045: THREAD_SPAWN giriş tablosu
+    }
+    // ADR-045: shared slot tanımları ve thread bayrağı (runOnIsolate kurar).
+    compiledProgram->usesThreads = program.usesThreads;
+    for (const auto& d : program.sharedSlots)
+        compiledProgram->sharedSlots.emplace_back(d.kind, d.name);
+
+    compiledProgram->mainEntry   = mainPtr;
+    compiledProgram->globalCount = program.globalCount;
+    profWarmup.reset();  // "jit-warmup" burada biter
+    return compiledProgram;
+}
+
+bool runOnIsolate(const CompiledProgram& compiled, Isolate& iso, int& outExitCode,
+                  const std::vector<std::string>& programArgs,
+                  Profiling::StageTimer* profiler,
+                  JitCallCounters* counters,
+                  int executionRuns,
+                  std::vector<long long>* executionSamplesUs,
+                  const std::function<void(int, int)>& executionProgress,
+                  const std::string& entryName,
+                  const saqut::threading::MessageBuffer* startMsg) {
+    // Önkoşul: çağıran IsolateGuard ile bu isolate'i ve programı bağlamıştır
+    // (rt() == iso.jit; structMeta iso.program üzerinden okunur).
+    assert(t_isolate == &iso && iso.program == &compiled);
+    // ADR-045: ana thread'in main'i mi, spawn edilmiş bir thread'in girişi mi?
+    const bool isThreadEntry = startMsg != nullptr || entryName != "main";
+    struct ActiveIsolateCount {
+        const CompiledProgram& cp;
+        explicit ActiveIsolateCount(const CompiledProgram& c) : cp(c) { ++cp.activeIsolates; }
+        ~ActiveIsolateCount() { --cp.activeIsolates; }
+    } activeCount{ compiled };
+
+    // Bench sayaçlarını aktif et (profiler ile bağımsız — sayaçlar profil
+    // çalışmasında bile istenebilir; nullptr ise trampoline'lar atlar).
+    struct BenchCountersGuard {
+        JitCallCounters* prev;
+        ~BenchCountersGuard() { rt().benchCounters = prev; }
+    } benchGuard{ rt().benchCounters };
+    rt().benchCounters = counters;
+
+    // Bu koşunun heap'i. Ömrü KOŞUYA bağlıdır (süreç ömrüne değil): koşu
+    // bitince yıkılır ve tahsis ettiği her nesne serbest kalır. Aynı süreçte
+    // arka arkaya program çalıştıran gömülü kullanım için bu şarttır.
+    Heap runHeap;
+    if (const int gcThreshold = gcThresholdForNextRunStorage().load(std::memory_order_relaxed);
+        gcThreshold != 0) {
+        if (gcThreshold > 0) runHeap.setMinCollectBytes(gcThreshold);
+        else                 runHeap.setCollectionEnabled(false);
     }
 
-    profWarmup.reset();  // "jit-warmup" burada biter
+    // Bağlanan her şey koşu sonunda çözülmelidir — heap yığında olduğundan
+    // ona işaret eden global bağlar (kök sağlayıcı kaydı, string kancası,
+    // host ortamı) heap'ten uzun yaşarsa serbest bırakılmış belleğe bakar.
+    struct RunHeapBinding {
+        Heap* heap = nullptr;
+        ~RunHeapBinding() {
+            if (heap) lastRunGcStatsStorage() = heap->stats();
+            jitSetHeap(nullptr);
+            setValueStringHeap(nullptr);
+            jitShadowStack().clear();
+            rt().pendingError = nullptr;
+            rt().globalP.clear();
+            rt().threadArgs.clear();   // ADR-045: koşu heap'ine işaret eder
+            rt().spawnArgs.clear();
+        }
+    } runHeapBinding{ &runHeap };
+
+    // Host ortamı isolate'e aittir (önce süreç-global `static HostEnv`).
+    iso.jitEnv.programArgs = &programArgs;
+    iso.jitEnv.heap        = &runHeap;
+    jitSetHostEnv(&iso.jitEnv);
+    jitSetHeap(&runHeap);
+    // Tek string modeli: Value::fromString de aynı heap'e tahsis etsin —
+    // VM ve JIT aynı string dünyasını paylaşır.
+    setValueStringHeap(&runHeap);
+    rt().globalI.assign((size_t)compiled.globalCount, 0);
+    rt().globalD.assign((size_t)compiled.globalCount, 0.0);
+    rt().globalP.assign((size_t)compiled.globalCount, nullptr);
+    std::fill(std::begin(rt().callNullArgs), std::end(rt().callNullArgs), 0);
+    rt().callRetNull = 0;
+    rt().castNullable = false;
+    rt().castNull = 0;
+    rt().pendingError = nullptr;
+    rt().errorLine = 0;
+    rt().errorCol = 0;
+    jitShadowStack().clear();
+    rt().traceStack.clear();
+    rt().callDepth = 0;
+    // ADR-045 (Faz 3-f): thread başlangıç argümanları bu isolate'in heap'ine;
+    // ana thread'in main'i thread programıysa program başını kurar.
+    rt().spawnArgs.clear();
+    rt().threadLastNull = 0;
+    if (startMsg)
+        rt().threadArgs = saqut::threading::deserializeValues(*startMsg, runHeap);
+    else
+        rt().threadArgs.clear();
+    if (compiled.usesThreads && !isThreadEntry)
+        saqut::threading::programBegin(compiled.sharedSlots);
+    {
+        // Native yığın bütçesi: RLIMIT_STACK'tan 1 MB güvenlik payı düşülür
+        // (host çağrıları ve MIR çerçeveleri için). Sınırsız ya da okunamazsa
+        // 8 MB varsayılır.
+        char here = 0;
+        rt().stackBase = &here;
+        struct rlimit rl {};
+        size_t total = 8u * 1024 * 1024;
+        if (getrlimit(RLIMIT_STACK, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY)
+            total = static_cast<size_t>(rl.rlim_cur);
+        const size_t margin = 1024u * 1024;
+        rt().stackBudget = total > 2 * margin ? total - margin : total / 2;
+    }
 
     using SaqutMainFn = int64_t (*)(void);
-    auto    compiled = reinterpret_cast<SaqutMainFn>(mainPtr);
+    void* entryPtr = compiled.mainEntry;
+    if (isThreadEntry) {
+        auto it  = compiled.entries.find(entryName);
+        entryPtr = it != compiled.entries.end() ? it->second : nullptr;
+    }
+    auto    mainFn   = reinterpret_cast<SaqutMainFn>(entryPtr);
     int64_t nativeResult = 0;
     const int runs = std::max(1, executionRuns);
     if (executionSamplesUs)
@@ -3591,8 +4133,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     for (int run = 0; run < runs; ++run) {
         auto execStart = std::chrono::steady_clock::now();
         {
-            profiling::StageTimer::ScopedStage profExec(profiler, "jit-exec");
-            nativeResult = compiled();
+            Profiling::StageTimer::ScopedStage profExec(profiler, "jit-exec");
+            nativeResult = mainFn();
         }
         auto execEnd = std::chrono::steady_clock::now();
         if (executionSamplesUs) {
@@ -3604,16 +4146,43 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
     }
 
     std::string uncaughtMessage;
+    std::string uncaughtTrace;
+    const bool  stoppedCleanly = rt().pendingError == jitStopSentinel();   // ADR-045
+    if (stoppedCleanly) rt().pendingError = nullptr;
     if (rt().pendingError) {
         if (rt().pendingError->fields.size() > 2 &&
             rt().pendingError->fields[2].kind == ValueKind::String)
             uncaughtMessage = rt().pendingError->fields[2].stringValue();
+        if (rt().pendingError->fields.size() > 3 &&
+            rt().pendingError->fields[3].kind == ValueKind::String)
+            uncaughtTrace = rt().pendingError->fields[3].stringValue();
         if (uncaughtMessage.empty()) uncaughtMessage = "uncaught error";
         rt().pendingError = nullptr;
     }
 
-    MIR_gen_finish(ctx);
-    MIR_finish(ctx);
+    // ADR-045: thread girişi — stop temiz çıkıştır; yakalanmayan hata tüm
+    // süreci exit 1 ile durdurur. Kalan kilitler her durumda bırakılır.
+    if (isThreadEntry) {
+        saqut::threading::releaseAllLocks();
+        if (!uncaughtMessage.empty())
+            saqut::threading::fatalThreadError(uncaughtMessage, uncaughtTrace);
+        outExitCode = 0;
+        return true;
+    }
+    // Ana thread'in main'i: hata varsa diğer thread'ler hâlâ koşuyor olabilir
+    // (statik yıkım onları beklerken asılırdı) → mesaj + _Exit; yoksa açık
+    // thread'ler beklenir (deadlock dedektörü aktif).
+    if (compiled.usesThreads) {
+        if (!uncaughtMessage.empty()) {
+            std::cout.flush();
+            writeProgramOutput(std::cerr, "runtime error: " + uncaughtMessage + "\n");
+            std::_Exit(saqut::exit_code::kSoftwareError);
+        }
+        saqut::threading::programEnd();
+    }
+
+    // MIR_gen_finish/MIR_finish CompiledProgram yıkıcısına taşındı (ADR-045
+    // yıkım sırası: isolate'ler bitince).
 
     // Çalışma-zamanı üretilen string/decimal nesnelerini topla — native kod bitti,
     // pointer'lara artık erişilmiyor (GC Dilim 2/§8'e kadar elle temizlik).
@@ -3626,6 +4195,26 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
 
     outExitCode = static_cast<int>(nativeResult);
     return true;
+}
+
+bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
+                              UnsupportedReason& outReason,
+                              const std::vector<std::string>& programArgs,
+                              Profiling::StageTimer* profiler,
+                              JitCallCounters* counters,
+                              int executionRuns,
+                              std::vector<long long>* executionSamplesUs,
+                              const std::function<void(int, int)>& executionProgress) {
+    // c1 sarmalayıcısı: compileProgram → IsolateGuard → runOnIsolate →
+    // CompiledProgram yıkımı (MIR_gen_finish/MIR_finish). compileProgram kendi
+    // içinde isolate'i ayırır (NoIsolateScope); koşu, çağıran thread'in bağlı
+    // isolate'inde yapılır (süreç girişi ana isolate'i bağlar).
+    std::unique_ptr<CompiledProgram> compiled = compileProgram(program, outReason, profiler);
+    if (!compiled) return false;
+    Isolate& iso = Isolate::current();
+    IsolateGuard guard(iso, compiled.get());
+    return runOnIsolate(*compiled, iso, outExitCode, programArgs, profiler, counters,
+                        executionRuns, executionSamplesUs, executionProgress);
 }
 
 const GcStats& lastRunGcStats() { return lastRunGcStatsStorage(); }

@@ -1,0 +1,6 @@
+// E017: lock hedefi shared primitif olmalı
+int main() {
+    int x = 0;
+    lock x;
+    return 0;
+}

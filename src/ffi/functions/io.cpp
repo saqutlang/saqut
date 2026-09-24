@@ -15,6 +15,7 @@
 #include <string>
 #include "ffi/host_functions.hpp"
 #include "ffi/host_bridge.hpp"
+#include "runtime/output_lock.hpp"
 
 // ── stdin ───────────────────────────────────────────────────────────────────
 
@@ -47,10 +48,12 @@ static int stdin_readBytes(HostCallFrame* f) {
 // metin yazma: byte[] beklenmez; hangi akışa yazılacağı çağırana bağlı.
 static int io_write(HostCallFrame* f, std::ostream& os, void* sink) {
     std::string text = fromHostSlot(f->args[0]).toString();
+    // ADR-045 §18: yazma çağrı başına atomik (1-f).
     if (sink) {
+        std::lock_guard<std::mutex> lock(programOutputMutex());
         (*static_cast<std::function<void(const std::string&)>*>(sink))(text);
     } else {
-        os << text << std::flush;
+        writeProgramOutput(os, text);
     }
     f->ret = HostSlot::voidVal();
     return 0;
@@ -64,8 +67,8 @@ static int io_writeBytes(HostCallFrame* f, std::ostream& os) {
     if (arr->elemKind != ArrayElemKind::Byte) {
         f->err.set("writeBytes: expected byte[]", "E_HOST"); return 1;
     }
-    os.write(reinterpret_cast<const char*>(arr->bytes.data()), (std::streamsize)arr->bytes.size());
-    os.flush();
+    writeProgramOutput(os, std::string_view(reinterpret_cast<const char*>(arr->bytes.data()),
+                                            arr->bytes.size()));
     f->ret = HostSlot::voidVal();
     return 0;
 }

@@ -34,6 +34,7 @@
 #include "module/module_graph.hpp"
 
 class FunctionDeclNode;  // finalizeSlotTypes imzası için (tanım .cpp'de)
+class VariableDeclNode;  // global init yardımcıları için
 
 class IRGenerator {
 public:
@@ -89,9 +90,9 @@ private:
     // segfault ediyordu. Tek yerde toplanınca dört biçim de her operatörde
     // çalışır ve yeni bir operatör eklendiğinde aynı hata tekrar edemez.
     struct LValue {
-        enum class Kind { Invalid, Local, Global, Field, Element } kind = Kind::Invalid;
+        enum class Kind { Invalid, Local, Global, Field, Element, Shared } kind = Kind::Invalid;
         int slot        = -1;   // Local: değişkenin slotu
-        int globalIndex = -1;   // Global: global tablo indeksi
+        int globalIndex = -1;   // Global: global tablo indeksi; Shared: SharedSlots indeksi
         int objSlot     = -1;   // Field/Element: nesne slotu
         int fieldIndex  = -1;   // Field: alan indeksi
         int indexSlot   = -1;   // Element: indeks slotu
@@ -212,6 +213,7 @@ private:
         bool             isSwitch = false;  // true → switch; continue buraya ait değil
         std::vector<int> breakJumps;    // patch bekleyen break JMP indeksleri
         std::vector<int> continueJumps; // patch bekleyen continue JMP indeksleri (switch'te boş)
+        size_t           lockDepth = 0; // ADR-045: döngüye girişteki lockScopes_ derinliği
     };
     std::vector<LoopContext> loopContextStack_;
 
@@ -285,6 +287,38 @@ private:
     // CALL dönüş türü). Ekstra semantik analiz DEĞİL — opcode başına sonuç
     // türü statik (VM'in ValueKind mantığının derleme-zamanı karşılığı).
     void finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl);
+
+    // ── ADR-045 global başlatma (1-g, PLAN B) ─────────────────────────────
+    // main'in başındaki global init prelude'u (tek thread davranışı birebir).
+    void emitGlobalInitializers(const std::vector<VariableDeclNode*>& vars);
+    // Thread kullanan programlarda: yeni thread'in isolate'i gövdeden önce
+    // çağırır. shared globaller dahil edilmez (onları main bir kez kurar).
+    // needsThreadGlobalInit_ false iken hiçbir şey üretmez (IR birebir aynı).
+    void emitThreadGlobalInitFunction(IRProgram& program,
+                                      const std::vector<VariableDeclNode*>& vars);
+    bool needsThreadGlobalInit_ = false;
+
+    // ── ADR-045 (Faz 3-c/3-d): izole thread modeli ────────────────────────
+    IRProgram* program_       = nullptr;  // lifting yeni fonksiyon ekler
+    int        threadCounter_ = 0;        // __thread_<fn>_<n> numarası
+    // shared global adı → SharedSlots indeksi (global slot DEĞİL)
+    std::unordered_map<std::string, int>      nameToShared_;
+    std::unordered_map<int, SlotType>         sharedSlotTypes_;
+    // Sözcüksel kilit kapsamları: her Block bir seviye; tutulan shared slotları
+    std::vector<std::vector<int>> lockScopes_;
+
+    bool isShared(const std::string& name) const { return nameToShared_.count(name) > 0; }
+    void registerSharedGlobal(IRProgram& program, VariableDeclNode* vd);
+    // lockScopes_[fromDepth..] içindeki tutulan kilitler için ters sırayla UNLOCK
+    void emitUnlocksFrom(size_t fromDepth);
+    Instruction& emitThreadOp(Opcode op, int dest, int src, int sharedIdx);
+    int  generateThreadExpr(class ThreadExprNode* te);
+    int  generateThreadIntrinsic(class ScopeCallNode* sc);
+    void generateLockStatement(class LockStatementNode* ls);
+    void generateWaitStatement(class WaitStatementNode* ws);
+
+public:
+    static constexpr const char* kThreadGlobalInitName = "__init_globals";
 };
 
 #endif // SAQUT_IR_GENERATOR

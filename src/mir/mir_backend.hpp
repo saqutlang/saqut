@@ -27,9 +27,14 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <memory>
 #include "ir/ir_program.hpp"
 #include "profiling/stage_timer.hpp"
 #include "gc/gc_heap.hpp"
+
+struct CompiledProgram;
+struct Isolate;
+namespace saqut::threading { struct MessageBuffer; }
 
 namespace mir_backend {
 
@@ -47,6 +52,27 @@ struct JitCallCounters {
     uint64_t* builtin  = nullptr;
 };
 
+// ADR-045 Faz 1 (c1): derleme ve koşu ayrıdır. compileProgram hiçbir şey
+// çalıştırmaz; desteklenmeyen program için nullptr döner (outReason dolu).
+// runOnIsolate, çağıranın IsolateGuard(iso, &compiled) ile bağladığı
+// isolate'te main()'i koşar. tryCompileAndRunProgram ikisini sarmalar.
+std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
+                                                UnsupportedReason& outReason,
+                                                Profiling::StageTimer* profiler = nullptr);
+
+// ADR-045 (Faz 3-f): entryName/startMsg — spawn edilen thread'in isolate'i
+// main yerine __thread_* giriş fonksiyonunu koşar; startMsg (yakalananlar)
+// bu thread'in koşu heap'ine açılır. Varsayılan: main, mesaj yok.
+bool runOnIsolate(const CompiledProgram& compiled, Isolate& iso, int& outExitCode,
+                  const std::vector<std::string>& programArgs,
+                  Profiling::StageTimer* profiler = nullptr,
+                  JitCallCounters* counters = nullptr,
+                  int executionRuns = 1,
+                  std::vector<long long>* executionSamplesUs = nullptr,
+                  const std::function<void(int, int)>& executionProgress = {},
+                  const std::string& entryName = "main",
+                  const saqut::threading::MessageBuffer* startMsg = nullptr);
+
 // Programın TAMAMINI MIR ile native koda derleyip main()'i gerçekten
 // çalıştırmayı dener. Başarılıysa true döner, outExitCode main'in RETURN
 // değerini taşır — bu durumda program uçtan uca JIT'lenmiştir, VM hiç
@@ -59,7 +85,7 @@ struct JitCallCounters {
 bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                               UnsupportedReason& outReason,
                               const std::vector<std::string>& programArgs,
-                              profiling::StageTimer* profiler = nullptr,
+                              Profiling::StageTimer* profiler = nullptr,
                               JitCallCounters* counters = nullptr,
                               int executionRuns = 1,
                               std::vector<long long>* executionSamplesUs = nullptr,

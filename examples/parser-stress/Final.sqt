@@ -39,32 +39,32 @@ int main() {
     return 0;
 }
 
-struct List {
+struct IntList {
     int arr[100];
     int length;
 };
 
-struct List createList() {
-    struct List list;
+struct IntList createList() {
+    struct IntList list;
     list.length = 0;
     return list;
 }
 
-void push(struct List* list, int value) {
+void push(struct IntList* list, int value) {
     if (list->length < 100) {
         list->arr[list->length] = value;
         list->length++;
     }
 }
 
-int get(struct List* list, int index) {
+int get(struct IntList* list, int index) {
     if (index < list->length) {
         return list->arr[index];
     }
     return -1;
 }
 
-void printList(struct List* list) {
+void printList(struct IntList* list) {
     for (int i = 0; i < list->length; i++) {
         // println yerine direkt yaz
         int val = list->arr[i];
@@ -74,7 +74,7 @@ void printList(struct List* list) {
 }
 
 int main() {
-    struct List myList = createList();
+    struct IntList myList = createList();
     
     push(myList, 5);
     push(myList, 10);

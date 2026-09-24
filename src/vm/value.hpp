@@ -110,6 +110,11 @@ public:
         v.p.r = allocValueString(std::move(s));
         return v;
     }
+    // Zaten tahsis edilmiş bir StringObject'i sarar (ADR-045 mesaj
+    // deserialize'ı alıcı heap'e kendisi tahsis eder; kanca heap'i değil).
+    static Value fromStringObject(Object* stringObj) {
+        Value v; v.kind = ValueKind::String; v.p.r = stringObj; return v;
+    }
     static Value fromRef(Object* obj) {
         Value v; v.kind = ValueKind::Ref; v.p.r = obj; return v;
     }

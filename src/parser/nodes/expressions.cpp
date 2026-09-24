@@ -144,3 +144,36 @@ std::string IndexExpressionNode::toJson(int depth) {
     obj.addRaw("location", loc.toJson());
     return obj.str();
 }
+
+// ThreadExprNode (ADR-045)
+ThreadExprNode::ThreadExprNode() { kind = ASTKind::ThreadExpr; }
+void ThreadExprNode::log(int indent) {
+    std::cout << jsonIndent(indent) << Color::SoftMavi << "ThreadExpr" << Color::Reset << "\n";
+    if (body) body->log(indent + 1);
+}
+std::string ThreadExprNode::toJson(int depth) {
+    JsonObject obj(depth);
+    obj.add("kind", "ThreadExpr");
+    obj.addArray("captures", [&]() {
+        for (auto& c : captures) obj.addItem("\"" + c + "\"");
+    });
+    if (body) obj.addRaw("body", body->toJson(depth + 1));
+    obj.addRaw("resolvedType", resolvedTypeJson());
+    obj.addRaw("location", loc.toJson());
+    return obj.str();
+}
+
+// CollectionNewNode (ADR-045)
+CollectionNewNode::CollectionNewNode() { kind = ASTKind::CollectionNew; }
+void CollectionNewNode::log(int indent) {
+    std::cout << jsonIndent(indent) << Color::SoftMavi << (isPool ? "Pool" : "List")
+              << Color::Reset << "(" << Color::SoftPembe << elemTypeName << Color::Reset << ")\n";
+}
+std::string CollectionNewNode::toJson(int depth) {
+    JsonObject obj(depth);
+    obj.add("kind", isPool ? "PoolNew" : "ListNew");
+    obj.add("elementType", elemTypeName);
+    obj.addRaw("resolvedType", resolvedTypeJson());
+    obj.addRaw("location", loc.toJson());
+    return obj.str();
+}
