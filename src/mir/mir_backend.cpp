@@ -53,6 +53,18 @@
 #include <unordered_map>
 #include <vector>
 
+// JIT'in doğrudan bellek görünümü için ArrayObject alan ofsetleri.
+// ArrayObject std::vector üyeleri yüzünden standard-layout değildir; C++
+// offsetof'u bu durumda "koşullu desteklenir" sayar (-Winvalid-offsetof).
+// GCC/Clang sanal tabanı olmayan tiplerde onu tanımlı ve sabit hesaplar;
+// ArrayObject'in sanal tabanı/üyesi yok (gc_object.hpp: vptr'siz nesneler).
+// Uyarı yalnız bu iki tanımda bastırılır.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+static constexpr size_t kArrayJitDataOffset   = offsetof(ArrayObject, jitData);
+static constexpr size_t kArrayJitLengthOffset = offsetof(ArrayObject, jitLength);
+#pragma GCC diagnostic pop
+
 // Merkezi exit kodu sınıfları (0/64/65/70). Bağımlılıksız saf sabit başlığı —
 // JIT runtime hatalarının VM ile aynı exit sözleşmesine uyması için gerekli.
 #include "cli/exit_codes.hpp"
@@ -3075,12 +3087,12 @@ std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
                         // data = [arr + offsetof(ArrayObject, jitData)]
                         MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_MOV,
                             MIR_new_reg_op(ctx, dataReg),
-                            MIR_new_mem_op(ctx, MIR_T_I64, (MIR_disp_t)offsetof(ArrayObject, jitData),
+                            MIR_new_mem_op(ctx, MIR_T_I64, (MIR_disp_t)kArrayJitDataOffset,
                                            R(instr.left).u.reg, 0, 0)));
                         // len = [arr + offsetof(ArrayObject, jitLength)]
                         MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_MOV,
                             MIR_new_reg_op(ctx, lenReg),
-                            MIR_new_mem_op(ctx, MIR_T_I64, (MIR_disp_t)offsetof(ArrayObject, jitLength),
+                            MIR_new_mem_op(ctx, MIR_T_I64, (MIR_disp_t)kArrayJitLengthOffset,
                                            R(instr.left).u.reg, 0, 0)));
                         // if idx >= len → fail
                         MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_BGE,
@@ -3176,11 +3188,11 @@ std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
 
                         MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_MOV,
                             MIR_new_reg_op(ctx, dataReg),
-                            MIR_new_mem_op(ctx, MIR_T_I64, (MIR_disp_t)offsetof(ArrayObject, jitData),
+                            MIR_new_mem_op(ctx, MIR_T_I64, (MIR_disp_t)kArrayJitDataOffset,
                                            R(instr.dest).u.reg, 0, 0)));
                         MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_MOV,
                             MIR_new_reg_op(ctx, lenReg),
-                            MIR_new_mem_op(ctx, MIR_T_I64, (MIR_disp_t)offsetof(ArrayObject, jitLength),
+                            MIR_new_mem_op(ctx, MIR_T_I64, (MIR_disp_t)kArrayJitLengthOffset,
                                            R(instr.dest).u.reg, 0, 0)));
                         MIR_append_insn(ctx, func, MIR_new_insn(ctx, MIR_BGE,
                             MIR_new_label_op(ctx, failL), R(instr.left), MIR_new_reg_op(ctx, lenReg)));

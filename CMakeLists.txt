@@ -62,6 +62,12 @@ check_c_compiler_flag(-fno-tree-sra SAQUT_MIR_HAS_NO_TREE_SRA)
 if(SAQUT_MIR_HAS_NO_TREE_SRA)
     target_compile_options(mir_core PRIVATE -fno-tree-sra)
 endif()
+# Vendor kodu (MIR): MIR_scan_string'deki setjmp/longjmp hata yolu GCC'de
+# -Wclobbered uyarısı verir; üçüncü taraf koddur, değiştirmiyoruz.
+check_c_compiler_flag(-Wno-clobbered SAQUT_MIR_HAS_NO_CLOBBERED)
+if(SAQUT_MIR_HAS_NO_CLOBBERED)
+    target_compile_options(mir_core PRIVATE -Wno-clobbered)
+endif()
 check_c_compiler_flag(-fno-ipa-cp-clone SAQUT_MIR_HAS_NO_IPA_CP_CLONE)
 if(SAQUT_MIR_HAS_NO_IPA_CP_CLONE)
     target_compile_options(mir_core PRIVATE -fno-ipa-cp-clone)
