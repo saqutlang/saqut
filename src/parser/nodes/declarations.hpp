@@ -36,6 +36,7 @@ public:
     std::string name;
     ASTNode*   initExpr = nullptr;
     bool isExported = false; // yalnızca modül seviyesi global için anlamlı (#3)
+    bool isShared   = false; // ADR-045: `shared` global (thread'ler arası görünür)
     VariableDeclNode();
     ~VariableDeclNode() override { delete initExpr; }
     void log(int indent = 0) override;

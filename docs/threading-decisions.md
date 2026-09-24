@@ -61,3 +61,16 @@ omurgasıdır; kararlar ürün sahibinin onayına açıktır.
   stdout ve stderr aynı kilidi paylaşır; DAP output sink'i de kilit altında
   çağrılır. | Tek kilit sıralama sorununu ve iki akış arası ara-kesimi
   önler; print sıcak yolu değil. | Akış başına ayrı mutex.
+- **[1-g] PLAN B (baştan)** main'in başındaki global init prelude'u
+  olduğu gibi kaldı (tek thread IR'ı, `ir` golden'ları, DAP adımları ve stack
+  trace'ler birebir). Thread kullanan programlar için IRGenerator ayrıca
+  `__init_globals()` üretir (shared olmayan globaller; debugHidden;
+  `needsThreadGlobalInit_` bayrağı Faz 3'te `thread {}` görülünce set edilir,
+  aksi hâlde hiçbir şey üretilmez). `__init_shared` ayrı fonksiyon olarak
+  üretilmez: shared globaller main'in prelude'unda, main thread'inde, bir kez
+  (spawn'dan önce) kurulur — spec'teki "süreç başında bir kez, main
+  thread'inde" semantiğinin aynısı. İki init döngüsü tek
+  `emitGlobalInitializers` yardımcısına indirildi. `VariableDeclNode::isShared`
+  eklendi. | Spec'in birinci seçeneği tüm tek-thread IR dump'larını
+  değiştirirdi; prompt tek thread regresyonunu mutlak öncelik sayıyor. |
+  Spec: init'i main'den `__init_shared`/`__init_globals`'e taşıyıp çağırmak.

@@ -34,6 +34,7 @@
 #include "module/module_graph.hpp"
 
 class FunctionDeclNode;  // finalizeSlotTypes imzası için (tanım .cpp'de)
+class VariableDeclNode;  // global init yardımcıları için
 
 class IRGenerator {
 public:
@@ -285,6 +286,19 @@ private:
     // CALL dönüş türü). Ekstra semantik analiz DEĞİL — opcode başına sonuç
     // türü statik (VM'in ValueKind mantığının derleme-zamanı karşılığı).
     void finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl);
+
+    // ── ADR-045 global başlatma (1-g, PLAN B) ─────────────────────────────
+    // main'in başındaki global init prelude'u (tek thread davranışı birebir).
+    void emitGlobalInitializers(const std::vector<VariableDeclNode*>& vars);
+    // Thread kullanan programlarda: yeni thread'in isolate'i gövdeden önce
+    // çağırır. shared globaller dahil edilmez (onları main bir kez kurar).
+    // needsThreadGlobalInit_ false iken hiçbir şey üretmez (IR birebir aynı).
+    void emitThreadGlobalInitFunction(IRProgram& program,
+                                      const std::vector<VariableDeclNode*>& vars);
+    bool needsThreadGlobalInit_ = false;
+
+public:
+    static constexpr const char* kThreadGlobalInitName = "__init_globals";
 };
 
 #endif // SAQUT_IR_GENERATOR

@@ -107,18 +107,7 @@ IRProgram IRGenerator::generateModuleGraph(ModuleGraph& graph, SymbolTable& symb
                 // main'i barındıran modülden bağımsız — TÜM modüllerin
                 // global başlangıç ifadeleri burada, ön-geçişteki (graph.units)
                 // sırayla çalıştırılır.
-                for (VariableDeclNode* gv : allGlobalVars) {
-                    if (gv->initExpr) {
-                        int initSlot = generateExpression(gv->initExpr);
-                        emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
-                    } else {
-                        // Init'siz global: yerel bildirimle aynı sözleşme
-                        // (null / "" / örnek / boş dizi / tipli sıfır).
-                        int initSlot = freshSlot();
-                        emitDefaultValue(initSlot, gv->varType, gv->loc);
-                        emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
-                    }
-                }
+                emitGlobalInitializers(allGlobalVars);
                 for (size_t pi = preludeStart; pi < currentFunction_->instructions.size(); ++pi)
                     currentFunction_->instructions[pi].debugHidden = true;
             }
@@ -128,6 +117,7 @@ IRProgram IRGenerator::generateModuleGraph(ModuleGraph& graph, SymbolTable& symb
             finalizeSlotTypes(currentFunction_, fnDecl);
         }
     }
+    emitThreadGlobalInitFunction(program, allGlobalVars);
     return program;
 }
 
@@ -187,18 +177,7 @@ IRProgram IRGenerator::generate(ASTNode* programNode, SymbolTable& symbolTable,
             // main'in başında global değişkenlerin init ifadelerini üret
             if (fnDecl->name == "main") {
                 const size_t preludeStart = currentFunction_->instructions.size();
-                for (VariableDeclNode* gv : globalVars) {
-                    if (gv->initExpr) {
-                        int initSlot = generateExpression(gv->initExpr);
-                        emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
-                    } else {
-                        // Init'siz global: yerel bildirimle aynı sözleşme
-                        // (null / "" / örnek / boş dizi / tipli sıfır).
-                        int initSlot = freshSlot();
-                        emitDefaultValue(initSlot, gv->varType, gv->loc);
-                        emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
-                    }
-                }
+                emitGlobalInitializers(globalVars);
                 for (size_t pi = preludeStart; pi < currentFunction_->instructions.size(); ++pi)
                     currentFunction_->instructions[pi].debugHidden = true;
             }
@@ -208,8 +187,50 @@ IRProgram IRGenerator::generate(ASTNode* programNode, SymbolTable& symbolTable,
             finalizeSlotTypes(currentFunction_, fnDecl);
         }
     }
+    emitThreadGlobalInitFunction(program, globalVars);
 
     return program;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADR-045 global başlatma (1-g, PLAN B — docs/threading-decisions.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void IRGenerator::emitGlobalInitializers(const std::vector<VariableDeclNode*>& vars) {
+    for (VariableDeclNode* gv : vars) {
+        if (gv->initExpr) {
+            int initSlot = generateExpression(gv->initExpr);
+            emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
+        } else {
+            // Init'siz global: yerel bildirimle aynı sözleşme
+            // (null / "" / örnek / boş dizi / tipli sıfır).
+            int initSlot = freshSlot();
+            emitDefaultValue(initSlot, gv->varType, gv->loc);
+            emitStoreGlobal(initSlot, nameToGlobal_[gv->name]);
+        }
+    }
+}
+
+void IRGenerator::emitThreadGlobalInitFunction(IRProgram& program,
+                                               const std::vector<VariableDeclNode*>& vars) {
+    if (!needsThreadGlobalInit_) return;
+    nameToSlot_.clear();
+    shadowStack_.clear();
+    nextSlot_ = 0;
+    IRFunction irFn(kThreadGlobalInitName, 0);
+    irFn.moduleId = currentModuleId_;
+    program.addFunction(std::move(irFn));
+    currentFunction_ = program.findFunction(kThreadGlobalInitName);
+    std::vector<VariableDeclNode*> perThread;
+    for (VariableDeclNode* gv : vars)
+        if (!gv->isShared) perThread.push_back(gv);
+    emitGlobalInitializers(perThread);
+    int zeroSlot = freshSlot();
+    emitLoadConst(zeroSlot, 0);
+    emitReturn(zeroSlot);
+    for (auto& ins : currentFunction_->instructions) ins.debugHidden = true;
+    currentFunction_->slotCount = nextSlot_;
+    finalizeSlotTypes(currentFunction_, nullptr);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2104,7 +2125,8 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
     fn->slotTypes.assign(static_cast<size_t>(fn->slotCount), SlotType::Int);
 
     // 1. Parametre slot'ları (0..paramCount-1) — bildirilen tipten.
-    for (size_t i = 0; i < decl->params.size() && i < static_cast<size_t>(fn->slotCount); ++i)
+    // decl == nullptr: parametresiz sentetik fonksiyon (ADR-045 __init_globals).
+    for (size_t i = 0; decl && i < decl->params.size() && i < static_cast<size_t>(fn->slotCount); ++i)
         fn->slotTypes[i] = slotTypeFromTypeName(decl->params[i]->varType);
 
     // 2. Üreten opcode'dan türet. Slot türü sabit olduğundan (ADR-020) tek
@@ -2337,7 +2359,7 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
         return true;
     };
 
-    for (size_t i = 0; i < decl->params.size() && i < static_cast<size_t>(fn->slotCount); ++i)
+    for (size_t i = 0; decl && i < decl->params.size() && i < static_cast<size_t>(fn->slotCount); ++i)
         if (decl->params[i]->varType.size() > 0 && decl->params[i]->varType.back() == '?')
             markNullable(static_cast<int>(i));
 
