@@ -30,6 +30,7 @@
 #include "runtime/isolate.hpp"
 #include "runtime/jit_runtime.hpp"
 #include "runtime/const_pool.hpp"
+#include "runtime/compiled_program.hpp"
 #include "ir/ir_liveness.hpp"
 #include "data/array.hpp"
 
@@ -437,14 +438,16 @@ extern "C" void rt_jit_array_set_p(void* a, int64_t idx, void* v) {
 
 // STRUCT_NEW metadata'sı: VM fieldNames'i ve ADR-021 nullable zero-init
 // maskesini IRFunction'dan okur. JIT'te talimat başına bir kayıt indeksi
-// geçirilir; tablo derleme sırasında doldurulur. Depolama: rt().structMeta.
+// geçirilir; tablo derleme sırasında doldurulur. Depolama: CompiledProgram::structMeta
+// (program düzeyi, thread başına kopyalanmaz); koşuda Isolate::program üzerinden.
 
 extern "C" void* rt_jit_struct_new(int64_t fieldCount, int64_t metaId) {
     if (!rt().heap) return nullptr;
     jitMaybeCollect();
     auto* obj = rt().heap->allocStruct((int)fieldCount);
-    if (metaId >= 0 && metaId < (int64_t)rt().structMeta.size()) {
-        const auto& m = rt().structMeta[(size_t)metaId];
+    const CompiledProgram* prog = Isolate::current().program;
+    if (prog && metaId >= 0 && metaId < (int64_t)prog->structMeta.size()) {
+        const auto& m = prog->structMeta[(size_t)metaId];
         obj->fieldNames = m.names;
         size_t n = std::min(m.nullableMask.size(), obj->fields.size());
         for (size_t i = 0; i < n; ++i)
@@ -1219,97 +1222,41 @@ struct FuncEntry {
 
 }  // namespace
 
-bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
-                              UnsupportedReason& outReason,
-                              const std::vector<std::string>& programArgs,
-                              Profiling::StageTimer* profiler,
-                              JitCallCounters* counters,
-                              int executionRuns,
-                              std::vector<long long>* executionSamplesUs,
-                              const std::function<void(int, int)>& executionProgress) {
-    if (!wholeProgramSupported(program, outReason)) return false;
+}  // namespace mir_backend
 
-    // Bench sayaçlarını aktif et (profiler ile bağımsız — sayaçlar profil
-    // çalışmasında bile istenebilir; nullptr ise trampoline'lar atlar).
-    struct BenchCountersGuard {
-        JitCallCounters* prev;
-        ~BenchCountersGuard() { rt().benchCounters = prev; }
-    } benchGuard{ rt().benchCounters };
-    rt().benchCounters = counters;
-
-    // Bu koşunun heap'i. Ömrü KOŞUYA bağlıdır (süreç ömrüne değil): koşu
-    // bitince yıkılır ve tahsis ettiği her nesne serbest kalır. Aynı süreçte
-    // arka arkaya program çalıştıran gömülü kullanım için bu şarttır.
-    Heap runHeap;
-    if (const int gcThreshold = gcThresholdForNextRunStorage(); gcThreshold != 0) {
-        if (gcThreshold > 0) runHeap.setMinCollectBytes(gcThreshold);
-        else                 runHeap.setCollectionEnabled(false);
+CompiledProgram::~CompiledProgram() {
+    // ADR-045 yıkım sırası: koşan isolate kalmamalı → MIR_gen_finish →
+    // MIR_finish. Native koda gömülü ConstPool/structMeta verisi bundan
+    // sonra erişilmez.
+    assert(activeIsolates.load() == 0);
+    if (mirCtx) {
+        MIR_gen_finish(mirCtx);
+        MIR_finish(mirCtx);
     }
+}
 
-    // Bağlanan her şey koşu sonunda çözülmelidir — heap yığında olduğundan
-    // ona işaret eden global bağlar (kök sağlayıcı kaydı, string kancası,
-    // host ortamı) heap'ten uzun yaşarsa serbest bırakılmış belleğe bakar.
-    struct RunHeapBinding {
-        Heap* heap = nullptr;
-        ~RunHeapBinding() {
-            if (heap) lastRunGcStatsStorage() = heap->stats();
-            jitSetHeap(nullptr);
-            setValueStringHeap(nullptr);
-            jitShadowStack().clear();
-            rt().pendingError = nullptr;
-            rt().globalP.clear();
-        }
-    } runHeapBinding{ &runHeap };
+namespace mir_backend {
 
-    static HostEnv jitEnv;
-    jitEnv.programArgs = &programArgs;
-    jitEnv.heap        = &runHeap;
-    jitSetHostEnv(&jitEnv);
-    jitSetHeap(&runHeap);
-    // Tek string modeli: Value::fromString de aynı heap'e tahsis etsin —
-    // VM ve JIT aynı string dünyasını paylaşır.
-    setValueStringHeap(&runHeap);
-    rt().globalI.assign((size_t)program.globalCount, 0);
-    rt().globalD.assign((size_t)program.globalCount, 0.0);
-    rt().globalP.assign((size_t)program.globalCount, nullptr);
-    std::fill(std::begin(rt().callNullArgs), std::end(rt().callNullArgs), 0);
-    rt().callRetNull = 0;
-    rt().castNullable = false;
-    rt().castNull = 0;
-    rt().pendingError = nullptr;
-    rt().errorLine = 0;
-    rt().errorCol = 0;
-    jitShadowStack().clear();
-    rt().structMeta.clear();
-    rt().traceStack.clear();
-    rt().callDepth = 0;
-    {
-        // Native yığın bütçesi: RLIMIT_STACK'tan 1 MB güvenlik payı düşülür
-        // (host çağrıları ve MIR çerçeveleri için). Sınırsız ya da okunamazsa
-        // 8 MB varsayılır.
-        char here = 0;
-        rt().stackBase = &here;
-        struct rlimit rl {};
-        size_t total = 8u * 1024 * 1024;
-        if (getrlimit(RLIMIT_STACK, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY)
-            total = static_cast<size_t>(rl.rlim_cur);
-        const size_t margin = 1024u * 1024;
-        rt().stackBudget = total > 2 * margin ? total - margin : total / 2;
-    }
+std::unique_ptr<CompiledProgram> compileProgram(IRProgram& program,
+                                                UnsupportedReason& outReason,
+                                                Profiling::StageTimer* profiler) {
+    if (!wholeProgramSupported(program, outReason)) return nullptr;
 
     if (program.findFunction("main") == nullptr) {
         outReason.functionName = "main";
         outReason.opcodeName   = "(fonksiyon bulunamadi)";
-        return false;
+        return nullptr;
     }
 
+    auto compiledProgram = std::make_unique<CompiledProgram>();
+
     // "jit-warmup" — IR->MIR çeviri + gerçek native derleme (MIR_gen dahil).
-    // compiled() çağrısı bu kapsamın DIŞINDA ("jit-exec"); RAII kapsamı
-    // compiled()'dan hemen önce reset() ile kapatılır.
+    // compiled() çağrısı bu kapsamın DIŞINDA ("jit-exec", runOnIsolate).
     std::optional<Profiling::StageTimer::ScopedStage> profWarmup;
     profWarmup.emplace(profiler, "jit-warmup");
 
     MIR_context_t ctx = MIR_init();
+    compiledProgram->mirCtx = ctx;
     MIR_module_t  mod = MIR_new_module(ctx, "saqut_jit_dilim1");
 
     // ── print/fatal-hata trampolinleri (dış C fonksiyonları) ────────────
@@ -2913,8 +2860,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
                         if (nullIt != fn.structFieldNullable.end())
                             m.nullableMask = nullIt->second;
                         if (m.names || !m.nullableMask.empty()) {
-                            metaId = (int64_t)rt().structMeta.size();
-                            rt().structMeta.push_back(std::move(m));
+                            metaId = (int64_t)compiledProgram->structMeta.size();
+                            compiledProgram->structMeta.push_back(std::move(m));
                         }
                     }
                     MIR_append_insn(ctx, func, MIR_new_call_insn(ctx, 5,
@@ -3490,10 +3437,97 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
         if (name == "main") mainPtr = p;
     }
 
+    compiledProgram->mainEntry   = mainPtr;
+    compiledProgram->globalCount = program.globalCount;
     profWarmup.reset();  // "jit-warmup" burada biter
+    return compiledProgram;
+}
+
+bool runOnIsolate(const CompiledProgram& compiled, Isolate& iso, int& outExitCode,
+                  const std::vector<std::string>& programArgs,
+                  Profiling::StageTimer* profiler,
+                  JitCallCounters* counters,
+                  int executionRuns,
+                  std::vector<long long>* executionSamplesUs,
+                  const std::function<void(int, int)>& executionProgress) {
+    // Önkoşul: çağıran IsolateGuard ile bu isolate'i ve programı bağlamıştır
+    // (rt() == iso.jit; structMeta iso.program üzerinden okunur).
+    assert(t_isolate == &iso && iso.program == &compiled);
+    struct ActiveIsolateCount {
+        const CompiledProgram& cp;
+        explicit ActiveIsolateCount(const CompiledProgram& c) : cp(c) { ++cp.activeIsolates; }
+        ~ActiveIsolateCount() { --cp.activeIsolates; }
+    } activeCount{ compiled };
+
+    // Bench sayaçlarını aktif et (profiler ile bağımsız — sayaçlar profil
+    // çalışmasında bile istenebilir; nullptr ise trampoline'lar atlar).
+    struct BenchCountersGuard {
+        JitCallCounters* prev;
+        ~BenchCountersGuard() { rt().benchCounters = prev; }
+    } benchGuard{ rt().benchCounters };
+    rt().benchCounters = counters;
+
+    // Bu koşunun heap'i. Ömrü KOŞUYA bağlıdır (süreç ömrüne değil): koşu
+    // bitince yıkılır ve tahsis ettiği her nesne serbest kalır. Aynı süreçte
+    // arka arkaya program çalıştıran gömülü kullanım için bu şarttır.
+    Heap runHeap;
+    if (const int gcThreshold = gcThresholdForNextRunStorage(); gcThreshold != 0) {
+        if (gcThreshold > 0) runHeap.setMinCollectBytes(gcThreshold);
+        else                 runHeap.setCollectionEnabled(false);
+    }
+
+    // Bağlanan her şey koşu sonunda çözülmelidir — heap yığında olduğundan
+    // ona işaret eden global bağlar (kök sağlayıcı kaydı, string kancası,
+    // host ortamı) heap'ten uzun yaşarsa serbest bırakılmış belleğe bakar.
+    struct RunHeapBinding {
+        Heap* heap = nullptr;
+        ~RunHeapBinding() {
+            if (heap) lastRunGcStatsStorage() = heap->stats();
+            jitSetHeap(nullptr);
+            setValueStringHeap(nullptr);
+            jitShadowStack().clear();
+            rt().pendingError = nullptr;
+            rt().globalP.clear();
+        }
+    } runHeapBinding{ &runHeap };
+
+    // Host ortamı isolate'e aittir (önce süreç-global `static HostEnv`).
+    iso.jitEnv.programArgs = &programArgs;
+    iso.jitEnv.heap        = &runHeap;
+    jitSetHostEnv(&iso.jitEnv);
+    jitSetHeap(&runHeap);
+    // Tek string modeli: Value::fromString de aynı heap'e tahsis etsin —
+    // VM ve JIT aynı string dünyasını paylaşır.
+    setValueStringHeap(&runHeap);
+    rt().globalI.assign((size_t)compiled.globalCount, 0);
+    rt().globalD.assign((size_t)compiled.globalCount, 0.0);
+    rt().globalP.assign((size_t)compiled.globalCount, nullptr);
+    std::fill(std::begin(rt().callNullArgs), std::end(rt().callNullArgs), 0);
+    rt().callRetNull = 0;
+    rt().castNullable = false;
+    rt().castNull = 0;
+    rt().pendingError = nullptr;
+    rt().errorLine = 0;
+    rt().errorCol = 0;
+    jitShadowStack().clear();
+    rt().traceStack.clear();
+    rt().callDepth = 0;
+    {
+        // Native yığın bütçesi: RLIMIT_STACK'tan 1 MB güvenlik payı düşülür
+        // (host çağrıları ve MIR çerçeveleri için). Sınırsız ya da okunamazsa
+        // 8 MB varsayılır.
+        char here = 0;
+        rt().stackBase = &here;
+        struct rlimit rl {};
+        size_t total = 8u * 1024 * 1024;
+        if (getrlimit(RLIMIT_STACK, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY)
+            total = static_cast<size_t>(rl.rlim_cur);
+        const size_t margin = 1024u * 1024;
+        rt().stackBudget = total > 2 * margin ? total - margin : total / 2;
+    }
 
     using SaqutMainFn = int64_t (*)(void);
-    auto    compiled = reinterpret_cast<SaqutMainFn>(mainPtr);
+    auto    mainFn   = reinterpret_cast<SaqutMainFn>(compiled.mainEntry);
     int64_t nativeResult = 0;
     const int runs = std::max(1, executionRuns);
     if (executionSamplesUs)
@@ -3502,7 +3536,7 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
         auto execStart = std::chrono::steady_clock::now();
         {
             Profiling::StageTimer::ScopedStage profExec(profiler, "jit-exec");
-            nativeResult = compiled();
+            nativeResult = mainFn();
         }
         auto execEnd = std::chrono::steady_clock::now();
         if (executionSamplesUs) {
@@ -3522,8 +3556,8 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
         rt().pendingError = nullptr;
     }
 
-    MIR_gen_finish(ctx);
-    MIR_finish(ctx);
+    // MIR_gen_finish/MIR_finish CompiledProgram yıkıcısına taşındı (ADR-045
+    // yıkım sırası: isolate'ler bitince).
 
     // Çalışma-zamanı üretilen string/decimal nesnelerini topla — native kod bitti,
     // pointer'lara artık erişilmiyor (GC Dilim 2/§8'e kadar elle temizlik).
@@ -3536,6 +3570,25 @@ bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
 
     outExitCode = static_cast<int>(nativeResult);
     return true;
+}
+
+bool tryCompileAndRunProgram(IRProgram& program, int& outExitCode,
+                              UnsupportedReason& outReason,
+                              const std::vector<std::string>& programArgs,
+                              Profiling::StageTimer* profiler,
+                              JitCallCounters* counters,
+                              int executionRuns,
+                              std::vector<long long>* executionSamplesUs,
+                              const std::function<void(int, int)>& executionProgress) {
+    // c1 sarmalayıcısı: compileProgram → IsolateGuard → runOnIsolate →
+    // CompiledProgram yıkımı (MIR_gen_finish/MIR_finish). Derleme bu thread'in
+    // mevcut isolate'i bağlıyken yapılır; ayırma c2'de zorlanır.
+    std::unique_ptr<CompiledProgram> compiled = compileProgram(program, outReason, profiler);
+    if (!compiled) return false;
+    Isolate& iso = Isolate::currentOrCreate();
+    IsolateGuard guard(iso, compiled.get());
+    return runOnIsolate(*compiled, iso, outExitCode, programArgs, profiler, counters,
+                        executionRuns, executionSamplesUs, executionProgress);
 }
 
 const GcStats& lastRunGcStats() { return lastRunGcStatsStorage(); }

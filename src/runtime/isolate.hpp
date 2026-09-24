@@ -15,8 +15,10 @@
 //   - RNG durumu          (önce: src/ffi/functions/sys.cpp thread_local)
 //   - JitRuntime          (önce: mir_backend.cpp g_jitRuntime global'i)
 //
-// HENÜZ TAŞINMADI (faz1 devamı): ConstPool, compile/run ayrımı (structMeta'nın
-// CompiledProgram'a alınması), Interpreter globalSlots_/Heap, FileRegistry/
+// c1: compile/run ayrımı (CompiledProgram + runOnIsolate); JIT HostEnv
+// isolate üyesi oldu (önce mir_backend.cpp'de `static HostEnv jitEnv`).
+//
+// HENÜZ TAŞINMADI (faz1 devamı): ConstPool (c3), Interpreter globalSlots_/Heap, FileRegistry/
 // FfiCatalog freeze(). Tek iş parçacıklı davranış bu adımda birebir korunur:
 // tek thread'de tek Isolate oluşur ve alanlar eskisi gibi çalışır.
 // ============================================================================
@@ -55,6 +57,10 @@ struct Isolate {
     // okunacak. Guard yokken (LSP/birim testleri) nullptr olabilir.
     const CompiledProgram* program = nullptr;
 
+    // JIT host çağrılarının ortamı (programArgs, koşu heap'i). runOnIsolate
+    // doldurur ve rt().hostEnv'e bağlar (önce süreç-global static'ti).
+    HostEnv jitEnv;
+
     // Koşu yolunda t_isolate guard tarafından bağlıdır; current() bunu
     // varsayar (Faz 1 ileriki adımında assert'e dönecek). LSP ve birim
     // testleri gibi guard'sız yollar currentOrCreate() kullanır.
@@ -76,16 +82,25 @@ inline Isolate& Isolate::currentOrCreate() {
 // dönecek; guard'sız yollar currentOrCreate() kullanmalı.
 inline Isolate& Isolate::current() { return currentOrCreate(); }
 
-// RAII guard: bir koşu boyunca thread'in isolate'ini bağlar, çıkışta önceki
-// değeri geri koyar (S4).
+// RAII guard: bir koşu boyunca thread'in isolate'ini ve (verilmişse) koşulan
+// programı bağlar, çıkışta önceki değerleri geri koyar (S4).
 class IsolateGuard {
 public:
-    explicit IsolateGuard(Isolate& iso) : prev_(t_isolate) { t_isolate = &iso; }
-    ~IsolateGuard() { t_isolate = prev_; }
+    explicit IsolateGuard(Isolate& iso, const CompiledProgram* program = nullptr)
+        : prev_(t_isolate), iso_(iso), prevProgram_(iso.program) {
+        t_isolate = &iso;
+        if (program) iso.program = program;
+    }
+    ~IsolateGuard() {
+        iso_.program = prevProgram_;
+        t_isolate    = prev_;
+    }
     IsolateGuard(const IsolateGuard&)            = delete;
     IsolateGuard& operator=(const IsolateGuard&) = delete;
 private:
-    Isolate* prev_;
+    Isolate*               prev_;
+    Isolate&               iso_;
+    const CompiledProgram* prevProgram_;
 };
 
 #endif // SAQUT_RUNTIME_ISOLATE

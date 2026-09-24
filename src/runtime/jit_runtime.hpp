@@ -45,9 +45,8 @@ struct JitStructMeta {
 // kendi örneğini görür; başka bir isolate'in durumuna dokunulmaz.
 //
 // ALAN SINIFI (S2 tablosu): aşağıdaki alanların tamamı KOŞU sırasında
-// yazılır → Isolate. Yalnız `structMeta` derleme sırasında doldurulur ve
-// koşuda salt okunur; fiziksel olarak CompiledProgram'a taşınması Faz 1'in
-// ileriki adımıdır (compile/run ayrımı).
+// yazılır → Isolate. Derleme sırasında dolan `structMeta` c1'de
+// CompiledProgram'a taşındı (program düzeyi, thread başına kopyalanmaz).
 struct JitRuntime {
     // GC: JIT ve VM AYNI Heap'i paylaşır (jitSetHeap ile bağlanır). Toplama
     // eşiği/politikası Heap'in kendisindedir — backend'ler yalnızca
@@ -80,9 +79,6 @@ struct JitRuntime {
     int64_t     callDepth  = 0;
     const char* stackBase  = nullptr;
     size_t      stackBudget = 0;
-
-    // STRUCT_NEW talimat başına bir kayıt (derleme sırasında dolar).
-    std::vector<JitStructMeta> structMeta;
 
     // Host çağrı ABI'si (#222): çağrılar arasında yeniden kullanılan
     // scratch/owner — çağrı başına tahsis yapmamanın yolu. Argümanlar
