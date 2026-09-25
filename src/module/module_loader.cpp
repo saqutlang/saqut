@@ -110,6 +110,8 @@ void ModuleLoader::loadUnit(const std::string& filePath, ModuleGraph& graph,
 
         std::string depPath = resolvePath(filePath, imp->sourcePath);
         imp->resolvedPath = depPath;
+        // maxDepth_ (yalnız LSP proje indeksi): giriş + doğrudan import'lar yeter.
+        if (maxDepth_ >= 0 && static_cast<int>(loadChain_.size()) > maxDepth_) continue;
         loadUnit(depPath, graph, imp->loc);
     }
     loadChain_.pop_back();

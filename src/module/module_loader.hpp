@@ -53,6 +53,11 @@ public:
     // nullptr (varsayılan) = ölçüm yapılmaz, hiçbir ek maliyet yok.
     void setProfiler(Profiling::StageTimer* profiler) { profiler_ = profiler; }
 
+    // LSP proje indeksi için: girişten en fazla `depth` import seviyesi yükle
+    // (-1 = sınırsız, varsayılan). Sınırın ötesindeki import'lar izlenmez ve
+    // tanı üretmez; derleme yolu bunu hiç çağırmaz.
+    void setMaxDepth(int depth) { maxDepth_ = depth; }
+
 private:
     // Tek bir dosyayı yükle, parse et, ImportDeclNode'larını takip et.
     // Zaten yüklenmiş dosyalar atlanır (seen_ ile kontrol); yükleme
@@ -69,6 +74,7 @@ private:
     DiagnosticEngine& diag_;
     SourceOverlay     overlay_;
     Profiling::StageTimer* profiler_ = nullptr;
+    int maxDepth_ = -1;
 
     // Yüklemesi başlatılmış dosyalar (canonical path) — tekrar yüklemeyi
     // ve hata alan dosya için mükerrer tanıyı önler.

@@ -176,6 +176,18 @@ Olası nedenler tek tek sınandı (`saqut lsp`'ye doğrudan istemciyle):
   tanıları eklendi, documentSymbol hiyerarşik biçime geçti, legend değişti.
   Golden 29 tüm Bölüm 4 özelliklerini kapsar.
 
+## Bölüm 6: performans
+
+- **İndeks yüklemesi derinlik 1 (`ModuleLoader::setMaxDepth`)** | 200
+  dosyalık import zincirinde her dosya tüm zinciri yeniden parse ediyordu:
+  ilk indeks 2.84 s → 38 ms. İndeks girdisi yalnız dosyanın kendi
+  sembollerini ve doğrudan import'larının export'larını gerektirir.
+  Derleme yolu varsayılan (-1, sınırsız) ile değişmez | parse edilmiş AST
+  önbelleğini dosyalar arasında paylaşmak (sahiplik değişikliği, büyük iş).
+- Açık dosyanın analizi bilinçli olarak sınırsız kalır (doğru tanılar
+  için tüm zincir gerekir): zincirin sonundaki dosyada düzenleme sonrası
+  tamamlama p50 44 ms, max 75 ms (hedef < 100 ms).
+
 ## Test altyapısı
 
 - **`{"$any": true}` joker satırı (lsp_test_driver.py)** | bu turda

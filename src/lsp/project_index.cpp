@@ -299,7 +299,12 @@ void ProjectIndex::indexFile(const std::string& path, const Overlay& overlay) {
 
     ModuleRegistry   registry;
     DiagnosticEngine diag;
-    ModuleGraph graph = ModuleLoader(registry, diag, overlay).load(path);
+    // Derinlik 1: dosyanın kendi sembolleri + doğrudan import'larının
+    // export'ları yeter. Sınırsız yükleme bir import zincirinde her dosya
+    // için tüm zinciri yeniden parse eder (200 dosyalık zincirde O(N²)).
+    ModuleLoader loader(registry, diag, overlay);
+    loader.setMaxDepth(1);
+    ModuleGraph graph = loader.load(path);
     if (graph.units.empty()) { entries_.erase(path); ++version_; return; }
     SymbolTable table;
     SymbolCollector(table, diag).collectModuleGraph(graph);
