@@ -42,6 +42,50 @@ Olası nedenler tek tek sınandı (`saqut lsp`'ye doğrudan istemciyle):
 - Teşhis testi: `tests/lsp/26_completion_member_scoped` (1. ve 4.
   satırdaki durumlar); tur başında kırmızı, Bölüm 1 ile yeşil.
 
+## Bölüm 1 — dayanıklı tamamlama motoru
+
+- **Kapsam aralıkları token dizisinden** (`ScopeIndex`, lsp_analysis.cpp) |
+  SymbolCollector'ın Scope nesneleri kaynak aralığı taşımıyor; tokenizer
+  sözdizimi hatasında da tam token dizisi verdiği için `{ }`/`( )`
+  eşleşmeleri yarım kodda da kullanılabilir. Parametre, for-init ve catch
+  değişkeninin kapsamı, tanımı içeren `( )`'den hemen sonra gelen `{ }`
+  gövdesidir | SymbolCollector'a aralık kaydı eklemek (ön ucu değiştirir;
+  bozuk kodda aralık yine eksik kalır).
+- **Ad çözümü:** en içteki kapsamdaki, imleçten önce tanımlanmış yerel;
+  yoksa global/import/yerleşik. Başka dosyanın sembolü tamamlamada yalnız
+  bu dosyaya import edildiyse görünür (eskiden grafikteki her modülün
+  export edilmemiş üst düzey adları da öneriliyordu).
+- **Alıcı ifadesi geriye doğru yürünür:** tanımlayıcı, `a.b.c`, `a[i]`,
+  `f()`, `x.m()` (yerleşik/Pool/List/Thread metot dönüş tipleri), string
+  literal; enum adı → üyeler.
+- **Satır sonu kuralı:** satır sonunda kalan `x.` ile alt satırın başındaki
+  ad birleştirilmez (`yap().⏎ ns[0].` iki ayrı deyimdir; parser ise tek
+  zincir okur). Satır başında `.bar()` biçimli zincir etkilenmez.
+- **Son geçerli analiz** | her turda sözdizimi temiz (kendi dosyasında E9xx
+  yok) analiz `lastGood` snapshot'ına devredilir (kopya değil, sahiplik
+  taşınır). Kök ad güncel analizde çözülemezse alıcı token'ları güncel
+  metinden, kök adın kapsamı ve tipler snapshot'tan çözülür. İmleç eski
+  metne **satır düzeyinde** eşlenir (ortak baş/son satırlar; aradaki blok
+  eşit satırlıysa satır satır) — birden çok yerde düzenleme olağan olduğu
+  için bayt düzeyinde tek değişim bölgesi varsaymak yetmedi (ilk
+  denemede imleç dosya başına eşleniyordu) | ağır: hata toleranslı ayrı
+  bir parser. **PLAN B (kısmen):** parser değiştirilmedi; mevcut
+  panic-mode kurtarma çoğu yarım ifadede zaten tam tablo veriyor (ölçüldü:
+  `t.`, `if (t.`, `[t.`, açık `(`); tablo gerçekten kaybolduğunda (ör.
+  bozuk fonksiyon başlığı `int ma in()`) snapshot devreye girer.
+- **Bağlamlar:** deyim başı (anahtar kelimeler + snippet'ler + semboller),
+  ifade (semboller + `true/false/null/thread/Pool/List`), `lock`/`unlock`
+  hedefi (yalnız shared primitif globaller), `Pool(`/`List(`/`as` (değer
+  tipleri; koleksiyon/Thread hariç), `shared` (tüm tipler), `x::`, import.
+- **Sıralama (`sortText`):** `0_` yerel, `1_` aynı dosya globali, `2_`
+  import edilmiş, `3_` yerleşik/anahtar kelime/snippet, `4_` import
+  edilmemiş proje sembolü (Bölüm 3). Sunucu önekle zaten filtreler.
+- **Pool/List/Thread öğeleri** gerçek eleman tipiyle (`void push(int value)`)
+  ve `documentation` açıklamasıyla döner.
+- Golden güncellemeleri: `13` (yalnız `sortText` eklendi), `25` (T yerine
+  eleman tipi + açıklama). Yeni: `26` (Bölüm 0 teşhisi, artık yeşil), `27`
+  (bağlamlar + son geçerli analiz).
+
 ## Test altyapısı
 
 - **`{"$any": true}` joker satırı (lsp_test_driver.py)** | bu turda

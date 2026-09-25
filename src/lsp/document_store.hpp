@@ -25,6 +25,28 @@
 #include "core/module_registry.hpp"
 #include "tokenizer/token.hpp"
 
+// "Son geçerli analiz" (Bölüm 1): sözdizimi hatası içermeyen en son turun
+// sahiplenilmiş kopyası. Kullanıcı yazarken dosya geçici olarak bozulduğunda
+// (yarım ifade, eşleşmemiş parantez) tamamlama bir önceki sağlam analizin
+// tiplerine düşebilsin diye tutulur.
+struct AnalysisSnapshot {
+    std::string                       content;
+    std::vector<int>                  lineStarts;
+    std::string                       filePath;
+    ASTNode*                          ast = nullptr;
+    std::vector<Token*>               tokens;
+    SymbolTable                       symbolTable;
+    std::unordered_map<int, Symbol*>  symbolByOffset;
+
+    AnalysisSnapshot() = default;
+    AnalysisSnapshot(const AnalysisSnapshot&) = delete;
+    AnalysisSnapshot& operator=(const AnalysisSnapshot&) = delete;
+    ~AnalysisSnapshot() {
+        delete ast;
+        for (auto* t : tokens) delete t;
+    }
+};
+
 struct DocumentState {
     std::string      uri;
     std::string      content;
@@ -60,6 +82,14 @@ struct DocumentState {
     // görüntüsü için SymbolTable derin kopyalanabilir hale getirilmeli.
     SymbolTable      symbolTable;
     DiagnosticEngine diagnostics;
+
+    // Bu turun analizi kendi dosyasında sözdizimi hatası (E9xx) içermiyor mu.
+    bool syntaxOk = false;
+    // Son sözdizimi-temiz tur (bu tur temizse bir öncekidir; bkz. update()).
+    std::unique_ptr<AnalysisSnapshot> lastGood;
+    // Bu belgenin modül grafiğindeki tüm dosyalar (canonical; kendisi dahil).
+    // Bağımlılık değişince yeniden analiz için (Bölüm 2).
+    std::vector<std::string> deps;
 
     ~DocumentState() {
         delete ast;
@@ -111,6 +141,14 @@ public:
     // ör. yüzde-kodlamasız/kodlamalı — geri döner); açık değilse pathToUri
     // ile sentezlenmiş bir URI (Faz 3 — çok-dosya URI, kök neden #4).
     std::string uriForPath(const std::string& path) const;
+
+    // İçerik değişmeden yeniden analiz (bağımlı bir modül değişti — Bölüm 2).
+    void reanalyze(DocumentState& state);
+    // Modül grafiğinde `path`i içeren açık belgeler (`except` hariç), uri sıralı.
+    std::vector<DocumentState*> dependentsOf(const std::string& path,
+                                             const DocumentState* except);
+    // Tüm açık belgeler, uri sıralı.
+    std::vector<DocumentState*> all();
 
 private:
     void runPipeline(DocumentState& state);

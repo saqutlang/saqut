@@ -24,6 +24,26 @@ DocumentState& DocumentStore::update(const std::string& uri,
         it->second->uri = uri;
     }
     DocumentState& state = *it->second;
+
+    // Bölüm 1 — son geçerli analiz: biten tur sözdizimi hatasızsa yeni tura
+    // geçmeden sahipliğini snapshot'a devret (AST/token/tablo taşınır, kopya
+    // yok). Bozuk turlar lastGood'u değiştirmez.
+    if (state.syntaxOk && state.ast) {
+        auto snap = std::make_unique<AnalysisSnapshot>();
+        snap->content        = std::move(state.content);
+        snap->lineStarts     = std::move(state.lineStarts);
+        snap->filePath       = state.filePath;
+        snap->ast            = state.ast;
+        snap->tokens         = std::move(state.tokens);
+        snap->symbolTable    = std::move(state.symbolTable);
+        snap->symbolByOffset = std::move(state.symbolByOffset);
+        state.ast = nullptr;
+        state.tokens.clear();
+        state.symbolTable = SymbolTable{};
+        state.symbolByOffset.clear();
+        state.lastGood = std::move(snap);
+    }
+
     state.content    = content;
     state.lineStarts = buildLineStarts(content);
     state.version    = version;
@@ -33,6 +53,40 @@ DocumentState& DocumentStore::update(const std::string& uri,
     state.tokens.clear();
     runPipeline(state);
     return state;
+}
+
+void DocumentStore::reanalyze(DocumentState& state) {
+    // İçerik aynı; yalnız bağımlılıklar değişti. Sözdizimi temiz tur
+    // snapshot'a devredilmez (içerik değişmediği için yeni tur da aynı
+    // sözdizimi sonucunu verir).
+    delete state.ast;
+    state.ast = nullptr;
+    for (auto* t : state.tokens) delete t;
+    state.tokens.clear();
+    runPipeline(state);
+}
+
+std::vector<DocumentState*> DocumentStore::dependentsOf(const std::string& path,
+                                                        const DocumentState* except) {
+    std::vector<DocumentState*> out;
+    for (auto& [uri, doc] : store_) {
+        if (doc.get() == except) continue;
+        if (std::find(doc->deps.begin(), doc->deps.end(), path) != doc->deps.end())
+            out.push_back(doc.get());
+    }
+    // unordered_map sırası çalıştırmalar arasında kararsız — bildirim sırası
+    // (golden testler) deterministik olsun.
+    std::sort(out.begin(), out.end(),
+              [](DocumentState* a, DocumentState* b) { return a->uri < b->uri; });
+    return out;
+}
+
+std::vector<DocumentState*> DocumentStore::all() {
+    std::vector<DocumentState*> out;
+    for (auto& [uri, doc] : store_) out.push_back(doc.get());
+    std::sort(out.begin(), out.end(),
+              [](DocumentState* a, DocumentState* b) { return a->uri < b->uri; });
+    return out;
 }
 
 DocumentState* DocumentStore::get(const std::string& uri) {
@@ -101,12 +155,23 @@ void DocumentStore::runPipeline(DocumentState& state) {
     // Faz 2: modül hiç yüklenemediyse (örn. dosya bulunamadı — overlay ve disk
     // ikisi de başarısız) toplanacak bir AST yok; sembol tablosu bir önceki
     // başarılı turdan kalan haliyle bırakılır ("son iyi tablo").
+    state.syntaxOk = false;
     if (graph.units.empty()) return;
 
     // ModuleLoader entryFilePath'i canonical hale getirir (fs::weakly_canonical);
     // SourceLocation.filePath'lerin hepsi bu biçimde. state.filePath'i ORADAN al
     // ki symbolByOffset filtrelemesi ve çok-dosya URI karşılaştırmaları eşleşsin.
     state.filePath = graph.units[0].filePath;
+    state.deps.clear();
+    for (auto& unit : graph.units) state.deps.push_back(unit.filePath);
+
+    // Sözdizimi temizliği yalnız parse (E9xx) tanılarına bakar — tip hatası
+    // olan kod da tamamlama için geçerli bir analizdir.
+    state.syntaxOk = true;
+    for (const auto& d : state.diagnostics.all())
+        if (d.code.size() >= 2 && d.code[0] == 'E' && d.code[1] == '9' &&
+            (d.loc.filePath().empty() || d.loc.filePath() == state.filePath))
+            state.syntaxOk = false;
 
     state.symbolTable = SymbolTable{};
     SymbolCollector(state.symbolTable, state.diagnostics)

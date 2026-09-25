@@ -19,6 +19,7 @@
 #include "lsp/document_store.hpp"
 #include "lsp/json_rpc.hpp"
 #include <ostream>
+#include <set>
 #include <string>
 
 class LspHandler {
@@ -66,6 +67,13 @@ private:
     // fonksiyonlar (Symbol::isBuiltin), kullanıcı tipleri, değişkenler.
     nlohmann::json handleSemanticTokens(const nlohmann::json& id,
                                         const nlohmann::json& params);
+
+    // Bölüm 3 kancaları (lsp_workspace.cpp): `import { | } from "dosya.sqt"`
+    // için o dosyanın export'ları; önekle eşleşen import edilmemiş proje
+    // sembolleri (otomatik import düzenlemesiyle).
+    nlohmann::json importableNamesFromFile(DocumentState& state, const std::string& rawPath);
+    void appendProjectCompletions(DocumentState& state, const std::string& prefix,
+                                  const std::set<std::string>& seen, nlohmann::json& items);
 
     // Faz 3: state.diagnostics'i loc.filePath'e göre gruplar, her dosya için
     // ayrı bir publishDiagnostics bildirimi gönderir (kök neden #4 — import
