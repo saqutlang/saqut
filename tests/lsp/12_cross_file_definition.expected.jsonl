@@ -1,4 +1,4 @@
 {"$any": true}
 {"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"diagnostics": [], "uri": "file://%FIXDIR%/importee.sqt"}}
 {"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"diagnostics": [], "uri": "file://%FIXDIR%/importer.sqt"}}
-{"id": 2, "jsonrpc": "2.0", "result": {"range": {"end": {"character": 13, "line": 0}, "start": {"character": 7, "line": 0}}, "uri": "file://%FIXDIR%/importee.sqt"}}
+{"id": 2, "jsonrpc": "2.0", "result": {"range": {"end": {"character": 17, "line": 0}, "start": {"character": 11, "line": 0}}, "uri": "file://%FIXDIR%/importee.sqt"}}

@@ -2,6 +2,7 @@
 #include "ffi/ffi_catalog.hpp"
 #include "symbol/symbol_table.hpp"
 #include "symbol/symbol.hpp"
+#include "symbol/scope.hpp"
 #include "core/type.hpp"
 #include "lsp/uri.hpp"
 #include "lsp/position.hpp"
@@ -27,6 +28,9 @@ nlohmann::json LspHandler::dispatch(const nlohmann::json& msg) {
     // Faz 6 (#84): method eksik ya da string değilse (bozuk istemci) çökme —
     // istek ise InvalidRequest dön, notification ise sessizce at.
     if (!msg.contains("method") || !msg["method"].is_string()) {
+        // Sunucunun kendi isteklerine (workspace/codeLens/refresh) istemcinin
+        // yanıtı: işlenecek bir şey yok, yanıtlanmaz.
+        if (msg.contains("result") || msg.contains("error")) return nullptr;
         if (!id.is_null())
             return JsonRpc::makeError(id, -32600, "Invalid request: missing method");
         return nullptr;
@@ -130,6 +134,18 @@ nlohmann::json LspHandler::dispatch(const nlohmann::json& msg) {
     if (method == "textDocument/semanticTokens/full")
         return handleSemanticTokens(id, params);
 
+    // ── Bölüm 2/3: çalışma alanı ─────────────────────────────────────────
+    if (method == "workspace/symbol")
+        return handleWorkspaceSymbol(id, params);
+    if (method == "workspace/didChangeWatchedFiles") {
+        handleDidChangeWatchedFiles(params);
+        return nullptr;
+    }
+    if (method == "workspace/didChangeConfiguration") {
+        handleDidChangeConfiguration(params);
+        return nullptr;
+    }
+
     // Bilinmeyen metod — null döndür (notification) veya boş cevap
     if (!id.is_null())
         return JsonRpc::makeError(id, -32601, "Method not found: " + method);
@@ -171,9 +187,12 @@ nlohmann::json LspHandler::handleInitialize(const nlohmann::json& id,
             {"triggerCharacters", nlohmann::json::array({":", "."})}
         }},
         {"renameProvider",            true},
+        {"workspaceSymbolProvider",   true},
         {"signatureHelpProvider", {
             {"triggerCharacters", nlohmann::json::array({"(", ","})}
         }},
+        // Bölüm 0: eklenti eski ikiliyi bu düzeyle tanır.
+        {"experimental", {{"saqutLspLevel", kLspLevel}}},
         {"semanticTokensProvider", {
             {"legend", {
                 {"tokenTypes", {
@@ -189,6 +208,40 @@ nlohmann::json LspHandler::handleInitialize(const nlohmann::json& id,
         {"capabilities", capabilities},
         {"serverInfo",   {{"name", "saQut"}, {"version", SAQUT_VERSION}}}
     };
+
+    // ── Bölüm 3: çalışma alanı kökleri + seçenekler ─────────────────────
+    codeLensRefresh_ = false;
+    if (params.contains("capabilities") && params["capabilities"].is_object()) {
+        const auto& caps = params["capabilities"];
+        if (caps.contains("workspace") && caps["workspace"].is_object() &&
+            caps["workspace"].contains("codeLens") && caps["workspace"]["codeLens"].is_object())
+            codeLensRefresh_ = caps["workspace"]["codeLens"].value("refreshSupport", false);
+    }
+    std::vector<std::string> roots;
+    if (params.contains("workspaceFolders") && params["workspaceFolders"].is_array()) {
+        for (const auto& wf : params["workspaceFolders"])
+            if (wf.is_object() && wf.contains("uri") && wf["uri"].is_string())
+                roots.push_back(uriToPath(wf["uri"].get<std::string>()));
+    }
+    if (roots.empty() && params.contains("rootUri") && params["rootUri"].is_string())
+        roots.push_back(uriToPath(params["rootUri"].get<std::string>()));
+
+    std::vector<std::string> excludes;
+    if (params.contains("initializationOptions") && params["initializationOptions"].is_object()) {
+        const auto& opts = params["initializationOptions"];
+        applySettings(opts);
+        if (opts.contains("index") && opts["index"].is_object()) {
+            syncIndex_ = opts["index"].value("synchronous", false);
+            if (opts["index"].contains("exclude") && opts["index"]["exclude"].is_array())
+                for (const auto& p : opts["index"]["exclude"])
+                    if (p.is_string()) excludes.push_back(p.get<std::string>());
+        }
+    }
+    if (!roots.empty()) {
+        index_.configure(roots, excludes);
+        index_.scheduleFullScan();
+        if (syncIndex_) index_.runAll(overlay());
+    }
     return JsonRpc::makeResponse(id, result);
 }
 
@@ -200,6 +253,7 @@ void LspHandler::handleDidOpen(const nlohmann::json& params) {
 
     DocumentState& state = store_.update(uri, content, version);
     publishDiagnosticsGrouped(state);
+    afterAnalysis(state);
 }
 
 void LspHandler::handleDidChange(const nlohmann::json& params) {
@@ -216,16 +270,29 @@ void LspHandler::handleDidChange(const nlohmann::json& params) {
 
     DocumentState& state = store_.update(uri, content, version);
     publishDiagnosticsGrouped(state);
+    afterAnalysis(state);
 }
 
 void LspHandler::handleDidClose(const nlohmann::json& params) {
     std::string uri = params["textDocument"]["uri"].get<std::string>();
+    // Kapanan belgenin kaydedilmemiş içeriği artık overlay'de yok: indeks
+    // kaydı diskten yenilenir, ona bağlı açık belgeler yeniden analiz edilir.
+    std::string closedPath;
+    if (DocumentState* st = store_.get(uri)) closedPath = st->filePath;
     store_.close(uri);
+    lastPublished_.erase(uri);
     // Kapalı belgeden tanılamaları temizle
     auto notif = JsonRpc::makeNotification("textDocument/publishDiagnostics", {
         {"uri", uri}, {"diagnostics", nlohmann::json::array()}
     });
     JsonRpc::writeMessage(out_, notif);
+    if (!closedPath.empty()) {
+        if (index_.configured()) {
+            index_.markDirty(closedPath);
+            if (syncIndex_) index_.runAll(overlay());
+        }
+        reanalyzeDependents(closedPath, nullptr);
+    }
 }
 
 // Faz 3: state.diagnostics artık modül grafiğindeki TÜM dosyalardan gelen
@@ -235,7 +302,7 @@ void LspHandler::handleDidClose(const nlohmann::json& params) {
 // her dosya için ayrı publishDiagnostics gönderiyoruz. std::map (sıralı) —
 // bildirim SIRASI testte önemli, unordered_map olsaydı çalıştırmalar arası
 // deterministik olmazdı.
-void LspHandler::publishDiagnosticsGrouped(DocumentState& state) {
+void LspHandler::publishDiagnosticsGrouped(DocumentState& state, bool onlyIfChanged) {
     std::map<std::string, nlohmann::json> byFile;
     byFile[state.filePath] = nlohmann::json::array(); // sorgulanan dosya her zaman bir bildirim alır (stale temizliği)
 
@@ -299,9 +366,24 @@ void LspHandler::publishDiagnosticsGrouped(DocumentState& state) {
         byFile[fp].push_back(item);
     }
 
+    // Grafikteki bir bağımlılığın tanıları bu turda kalktıysa (ör. düzeltilen
+    // bir modül) eski tanıları temizlemek için boş liste gönder — yoksa
+    // editörde bayat hata kalır.
+    for (const auto& dep : state.deps) {
+        if (byFile.count(dep)) continue;
+        auto last = lastPublished_.find(store_.uriForPath(dep));
+        if (last != lastPublished_.end() && !last->second.empty())
+            byFile[dep] = nlohmann::json::array();
+    }
+
     for (auto& [fp, diagsJson] : byFile) {
+        const std::string fileUri = store_.uriForPath(fp);
+        auto last = lastPublished_.find(fileUri);
+        if (onlyIfChanged && last != lastPublished_.end() && last->second == diagsJson)
+            continue;
+        lastPublished_[fileUri] = diagsJson;
         auto notif = JsonRpc::makeNotification("textDocument/publishDiagnostics", {
-            {"uri",         store_.uriForPath(fp)},
+            {"uri",         fileUri},
             {"diagnostics", diagsJson}
         });
         JsonRpc::writeMessage(out_, notif);
@@ -371,6 +453,29 @@ Symbol* LspHandler::findSymbolAt(DocumentState& state, int line, int character) 
     return (found != state.symbolByOffset.end()) ? found->second : nullptr;
 }
 
+// Symbol::definitionLoc bildirimin BAŞINI gösterir (`int topla(...)`'da `int`).
+// Tanıma gitme / referans listesi tanımlayıcının kendisini hedeflemeli; aynı
+// satırda ya da hemen sonrasında adın ilk tam-kelime geçişine kaydırılır.
+static SourceLocation identifierLoc(const std::string& content, const SourceLocation& decl,
+                                    const std::string& name) {
+    int off = identOffsetFromDecl(content, decl.offset, name);
+    if (off < 0 || off == decl.offset) return decl;
+    SourceLocation l = decl;
+    // Aynı satırdaysa sütunu kaydır; değilse satır/sütunu yeniden hesapla.
+    bool sameLine = content.find('\n', static_cast<size_t>(decl.offset)) >= static_cast<size_t>(off);
+    if (sameLine) {
+        l.column += off - decl.offset;
+    } else {
+        std::vector<int> starts = buildLineStarts(content);
+        auto it = std::upper_bound(starts.begin(), starts.end(), off);
+        int li  = static_cast<int>(it - starts.begin()) - 1;
+        l.line   = li + 1;
+        l.column = off - starts[static_cast<size_t>(li)] + 1;
+    }
+    l.offset = off;
+    return l;
+}
+
 nlohmann::json LspHandler::handleDefinition(const nlohmann::json& id,
                                              const nlohmann::json& params) {
     std::string uri  = params["textDocument"]["uri"].get<std::string>();
@@ -388,12 +493,14 @@ nlohmann::json LspHandler::handleDefinition(const nlohmann::json& id,
     // artık HER ZAMAN sorgulanan URI değil, sym->definitionLoc.filePath'in
     // gerçek URI'si döner (kök neden #4).
     std::string targetContent = contentForLoc(*state, sym->definitionLoc);
-    LspPosition pos = toLspPos(targetContent, sym->definitionLoc);
+    const std::string name = displayName(sym->name);
+    LspPosition pos = toLspPos(targetContent,
+                               identifierLoc(targetContent, sym->definitionLoc, name));
     nlohmann::json result = {
         {"uri", store_.uriForPath(sym->definitionLoc.filePath())},
         {"range", {
             {"start", {{"line", pos.line}, {"character", pos.character}}},
-            {"end",   {{"line", pos.line}, {"character", pos.character + (int)sym->name.size()}}}
+            {"end",   {{"line", pos.line}, {"character", pos.character + (int)name.size()}}}
         }}
     };
     return JsonRpc::makeResponse(id, result);
@@ -528,10 +635,29 @@ nlohmann::json LspHandler::handleReferences(const nlohmann::json& id,
         });
     };
 
-    if (includeDecl) addLoc(sym->definitionLoc);
+    if (includeDecl)
+        addLoc(identifierLoc(contentForLoc(*state, sym->definitionLoc), sym->definitionLoc,
+                             displayName(sym->name)));
     for (const auto& ref : sym->references) addLoc(ref);
 
+    // Bölüm 3: üst düzey sembol — bu belgenin modül grafiği dışındaki
+    // dosyalardan (onu import eden, açık olmayan dosyalar) yapılan
+    // kullanımlar proje indeksinden eklenir.
+    if (isProjectLevelSymbol(sym)) {
+        std::set<std::pair<std::string, int>> have;
+        for (const auto& ref : sym->references) have.insert({ref.filePath(), ref.offset});
+        for (auto& l : projectReferenceLocations(sym->definitionLoc.filePath(),
+                                                 displayName(sym->name), have))
+            locs.push_back(l);
+    }
     return JsonRpc::makeResponse(id, locs);
+}
+
+bool LspHandler::isProjectLevelSymbol(const Symbol* s) const {
+    return s && s->definitionLoc.isValid() && !s->isBuiltin && s->hostFnId < 0 &&
+           s->scope && s->scope->parent == nullptr &&
+           (s->kind == SymbolKind::Function || s->kind == SymbolKind::Struct ||
+            s->kind == SymbolKind::Enum || s->kind == SymbolKind::Variable);
 }
 
 // LSP SymbolKind sayıları: Function=12, Variable=13, Struct=23, Enum=10, EnumMember=22, Field=8
@@ -621,7 +747,8 @@ nlohmann::json LspHandler::handleDocumentHighlight(const nlohmann::json& id,
     };
 
     if (sym->definitionLoc.isValid())
-        makeHighlight(sym->definitionLoc, 3); // Write — tanım noktası
+        makeHighlight(identifierLoc(state->content, sym->definitionLoc, displayName(sym->name)),
+                      3); // Write — tanım noktası
 
     for (const auto& ref : sym->references)
         makeHighlight(ref, 2); // Read — kullanım noktaları
@@ -875,6 +1002,30 @@ nlohmann::json LspHandler::handleRename(const nlohmann::json& id,
         }
         return {&it->second.first, &it->second.second};
     };
+
+    // Bölüm 3: üst düzey export edilmiş sembol — bu belgenin grafiğinde
+    // olmayan (onu import eden, açık olmayan) dosyalardaki kullanımlar proje
+    // indeksinden gelir. Güvenlik: konumdaki metin tam olarak eski ad olmalı
+    // (`import {x as y}` ile gelen `y` kullanımları x'in rename'inde değişmez).
+    if (isProjectLevelSymbol(sym)) {
+        const std::string oldName = displayName(sym->name);
+        for (const auto& [fp, off, len] : projectReferenceOffsets(
+                 sym->definitionLoc.filePath(), oldName)) {
+            auto [content, starts] = fileData(fp);
+            if (off < 0 || static_cast<size_t>(off) + oldName.size() > content->size() ||
+                content->compare(static_cast<size_t>(off), oldName.size(), oldName) != 0 ||
+                len != static_cast<int>(oldName.size()))
+                continue;
+            auto it = std::upper_bound(starts->begin(), starts->end(), off);
+            int li = static_cast<int>(std::distance(starts->begin(), it)) - 1;
+            SourceLocation l;
+            l.setFilePath(fp);
+            l.line   = li + 1;
+            l.column = off - (*starts)[static_cast<size_t>(li)] + 1;
+            l.offset = off;
+            locs.push_back(l);
+        }
+    }
 
     // Import bağlayıcıları: `import { helper } from "..."` içindeki ad sembol
     // tablosunda referans olarak KAYITLI DEĞİL (ImportDeclNode ad başına konum

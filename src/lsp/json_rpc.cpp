@@ -1,10 +1,17 @@
 #include "lsp/json_rpc.hpp"
 #include <fstream>
 #include <chrono>
+#include <cstdlib>
 #include <ctime>
 
+// İletişim günlüğü yalnız SAQUT_LSP_LOG=<dosya> verildiğinde yazılır. Eskiden
+// her mesaj /tmp/saqut-lsp.log'a girintili dökülüyordu: büyük yanıtlarda
+// (semanticTokens, workspace/symbol) gecikme ekliyor ve kullanıcının kaynak
+// kodunu her zaman diske yazıyordu (docs/lsp-decisions.md).
 static void lspLog(const char* dir, const nlohmann::json& msg) {
-    static std::ofstream log("/tmp/saqut-lsp.log", std::ios::app);
+    static const char* path = std::getenv("SAQUT_LSP_LOG");
+    if (!path || !*path) return;
+    static std::ofstream log(path, std::ios::app);
     if (!log.is_open()) return;
     auto now = std::chrono::system_clock::now();
     std::time_t t = std::chrono::system_clock::to_time_t(now);

@@ -109,6 +109,12 @@ bool DocumentStore::openContent(const std::string& path, std::string& out) const
     return false;
 }
 
+DocumentState* DocumentStore::byPath(const std::string& path) {
+    for (auto& [uri, doc] : store_)
+        if (doc->filePath == path) return doc.get();
+    return nullptr;
+}
+
 std::string DocumentStore::contentForPath(const std::string& path) const {
     std::string out;
     if (openContent(path, out)) return out;

@@ -1,0 +1,18 @@
+import {log, KATSAYI} from "../util.sqt";
+
+// İki sayıyı toplar.
+export int topla(int a, int b) {
+    log("topla");
+    return a + b;
+}
+
+export int sayac = 0;
+
+export struct Nokta {
+    int x;
+    int y;
+}
+
+export int olcekle(int v) {
+    return v * KATSAYI;
+}

@@ -1,0 +1,6 @@
+import {log} from "util.sqt";
+
+int main() {
+    log("merhaba");
+    return 0;
+}

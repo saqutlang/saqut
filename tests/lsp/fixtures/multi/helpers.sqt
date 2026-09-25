@@ -1,0 +1,4 @@
+// Hiçbir dosya import etmiyor: otomatik import testinin hedefi.
+export int kareAl(int x) {
+    return x * x;
+}

@@ -86,6 +86,67 @@ Olası nedenler tek tek sınandı (`saqut lsp`'ye doğrudan istemciyle):
   eleman tipi + açıklama). Yeni: `26` (Bölüm 0 teşhisi, artık yeşil), `27`
   (bağlamlar + son geçerli analiz).
 
+## Bölüm 2 — import'a duyarlı analiz
+
+- Modül yükleyici zaten import edilen dosyaları açık belge overlay'i ya da
+  diskten okuyordu; eklenen: **bağımlılık grafiği**. Her analiz, modül
+  grafiğindeki dosyaları `DocumentState::deps`'e yazar. Bir belge
+  değişince/kapanınca ve `didChangeWatchedFiles` gelince, grafiğinde o
+  dosya olan açık belgeler yeniden analiz edilir (geçişli bağımlılıklar
+  dahil, çünkü grafik geçişlidir).
+- **Tanılar yalnız değiştiyse yeniden yayımlanır** (`lastPublished_`) |
+  her tuşta tüm bağımlı belgelere bildirim göndermek gürültü | her seferinde
+  yayımlamak.
+- **Bayat tanı temizliği:** bir bağımlılığın tanıları kalktığında o
+  dosyaya boş liste gönderilir (eskiden bir kez yayımlanan hata, dosya
+  grafikte hatasız kalınca editörde kalıyordu).
+- Modül döngüsü: yükleyicinin E_MODULE_CYCLE tespiti aynen gösterilir;
+  LSP çökmez (golden 28).
+- **Tanım/referans aralığı tanımlayıcıya** kaydırıldı | `definitionLoc`
+  bildirim başını gösteriyordu (`int topla`'da `int`); tanıma gitme ve
+  "tanımı dahil et" referansı tip kelimesini seçiyordu. Golden 05, 09, 10,
+  11, 12 bu düzeltmeyle güncellendi (yalnız aralık başı/sonu).
+
+## Bölüm 3 — proje indeksi ve otomatik import
+
+- **İş parçacığı modeli (PLAN B):** ayrı indeksleme thread'i yerine
+  G/Ç okuyucu thread + tek analiz thread'i; indeksleme analiz thread'inde,
+  istek kuyruğu boşken **dosya dosya** ilerler | ön ucun tekilleri
+  (`FileRegistry::intern/path`, kaynak konumlarının yol tablosu) kilitsiz;
+  paralel parse veri yarışı olurdu. Kilit eklemek derleyicinin sıcak
+  yollarını (her `filePath()`) etkiler | FileRegistry'yi kilitlemek. Sonuç:
+  istek en fazla tek dosyanın indeksleme süresi kadar bekler (ölçüm:
+  Bölüm 6).
+- **Kayıt başına:** modül yükleyici + sembol toplayıcı (type check yok).
+  Tek dosya yerine grafik yüklenir ki import edilen sembollere yapılan
+  referanslar doğru hedefe bağlansın (dosyalar arası sayım/rename için
+  şart) | yalnız parse + ad eşleştirme (gölgelenmede yanlış sayar).
+- **Kimlik:** üst düzey sembol = (tanım dosyası, görünen ad) | offset
+  düzenlemeyle kayar; üst düzey ad dosya içinde tektir (E002).
+- **Önbellek:** içerik hash'i aynıysa yeniden indekslenmez; açık belgenin
+  kaydı her analizde onun sonucundan yenilenir.
+- **Kapsam:** kökler `workspaceFolders`/`rootUri`; `build*`, `node_modules`,
+  `.git` ve `initializationOptions.index.exclude` (glob `*`, `**`, `?`)
+  hariç. `index.synchronous: true` (testler) indekslemeyi initialize
+  içinde bitirir. İlk tarama bitince istemci destekliyorsa
+  `workspace/codeLens/refresh` istenir.
+- **Otomatik import:** önekle eşleşen, bu dosyada görünmeyen export'lar
+  `sortText 4_` ile; `labelDetails.description` = göreli yol,
+  `additionalTextEdits` = aynı dosyadan zaten import varsa `}` önüne
+  `, ad`; yoksa son import satırının altına `import {ad} from "göreli";`.
+  Göreli yol import eden dosyanın dizinine göre (yükleyicinin çözümüyle
+  aynı). `import {|} from "dosya.sqt"` o dosyanın export'larını önerir.
+- **References/rename:** belgenin kendi analizine ek olarak indeksteki
+  (açık olmayan) dosyalardaki kullanımlar. Rename güvenliği: konumdaki metin
+  eski adla birebir eşleşmeli (`import {x as y}` ile gelen `y` kullanımları
+  değişmez). workspace/symbol: alt dizi eşleşmesi, en çok 1000 sonuç.
+- **İletişim günlüğü** yalnız `SAQUT_LSP_LOG=<dosya>` ile | eskiden her
+  mesaj `/tmp/saqut-lsp.log`'a girintili yazılıyordu (gecikme + kaynak kodun
+  izinsiz diske yazılması).
+- Golden 28 (çok dosyalı): tanım, açık olmayan dosya dahil references,
+  workspace/symbol, iki otomatik import biçimi, dosya import'undan ad
+  tamamlama, rename, döngü, bağımlı yeniden analiz + bayat tanı temizliği.
+
 ## Test altyapısı
 
 - **`{"$any": true}` joker satırı (lsp_test_driver.py)** | bu turda

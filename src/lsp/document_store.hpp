@@ -150,13 +150,15 @@ public:
     // Tüm açık belgeler, uri sıralı.
     std::vector<DocumentState*> all();
 
-private:
-    void runPipeline(DocumentState& state);
-
     // store_'daki açık belgeler arasında canonical yola göre arar; bulursa
     // buffer'ını `out`'a yazar. Diske DÜŞMEZ — çağıran karar verir (ModuleLoader
     // overlay'i disk fallback'i kendi yapar, bkz. document_store.cpp).
     bool openContent(const std::string& path, std::string& out) const;
+    // Canonical yolu açık olan belge (yoksa nullptr).
+    DocumentState* byPath(const std::string& path);
+
+private:
+    void runPipeline(DocumentState& state);
 
     std::unordered_map<std::string, std::unique_ptr<DocumentState>> store_;
 };

@@ -1,0 +1,7 @@
+// Günlük yardımcıları — başka modüllerden kullanılır.
+export int KATSAYI = 3;
+
+// Mesajı önekle yazdırır.
+export void log(string mesaj) {
+    print("[log] " + mesaj);
+}

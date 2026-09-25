@@ -1,0 +1,30 @@
+import {topla, sayac, Nokta, olcekle} from "lib/math.sqt";
+import {log} from "util.sqt";
+import {sqrt} from math;
+
+shared int toplam = 0;
+shared Pool isler = Pool(int);
+
+int ikiKat(int x) {
+    return x * 2;
+}
+
+int yardimci() {
+    return 7;
+}
+
+int main() {
+    int kullanilmayan = 5;
+    int sonuc = topla(1, 2);
+    Nokta p;
+    p.x = sonuc;
+    Thread t = thread {
+        isler.push(ikiKat(sonuc));
+    };
+    t.join();
+    toplam += isler.pop();
+    log("bitti");
+    print(sayac + olcekle(p.x));
+    return 0;
+    print("erişilemez");
+}

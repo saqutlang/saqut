@@ -1,0 +1,5 @@
+import {b} from "cycle_b.sqt";
+
+export int a() {
+    return 1;
+}

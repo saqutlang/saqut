@@ -18,9 +18,13 @@
 #include "vendor/nlohmann/json.hpp"
 #include "lsp/document_store.hpp"
 #include "lsp/json_rpc.hpp"
+#include "lsp/project_index.hpp"
+#include <map>
 #include <ostream>
 #include <set>
 #include <string>
+#include <tuple>
+#include <vector>
 
 class LspHandler {
 public:
@@ -28,10 +32,27 @@ public:
 
     nlohmann::json dispatch(const nlohmann::json& msg);
 
+    // Sunucu döngüsü kuyruk boşken çağırır (lsp_server.cpp): proje indeksini
+    // bir dosya ilerletir; ilk tarama bitince istemciden lens yenilemesi ister.
+    bool hasIdleWork() const { return index_.hasPending(); }
+    void idleStep();
+
+    // LSP özellik düzeyi — eklenti bununla eski ikiliyi tanır (Bölüm 0).
+    static constexpr int kLspLevel = 2;
+
 private:
     std::ostream& out_;
     DocumentStore store_;
+    ProjectIndex  index_;
     bool          shutdownRequested_ = false;
+    // initializationOptions / workspace/didChangeConfiguration
+    bool          syncIndex_          = false;   // testler: indeksleme istek içinde
+    bool          inlayParamNames_    = true;
+    bool          codeLensRefresh_    = false;   // istemci workspace/codeLens/refresh destekler
+    int           serverRequestSeq_   = 0;
+    // Son yayımlanan tanılar (uri → dizi): bağımlı belgeler yeniden analiz
+    // edildiğinde yalnız değişen tanılar yeniden yayımlanır.
+    std::map<std::string, nlohmann::json> lastPublished_;
     // Faz 3: initialize'da istemciyle anlaşılan pozisyon birimi. İstemci
     // general.positionEncodings'te "utf-8" bildiriyorsa "utf-8" (dönüşüm
     // gerekmez — SourceLocation.column zaten byte/UTF-8 code unit sayıyor);
@@ -68,6 +89,41 @@ private:
     nlohmann::json handleSemanticTokens(const nlohmann::json& id,
                                         const nlohmann::json& params);
 
+    // ── Bölüm 2/3: çalışma alanı (lsp_workspace.cpp) ─────────────────────
+    nlohmann::json handleWorkspaceSymbol(const nlohmann::json& id,
+                                         const nlohmann::json& params);
+    void handleDidChangeWatchedFiles(const nlohmann::json& params);
+    void handleDidChangeConfiguration(const nlohmann::json& params);
+    void applySettings(const nlohmann::json& settings);
+    // Bir belge analiz edildikten sonra: indeks kaydını yenile, bu dosyaya
+    // bağlı açık belgeleri yeniden analiz et (tanıları değiştiyse yayımla).
+    void afterAnalysis(DocumentState& state);
+    void reanalyzeDependents(const std::string& path, const DocumentState* except);
+    ModuleLoader::SourceOverlay overlay();
+    // Üst düzey sembolün (dosya, ad) tüm proje referansları — LSP Location.
+    // Proje genelinde izlenen üst düzey kullanıcı sembolü mü (fonksiyon,
+    // struct, enum, global; yerleşik/FFI hariç).
+    bool isProjectLevelSymbol(const Symbol* s) const;
+    // `skip`: zaten bilinen (dosya, offset) konumları (belgenin kendi analizi).
+    nlohmann::json projectReferenceLocations(
+        const std::string& file, const std::string& name,
+        const std::set<std::pair<std::string, int>>& skip = {});
+    // Üst düzey sembolün tüm proje referansları (dosya, offset, uzunluk) — rename.
+    std::vector<std::tuple<std::string, int, int>> projectReferenceOffsets(
+        const std::string& file, const std::string& name);
+    // Bir dosyaya `import {name} from "…"` ekleyen TextEdit (zaten varsa null).
+    nlohmann::json importEditFor(DocumentState& state, const std::string& targetFile,
+                                 const std::string& name);
+
+    // ── Bölüm 4: editör hızlandırıcıları (lsp_editor.cpp) ────────────────
+    nlohmann::json handleFoldingRange(const nlohmann::json& id, const nlohmann::json& params);
+    nlohmann::json handleCodeLens(const nlohmann::json& id, const nlohmann::json& params);
+    nlohmann::json handleCodeAction(const nlohmann::json& id, const nlohmann::json& params);
+    nlohmann::json handleInlayHint(const nlohmann::json& id, const nlohmann::json& params);
+    // Gereksiz kod ipuçları (DiagnosticTag.Unnecessary, Hint) — yayımlanan
+    // tanılara eklenir.
+    nlohmann::json unnecessaryDiagnostics(DocumentState& state);
+
     // Bölüm 3 kancaları (lsp_workspace.cpp): `import { | } from "dosya.sqt"`
     // için o dosyanın export'ları; önekle eşleşen import edilmemiş proje
     // sembolleri (otomatik import düzenlemesiyle).
@@ -78,7 +134,9 @@ private:
     // Faz 3: state.diagnostics'i loc.filePath'e göre gruplar, her dosya için
     // ayrı bir publishDiagnostics bildirimi gönderir (kök neden #4 — import
     // edilen modülün hatası artık ana dosyada görünmüyor).
-    void publishDiagnosticsGrouped(DocumentState& state);
+    // onlyIfChanged: bağımlılık kaynaklı yeniden analizde yalnız değişen
+    // dosyaların tanıları yayımlanır.
+    void publishDiagnosticsGrouped(DocumentState& state, bool onlyIfChanged = false);
 
     // Verilen (0-tabanlı, istemci pozisyon birimindeki) satır/sütun
     // konumundaki sembolü bul. Faz 3: token binary search + (offset→Symbol*)

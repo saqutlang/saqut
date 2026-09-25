@@ -1,0 +1,25 @@
+{"$any": true}
+{"$any": true}
+{"id": 2, "jsonrpc": "2.0", "result": {"range": {"end": {"character": 16, "line": 3}, "start": {"character": 11, "line": 3}}, "uri": "file://%FIXDIR%/multi/lib/math.sqt"}}
+{"id": 3, "jsonrpc": "2.0", "result": [{"range": {"end": {"character": 16, "line": 3}, "start": {"character": 11, "line": 3}}, "uri": "file://%FIXDIR%/multi/lib/math.sqt"}, {"range": {"end": {"character": 21, "line": 17}, "start": {"character": 16, "line": 17}}, "uri": "file://%FIXDIR%/multi/main.sqt"}, {"range": {"end": {"character": 16, "line": 5}, "start": {"character": 11, "line": 5}}, "uri": "file://%FIXDIR%/multi/other.sqt"}, {"range": {"end": {"character": 34, "line": 5}, "start": {"character": 29, "line": 5}}, "uri": "file://%FIXDIR%/multi/other.sqt"}]}
+{"id": 4, "jsonrpc": "2.0", "result": [{"containerName": "helpers.sqt", "kind": 12, "location": {"range": {"end": {"character": 17, "line": 1}, "start": {"character": 11, "line": 1}}, "uri": "file://%FIXDIR%/multi/helpers.sqt"}, "name": "kareAl"}]}
+{"$any": true}
+{"id": 5, "jsonrpc": "2.0", "result": [{"additionalTextEdits": [{"newText": "import {kareAl} from \"helpers.sqt\";\n", "range": {"end": {"character": 0, "line": 3}, "start": {"character": 0, "line": 3}}}], "detail": "int kareAl(int x)", "documentation": "Hiçbir dosya import etmiyor: otomatik import testinin hedefi.", "kind": 3, "label": "kareAl", "labelDetails": {"description": "helpers.sqt"}, "sortText": "4_kareAl"}]}
+{"$any": true}
+{"id": 6, "jsonrpc": "2.0", "result": [{"additionalTextEdits": [{"newText": ", KATSAYI", "range": {"end": {"character": 11, "line": 1}, "start": {"character": 11, "line": 1}}}], "detail": "int KATSAYI", "documentation": "Günlük yardımcıları — başka modüllerden kullanılır.", "kind": 6, "label": "KATSAYI", "labelDetails": {"description": "util.sqt"}, "sortText": "4_KATSAYI"}]}
+{"$any": true}
+{"id": 7, "jsonrpc": "2.0", "result": [{"detail": "int kareAl(int x)", "documentation": "Hiçbir dosya import etmiyor: otomatik import testinin hedefi.", "kind": 3, "label": "kareAl"}]}
+{"$any": true}
+{"id": 8, "jsonrpc": "2.0", "result": {"changes": {"file://%FIXDIR%/multi/lib/math.sqt": [{"newText": "topla2", "range": {"end": {"character": 16, "line": 3}, "start": {"character": 11, "line": 3}}}], "file://%FIXDIR%/multi/main.sqt": [{"newText": "topla2", "range": {"end": {"character": 13, "line": 0}, "start": {"character": 8, "line": 0}}}, {"newText": "topla2", "range": {"end": {"character": 21, "line": 17}, "start": {"character": 16, "line": 17}}}], "file://%FIXDIR%/multi/other.sqt": [{"newText": "topla2", "range": {"end": {"character": 13, "line": 0}, "start": {"character": 8, "line": 0}}}, {"newText": "topla2", "range": {"end": {"character": 16, "line": 5}, "start": {"character": 11, "line": 5}}}, {"newText": "topla2", "range": {"end": {"character": 34, "line": 5}, "start": {"character": 29, "line": 5}}}]}}}
+{"$any": true}
+{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"diagnostics": [{"code": "E_MODULE_CYCLE", "message": "circular module dependency detected: cycle_a.sqt -> cycle_b.sqt -> cycle_a.sqt", "range": {"end": {"character": 1, "line": 0}, "start": {"character": 0, "line": 0}}, "severity": 1, "source": "saQut"}], "uri": "file://%FIXDIR%/multi/cycle_b.sqt"}}
+{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"diagnostics": [], "uri": "file://%FIXDIR%/multi/dep_user.sqt"}}
+{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"diagnostics": [], "uri": "file://%FIXDIR%/multi/util.sqt"}}
+{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"diagnostics": [], "uri": "file://%FIXDIR%/multi/util.sqt"}}
+{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"diagnostics": [{"code": "E003", "message": "'argument': cannot assign string to int\nuse explicit cast: `<expression> as int`", "range": {"end": {"character": 9, "line": 3}, "start": {"character": 8, "line": 3}}, "severity": 1, "source": "saQut"}], "uri": "file://%FIXDIR%/multi/dep_user.sqt"}}
+{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"diagnostics": [{"code": "E003", "message": "'argument': cannot assign string to int\nuse explicit cast: `<expression> as int`", "range": {"end": {"character": 9, "line": 4}, "start": {"character": 8, "line": 4}}, "severity": 1, "source": "saQut"}], "uri": "file://%FIXDIR%/multi/lib/math.sqt"}}
+{"$any": true}
+{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"diagnostics": [], "uri": "file://%FIXDIR%/multi/util.sqt"}}
+{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"diagnostics": [], "uri": "file://%FIXDIR%/multi/dep_user.sqt"}}
+{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"diagnostics": [], "uri": "file://%FIXDIR%/multi/lib/math.sqt"}}
+{"$any": true}

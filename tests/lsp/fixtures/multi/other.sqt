@@ -1,0 +1,12 @@
+import {topla, sayac} from "lib/math.sqt";
+
+// main.sqt'nin açık olmadığı durumda da topla/sayac kullanımları proje
+// indeksinden sayılır.
+int hesapla() {
+    return topla(sayac, 4) + topla(1, 1);
+}
+
+int main() {
+    print(hesapla());
+    return 0;
+}
