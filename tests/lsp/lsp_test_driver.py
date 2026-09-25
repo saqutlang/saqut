@@ -14,6 +14,9 @@ Kullanım:
     lsp_test_driver.py --binary <saqut> --fixtures <dir> --scenario X.jsonl --record X.expected.jsonl
         (--record: gerçek çıktıyı expected dosyası olarak yazar — yeni senaryo eklerken kullanılır)
 
+Expected dosyasında `{"$any": true}` satırı o konumdaki mesajı içeriğine
+bakmadan kabul eder (initialize yanıtı gibi senaryonun konusu olmayan mesajlar).
+
 Senaryo/expected dosyalarında `%FIXDIR%` yer tutucusu, --fixtures ile verilen
 mutlak dizinle değiştirilir (URI'ler ve dosya sistemi bağımsız olsun diye).
 """
@@ -138,6 +141,11 @@ def main():
 
     ok = True
     for idx, (exp, act) in enumerate(zip(expected, actual)):
+        # {"$any": true}: bu konumda bir mesaj gelmeli ama içeriği bu senaryonun
+        # konusu değil (ör. initialize yanıtının capability listesi — onu
+        # yalnız 01_initialize doğrular; her yeni özellik 25 golden'ı kırmasın).
+        if exp == {"$any": True}:
+            continue
         if exp != act:
             ok = False
             print(f"FAIL: mesaj #{idx} uyuşmuyor")

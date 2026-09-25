@@ -1,4 +1,4 @@
-{"id": 1, "jsonrpc": "2.0", "result": {"capabilities": {"completionProvider": {"triggerCharacters": [":", "."]}, "definitionProvider": true, "documentHighlightProvider": true, "documentSymbolProvider": true, "hoverProvider": true, "positionEncoding": "utf-16", "referencesProvider": true, "renameProvider": true, "semanticTokensProvider": {"full": true, "legend": {"tokenModifiers": [], "tokenTypes": ["keyword", "type", "function", "builtin", "parameter", "variable", "string", "number"]}}, "signatureHelpProvider": {"triggerCharacters": ["(", ","]}, "textDocumentSync": 1}, "serverInfo": {"name": "saQut", "version": "1.0.0"}}}
+{"$any": true}
 {"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"diagnostics": [], "uri": "file://%FIXDIR%/hover_field.sqt"}}
 {"id": 2, "jsonrpc": "2.0", "result": {"contents": {"kind": "markdown", "value": "```sqt\nint top\n```"}}}
 {"id": 3, "jsonrpc": "2.0", "result": {"contents": {"kind": "markdown", "value": "```sqt\nint[] data\n```"}}}

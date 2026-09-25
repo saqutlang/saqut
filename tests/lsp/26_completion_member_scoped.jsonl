@@ -1,0 +1,9 @@
+# Bölüm 0 teşhis testi: `t.` üye tamamlaması.
+# (1) Başka bir fonksiyonda aynı adlı `string t` varken main'deki `Thread t`
+#     için Thread metotları gelmeli (eskiden kapsamsız ilk eşleşme → string metotları).
+# (2) Nokta sonrası kısmi yazım `t.jo` → yalnız join (eskiden boş liste).
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"rootUri":null,"capabilities":{}}}
+{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file://%FIXDIR%/member_scoped.sqt","languageId":"sqt","version":1,"text":"void f() {\n    string t = \"a\";\n    print(t);\n}\nint main() {\n    f();\n    Thread t = thread { print(1); };\n    t.\n    return 0;\n}\n"}}}
+{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"file://%FIXDIR%/member_scoped.sqt"},"position":{"line":7,"character":6}}}
+{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file://%FIXDIR%/member_scoped.sqt","version":2},"contentChanges":[{"text":"void f() {\n    string t = \"a\";\n    print(t);\n}\nint main() {\n    f();\n    Thread t = thread { print(1); };\n    t.jo\n    return 0;\n}\n"}]}}
+{"jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":{"textDocument":{"uri":"file://%FIXDIR%/member_scoped.sqt"},"position":{"line":7,"character":8}}}
