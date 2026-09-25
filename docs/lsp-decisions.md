@@ -164,13 +164,13 @@ Olası nedenler tek tek sınandı (`saqut lsp`'ye doğrudan istemciyle):
 - **Semantic legend genişletildi** (struct, enum, enumMember;
   declaration/global/shared) | shared global ayırt edilebilir olmalı;
   Pool/List/Thread `type` | ayrı `sharedVariable` tipi (standart dışı).
-- **codeLens yalnız "N referans"**, komut `saqut.showReferences`, argümanlar
+- **codeLens yalnız "Referanslar: N"** (metinler Türkçe — ürün sahibi kararı), komut `saqut.showReferences`, argümanlar
   [uri, pos, locations]; sayım proje indeksinden (açık olmayan dosyalar
   dahil) | resolve ile tembel hesap (her kaydırmada gecikme, ek tur).
 - **inlayHints yalnız literal argümanlarda**, `saqut.inlayHints.parameterNames`
   ile kapatılabilir | her argümanda (gürültü).
 - **codeAction**: import kaldır, yan etkisiz başlatıcılı değişken kaldır,
-  E001 → proje indeksinden "Import ekle" | çağrı başlatıcılı değişkeni de
+  E001 → proje indeksinden "İmport Et" | çağrı başlatıcılı değişkeni de
   kaldırmak (yan etki kaybı).
 - Golden 01, 06, 09–11, 13, 19, 21, 23–25 yeniden kaydedildi: yalnız ipucu
   tanıları eklendi, documentSymbol hiyerarşik biçime geçti, legend değişti.

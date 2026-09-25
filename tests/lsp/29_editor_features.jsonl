@@ -7,7 +7,7 @@
 # 6 hover + tanım üstü yorum, 7 signatureHelp + yorum, 8 semanticTokens
 # (shared global: declaration|global|shared), 9 documentHighlight,
 # 10 codeLens (main.sqt), 11 codeLens math.sqt: topla'nın 3 referansı —
-# 2'si açık OLMAYAN other.sqt'den (proje indeksi), 12 E001 → "Import ekle",
+# 2'si açık OLMAYAN other.sqt'den (proje indeksi), 12 E001 → "İmport Et",
 # 13 inlay ipuçları ayarla kapatılır.
 {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"processId": null, "rootUri": "file://%FIXDIR%/multi", "capabilities": {}, "initializationOptions": {"index": {"synchronous": true}}}}
 {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt", "languageId": "sqt", "version": 1, "text": "import {topla, sayac, Nokta, olcekle} from \"lib/math.sqt\";\nimport {log} from \"util.sqt\";\nimport {sqrt} from math;\n\nshared int toplam = 0;\nshared Pool isler = Pool(int);\n\nint ikiKat(int x) {\n    return x * 2;\n}\n\nint yardimci() {\n    return 7;\n}\n\nint main() {\n    int kullanilmayan = 5;\n    int sonuc = topla(1, 2);\n    Nokta p;\n    p.x = sonuc;\n    Thread t = thread {\n        isler.push(ikiKat(sonuc));\n    };\n    t.join();\n    toplam += isler.pop();\n    log(\"bitti\");\n    print(sayac + olcekle(p.x));\n    return 0;\n    print(\"erişilemez\");\n}\n"}}}

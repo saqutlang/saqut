@@ -529,7 +529,7 @@ nlohmann::json LspHandler::handleCodeLens(const nlohmann::json& id, const nlohma
         out.push_back({
             {"range", range},
             {"command", {
-                {"title", std::to_string(n) + " referans"},
+                {"title", "Referanslar: " + std::to_string(n)},
                 {"command", "saqut.showReferences"},
                 {"arguments", nlohmann::json::array({uri, range["start"], locs})}
             }}
@@ -679,7 +679,7 @@ nlohmann::json LspHandler::handleCodeAction(const nlohmann::json& id, const nloh
                 if (edit.is_null()) continue;
                 std::string rel = fs::path(path)
                     .lexically_relative(fs::path(st->filePath).parent_path()).generic_string();
-                nlohmann::json a = {{"title", "Import ekle: " + name + " (\"" + rel + "\")"},
+                nlohmann::json a = {{"title", "İmport Et: " + name + " (\"" + rel + "\")"},
                                     {"kind", "quickfix"},
                                     {"diagnostics", nlohmann::json::array({d})},
                                     {"edit", {{"changes", {{uri, nlohmann::json::array({edit})}}}}}};
