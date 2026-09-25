@@ -27,8 +27,24 @@ function getSaqutVersion(bin: string): Promise<string | null> {
 // LSP/DAP için gereken minimum derleyici sürümü: 1.0.0 (LSP/DAP düzeltmeleri).
 function versionAtLeast(ver: string | null): boolean {
     if (!ver) return false;
-    const [major, minor] = ver.split('.').map(Number);
+    const [major] = ver.split('.').map(Number);
     return major >= 1;
+}
+
+// Bu uzantının beklediği LSP özellik seviyesi. Sunucu initialize yanıtında
+// capabilities.experimental.saqutLspLevel ile bildirir; sürüm numarası aynı
+// kalırken (1.0.x) eski bir binary'yi yakalamanın tek güvenilir yolu budur.
+const EXPECTED_LSP_LEVEL = 2;
+
+function checkLspLevel(bin: string): void {
+    const caps = client.initializeResult?.capabilities as any;
+    const level = Number(caps?.experimental?.saqutLspLevel ?? 0);
+    if (level < EXPECTED_LSP_LEVEL) {
+        vscode.window.showWarningMessage(
+            `saQut: '${bin}' eski bir language server (seviye ${level}, beklenen ` +
+            `${EXPECTED_LSP_LEVEL}). Tamamlama/referans/lens gibi özellikler eksik ` +
+            `olabilir; derleyiciyi güncelleyin veya 'saqut.path' ayarını düzeltin.`);
+    }
 }
 
 async function checkSaqutVersion(bin: string): Promise<void> {
@@ -53,20 +69,48 @@ export function activate(ctx: vscode.ExtensionContext) {
         command: bin,
         args: ['lsp']
     };
+    const cfg = vscode.workspace.getConfiguration('saqut');
     const clientOptions: LanguageClientOptions = {
         documentSelector: [{ scheme: 'file', language: 'sqt' }],
         outputChannelName: 'saQut Language Server',
-        traceOutputChannel: vscode.window.createOutputChannel('saQut LSP Trace')
+        traceOutputChannel: vscode.window.createOutputChannel('saQut LSP Trace'),
+        initializationOptions: {
+            inlayHints: { parameterNames: cfg.get<boolean>('inlayHints.parameterNames', true) },
+            index: { exclude: cfg.get<string[]>('index.exclude', []) }
+        },
+        synchronize: {
+            // Proje indeksi editörde açık olmayan dosyaları da izler.
+            fileEvents: vscode.workspace.createFileSystemWatcher('**/*.sqt'),
+            configurationSection: 'saqut'
+        }
     };
     client = new LanguageClient('saQut', 'saQut Language Server',
                                  serverOptions, clientOptions);
 
     // Trace seviyesi ayara bağlı — 'verbose' açılmadıkça LSP paketleri yazılmaz.
-    const trace = vscode.workspace.getConfiguration('saqut').get<string>('trace.server', 'off');
+    const trace = cfg.get<string>('trace.server', 'off');
     client.start().then(() => {
         if (trace === 'verbose') client.setTrace(Trace.Verbose);
-    });
+        checkLspLevel(bin);
+    }, () => { /* başlatma hatası checkSaqutVersion ile bildirilir */ });
     ctx.subscriptions.push(client);
+
+    // codeLens "N referans" komutu: sunucu JSON konumları gönderir, VS Code'un
+    // yerleşik referans görünümü vscode tipleri ister.
+    ctx.subscriptions.push(
+        vscode.commands.registerCommand('saqut.showReferences',
+            (uri: string, pos: { line: number; character: number },
+             locs: { uri: string; range: { start: { line: number; character: number };
+                                           end: { line: number; character: number } } }[]) => {
+                const toPos = (p: { line: number; character: number }) =>
+                    new vscode.Position(p.line, p.character);
+                const locations = (locs ?? []).map(l => new vscode.Location(
+                    vscode.Uri.parse(l.uri),
+                    new vscode.Range(toPos(l.range.start), toPos(l.range.end))));
+                return vscode.commands.executeCommand('editor.action.showReferences',
+                    vscode.Uri.parse(uri), toPos(pos), locations);
+            })
+    );
 
     // saqut.path değişince restart komutu ile yeni binary devreye girer.
     ctx.subscriptions.push(

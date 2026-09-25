@@ -58,6 +58,19 @@
           ],
           "default": "off",
           "description": "LSP iletişimini 'saQut LSP Trace' kanalına yaz (verbose). Sorun ayıklarken açın."
+        },
+        "saqut.inlayHints.parameterNames": {
+          "type": "boolean",
+          "default": true,
+          "description": "Literal argümanların önünde parametre adı ipucu göster (ör. topla(a: 1, b: 2))."
+        },
+        "saqut.index.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Proje indeksinden hariç tutulacak glob desenleri (ör. \"build/**\"). Değişiklikten sonra language server'ı yeniden başlatın."
         }
       }
     },
@@ -121,6 +134,12 @@
         "scopes": {
           "builtin": [
             "keyword.operator"
+          ],
+          "variable.shared": [
+            "variable.other.constant"
+          ],
+          "enumMember": [
+            "variable.other.enummember"
           ]
         }
       }
