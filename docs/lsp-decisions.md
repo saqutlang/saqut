@@ -147,6 +147,35 @@ Olası nedenler tek tek sınandı (`saqut lsp`'ye doğrudan istemciyle):
   workspace/symbol, iki otomatik import biçimi, dosya import'undan ad
   tamamlama, rename, döngü, bağımlı yeniden analiz + bayat tanı temizliği.
 
+## Bölüm 4: editör özellikleri
+
+- **Gereksiz kod tespiti LSP'de (lsp_editor.cpp)** | derleyicinin W003'ü
+  optimizer'dan gelir; LSP IR/optimizer'a dokunmaz. AST + sembol tablosu
+  üzerinde kullanılmayan değişken/import, çağrılmayan export'suz fonksiyon
+  (main hariç) ve return sonrası kod bulunur | W003'ü LSP'ye taşımak
+  (ön uç sınırını ihlal eder).
+- **Seviye Hint (4) + tag Unnecessary (1)** | editör soluk gösterir, hata
+  listesini kirletmez | Warning (gürültü; derleyici çıktısıyla çelişir).
+- **Import kullanımı token taramasıyla** | tip konumundaki kullanım
+  (`Nokta p;`) AST'de ref olarak görünmüyordu → yanlış "kullanılmıyor" |
+  yalnız sembol ref'leri.
+- **Hiyerarşik documentSymbol** | fonksiyon altında yereller, struct
+  alanları, enum üyeleri; aralık `export`/`shared` dahil | düz liste (eski).
+- **Semantic legend genişletildi** (struct, enum, enumMember;
+  declaration/global/shared) | shared global ayırt edilebilir olmalı;
+  Pool/List/Thread `type` | ayrı `sharedVariable` tipi (standart dışı).
+- **codeLens yalnız "N referans"**, komut `saqut.showReferences`, argümanlar
+  [uri, pos, locations]; sayım proje indeksinden (açık olmayan dosyalar
+  dahil) | resolve ile tembel hesap (her kaydırmada gecikme, ek tur).
+- **inlayHints yalnız literal argümanlarda**, `saqut.inlayHints.parameterNames`
+  ile kapatılabilir | her argümanda (gürültü).
+- **codeAction**: import kaldır, yan etkisiz başlatıcılı değişken kaldır,
+  E001 → proje indeksinden "Import ekle" | çağrı başlatıcılı değişkeni de
+  kaldırmak (yan etki kaybı).
+- Golden 01, 06, 09–11, 13, 19, 21, 23–25 yeniden kaydedildi: yalnız ipucu
+  tanıları eklendi, documentSymbol hiyerarşik biçime geçti, legend değişti.
+  Golden 29 tüm Bölüm 4 özelliklerini kapsar.
+
 ## Test altyapısı
 
 - **`{"$any": true}` joker satırı (lsp_test_driver.py)** | bu turda

@@ -109,6 +109,13 @@ nlohmann::json memberCompletionItems(const ReceiverType& r, SymbolTable& table,
 // `jobs.pop()` → eleman tipi). Bilinmiyorsa Type::error().
 Type methodReturnType(const Type& recv, const std::string& method);
 
+// Bir AST düğümünün doğrudan çocukları: getChildren() + tipli alanlar
+// (if/while/for gövdeleri, çağrı argümanları, switch case'leri, thread
+// gövdesi...). Her çocuk bir kez verilir.
+void forEachChild(ASTNode* n, const std::function<void(ASTNode*)>& fn);
+// Önce-kök özyinelemeli gezinti.
+void walkAst(ASTNode* n, const std::function<void(ASTNode*)>& fn);
+
 // Yerleşik (BuiltinMethodRegistry) metot öğeleri ve Pool/List/Thread
 // metotları — handler'daki :: tamamlaması da bunları kullanır.
 struct DataMethod;

@@ -1,0 +1,28 @@
+# Bölüm 4: editör hızlandırıcıları (fixtures/multi, senkron indeks).
+# İlk publishDiagnostics: gereksiz kod ipuçları (Hint + Unnecessary) —
+# kullanılmayan import (sqrt; Nokta tip konumunda kullanıldığı için DEĞİL),
+# çağrılmayan export edilmemiş fonksiyon, kullanılmayan yerel, return sonrası.
+# 2 folding (import grubu, gövdeler, thread { }), 3 hiyerarşik documentSymbol,
+# 4 codeAction (import/değişken kaldır), 5 inlayHint (literal argümanlar),
+# 6 hover + tanım üstü yorum, 7 signatureHelp + yorum, 8 semanticTokens
+# (shared global: declaration|global|shared), 9 documentHighlight,
+# 10 codeLens (main.sqt), 11 codeLens math.sqt: topla'nın 3 referansı —
+# 2'si açık OLMAYAN other.sqt'den (proje indeksi), 12 E001 → "Import ekle",
+# 13 inlay ipuçları ayarla kapatılır.
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"processId": null, "rootUri": "file://%FIXDIR%/multi", "capabilities": {}, "initializationOptions": {"index": {"synchronous": true}}}}
+{"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt", "languageId": "sqt", "version": 1, "text": "import {topla, sayac, Nokta, olcekle} from \"lib/math.sqt\";\nimport {log} from \"util.sqt\";\nimport {sqrt} from math;\n\nshared int toplam = 0;\nshared Pool isler = Pool(int);\n\nint ikiKat(int x) {\n    return x * 2;\n}\n\nint yardimci() {\n    return 7;\n}\n\nint main() {\n    int kullanilmayan = 5;\n    int sonuc = topla(1, 2);\n    Nokta p;\n    p.x = sonuc;\n    Thread t = thread {\n        isler.push(ikiKat(sonuc));\n    };\n    t.join();\n    toplam += isler.pop();\n    log(\"bitti\");\n    print(sayac + olcekle(p.x));\n    return 0;\n    print(\"erişilemez\");\n}\n"}}}
+{"jsonrpc": "2.0", "id": 2, "method": "textDocument/foldingRange", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt"}}}
+{"jsonrpc": "2.0", "id": 3, "method": "textDocument/documentSymbol", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt"}}}
+{"jsonrpc": "2.0", "id": 4, "method": "textDocument/codeAction", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt"}, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 29, "character": 0}}, "context": {"diagnostics": []}}}
+{"jsonrpc": "2.0", "id": 5, "method": "textDocument/inlayHint", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt"}, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 30, "character": 0}}}}
+{"jsonrpc": "2.0", "id": 6, "method": "textDocument/hover", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt"}, "position": {"line": 17, "character": 17}}}
+{"jsonrpc": "2.0", "id": 7, "method": "textDocument/signatureHelp", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt"}, "position": {"line": 17, "character": 22}}}
+{"jsonrpc": "2.0", "id": 8, "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt"}}}
+{"jsonrpc": "2.0", "id": 9, "method": "textDocument/documentHighlight", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt"}, "position": {"line": 24, "character": 6}}}
+{"jsonrpc": "2.0", "id": 10, "method": "textDocument/codeLens", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt"}}}
+{"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/lib/math.sqt", "languageId": "sqt", "version": 1, "text": "import {log, KATSAYI} from \"../util.sqt\";\n\n// İki sayıyı toplar.\nexport int topla(int a, int b) {\n    log(\"topla\");\n    return a + b;\n}\n\nexport int sayac = 0;\n\nexport struct Nokta {\n    int x;\n    int y;\n}\n\nexport int olcekle(int v) {\n    return v * KATSAYI;\n}\n"}}}
+{"jsonrpc": "2.0", "id": 11, "method": "textDocument/codeLens", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/lib/math.sqt"}}}
+{"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt", "version": 2}, "contentChanges": [{"text": "import {topla, sayac, Nokta, olcekle} from \"lib/math.sqt\";\nimport {log} from \"util.sqt\";\nimport {sqrt} from math;\n\nshared int toplam = 0;\nshared Pool isler = Pool(int);\n\nint ikiKat(int x) {\n    return x * 2;\n}\n\nint yardimci() {\n    return 7;\n}\n\nint main() {\n    int kullanilmayan = 5;\n    int sonuc = topla(1, 2);\n    Nokta p;\n    p.x = sonuc;\n    Thread t = thread {\n        isler.push(ikiKat(sonuc));\n    };\n    t.join();\n    toplam += isler.pop();\n    log(\"bitti\");\n    kareAl(2);\n    print(sayac + olcekle(p.x));\n    return 0;\n    print(\"erişilemez\");\n}\n"}]}}
+{"jsonrpc": "2.0", "id": 12, "method": "textDocument/codeAction", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt"}, "range": {"start": {"line": 26, "character": 4}, "end": {"line": 26, "character": 10}}, "context": {"diagnostics": [{"code": "E001", "message": "'kareAl' is not defined", "range": {"start": {"line": 26, "character": 4}, "end": {"line": 26, "character": 10}}, "severity": 1, "source": "saQut"}]}}}
+{"jsonrpc": "2.0", "method": "workspace/didChangeConfiguration", "params": {"settings": {"saqut": {"inlayHints": {"parameterNames": false}}}}}
+{"jsonrpc": "2.0", "id": 13, "method": "textDocument/inlayHint", "params": {"textDocument": {"uri": "file://%FIXDIR%/multi/main.sqt"}, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 30, "character": 0}}}}

@@ -134,6 +134,16 @@ nlohmann::json LspHandler::dispatch(const nlohmann::json& msg) {
     if (method == "textDocument/semanticTokens/full")
         return handleSemanticTokens(id, params);
 
+    // ── Bölüm 4: editör hızlandırıcıları ─────────────────────────────────
+    if (method == "textDocument/foldingRange")
+        return handleFoldingRange(id, params);
+    if (method == "textDocument/codeLens")
+        return handleCodeLens(id, params);
+    if (method == "textDocument/codeAction")
+        return handleCodeAction(id, params);
+    if (method == "textDocument/inlayHint")
+        return handleInlayHint(id, params);
+
     // ── Bölüm 2/3: çalışma alanı ─────────────────────────────────────────
     if (method == "workspace/symbol")
         return handleWorkspaceSymbol(id, params);
@@ -188,6 +198,10 @@ nlohmann::json LspHandler::handleInitialize(const nlohmann::json& id,
         }},
         {"renameProvider",            true},
         {"workspaceSymbolProvider",   true},
+        {"foldingRangeProvider",      true},
+        {"codeLensProvider",          {{"resolveProvider", false}}},
+        {"codeActionProvider",        {{"codeActionKinds", nlohmann::json::array({"quickfix"})}}},
+        {"inlayHintProvider",         true},
         {"signatureHelpProvider", {
             {"triggerCharacters", nlohmann::json::array({"(", ","})}
         }},
@@ -195,11 +209,15 @@ nlohmann::json LspHandler::handleInitialize(const nlohmann::json& id,
         {"experimental", {{"saqutLspLevel", kLspLevel}}},
         {"semanticTokensProvider", {
             {"legend", {
+                // Bölüm 4: ilk 8 tip eski indeksleriyle korunur; struct/enum/
+                // enumMember ayrı. Değiştiriciler: global (üst düzey değişken),
+                // shared (ADR-045 paylaşılan global), declaration (tanım yeri).
                 {"tokenTypes", {
                     "keyword", "type", "function", "builtin",
-                    "parameter", "variable", "string", "number"
+                    "parameter", "variable", "string", "number",
+                    "struct", "enum", "enumMember"
                 }},
-                {"tokenModifiers", nlohmann::json::array()}
+                {"tokenModifiers", {"declaration", "global", "shared"}}
             }},
             {"full", true}
         }},
@@ -365,6 +383,10 @@ void LspHandler::publishDiagnosticsGrouped(DocumentState& state, bool onlyIfChan
 
         byFile[fp].push_back(item);
     }
+
+    // Bölüm 4: gereksiz kod ipuçları (Hint + Unnecessary) belgenin kendi
+    // dosyasına eklenir.
+    for (auto& h : unnecessaryDiagnostics(state)) byFile[state.filePath].push_back(h);
 
     // Grafikteki bir bağımlılığın tanıları bu turda kalktıysa (ör. düzeltilen
     // bir modül) eski tanıları temizlemek için boş liste gönder — yoksa
@@ -576,7 +598,15 @@ nlohmann::json LspHandler::handleHover(const nlohmann::json& id,
     } else {
         // değişken / parametre / alan
         std::string typeStr = sym->type.toString();
-        content = "```sqt\n" + typeStr + " " + sym->name + "\n```";
+        content = "```sqt\n" + (sym->isShared ? std::string("shared ") : std::string()) +
+                  typeStr + " " + displayName(sym->name) + "\n```";
+    }
+
+    // Bölüm 4: tanımın hemen üstündeki yorum bloğu (// satırları ya da /* */).
+    if (sym && sym->definitionLoc.isValid()) {
+        std::string doc = docCommentAbove(contentForLoc(*state, sym->definitionLoc),
+                                          sym->definitionLoc.line);
+        if (!doc.empty()) content += "\n\n" + doc;
     }
 
     nlohmann::json result = {
@@ -660,60 +690,7 @@ bool LspHandler::isProjectLevelSymbol(const Symbol* s) const {
             s->kind == SymbolKind::Enum || s->kind == SymbolKind::Variable);
 }
 
-// LSP SymbolKind sayıları: Function=12, Variable=13, Struct=23, Enum=10, EnumMember=22, Field=8
-static int lspSymbolKind(SymbolKind k) {
-    switch (k) {
-        case SymbolKind::Function:   return 12;
-        case SymbolKind::Struct:     return 23;
-        case SymbolKind::Enum:       return 10;
-        case SymbolKind::EnumValue:  return 22;
-        case SymbolKind::Field:      return 8;
-        case SymbolKind::Variable:   return 13;
-        case SymbolKind::Parameter:  return 13;
-    }
-    return 13;
-}
-
-nlohmann::json LspHandler::handleDocumentSymbol(const nlohmann::json& id,
-                                                 const nlohmann::json& params) {
-    std::string uri = params["textDocument"]["uri"].get<std::string>();
-    DocumentState* state = store_.get(uri);
-    if (!state) return JsonRpc::makeResponse(id, nlohmann::json::array());
-
-    nlohmann::json symbols = nlohmann::json::array();
-
-    for (Symbol* sym : state->symbolTable.allSymbols()) {
-        // Parametre ve alan sembollerini gizle — gürültü yapar
-        if (sym->kind == SymbolKind::Parameter) continue;
-        if (sym->kind == SymbolKind::Field)     continue;
-        // Boş isimli sembol (syntax-error recovery'de oluşabilir) VS Code
-        // istemcisinin DocumentSymbol dönüştürücüsünü düşürür ("name must not
-        // be falsy") — outline'da da işe yaramaz, atla.
-        if (sym->name.empty())                  continue;
-        if (!sym->definitionLoc.isValid())      continue;
-        // Faz 3: symbolTable tüm modül grafiğini kapsar (import edilen
-        // dosyaların sembolleri de içinde) — yalnızca BU belgeye ait olanları
-        // listele (kök neden #4).
-        if (sym->definitionLoc.filePath() != state->filePath) continue;
-
-        LspPosition pos = toLspPos(state->content, state->lineStarts, sym->definitionLoc);
-        int  end = pos.character + static_cast<int>(sym->name.size());
-
-        nlohmann::json range = {
-            {"start", {{"line", pos.line}, {"character", pos.character}}},
-            {"end",   {{"line", pos.line}, {"character", end}}}
-        };
-
-        symbols.push_back({
-            {"name",            sym->name},
-            {"kind",            lspSymbolKind(sym->kind)},
-            {"range",           range},
-            {"selectionRange",  range}
-        });
-    }
-
-    return JsonRpc::makeResponse(id, symbols);
-}
+// handleDocumentSymbol: hiyerarşik sürüm lsp_editor.cpp'de (Bölüm 4).
 
 // HighlightKind: Text=1, Read=2, Write=3
 nlohmann::json LspHandler::handleDocumentHighlight(const nlohmann::json& id,
@@ -1252,17 +1229,35 @@ nlohmann::json LspHandler::handleSignatureHelp(const nlohmann::json& id,
             leftName, ctx.callee, recvType.isStruct(), recvType.isArray());
         if (m) sig = signatureForBuiltinMethod(m, includeReceiver);
     };
-    // Sembol tablosunda ada göre tip bul (Field hariç)
+    // Kapsam bilinçli ad → tip (Bölüm 1 çözümü; aynı ad başka fonksiyonda
+    // da tanımlıysa ilk eşleşme yanlış tipi veriyordu).
+    AnalysisView view;
+    view.content = &state->content; view.tokens = &state->tokens;
+    view.table = &state->symbolTable; view.filePath = &state->filePath; view.ast = state->ast;
+    ScopeIndex scopes = ScopeIndex::build(state->tokens);
     auto typeOfName = [&](const std::string& name) -> Type {
-        for (Symbol* s : state->symbolTable.allSymbols())
-            if (s->name == name && s->kind != SymbolKind::Field)
-                return s->type;
+        if (Symbol* s = resolveNameAt(view, scopes, name, byteOff)) return s->type;
         return Type::fromName(name);
     };
 
     if (!ctx.dotReceiver.empty()) {
-        // "arr.push(" — UFCS (ADR-033): receiver örtük, imzada görünmez
-        builtinSigForType(typeOfName(ctx.dotReceiver), false);
+        // "arr.push(" — UFCS (ADR-033): receiver örtük, imzada görünmez.
+        // ADR-045: Pool/List/Thread metotları ayrı tablodan.
+        Type recv = typeOfName(ctx.dotReceiver);
+        if (recv.isPool() || recv.isList() || recv.isThread()) {
+            for (auto& it : threadMethodsForType(recv)) {
+                if (it["label"].get<std::string>() != ctx.callee) continue;
+                const std::string label = it["detail"].get<std::string>();
+                nlohmann::json ps = nlohmann::json::array();
+                size_t lp = label.find('('), rp = label.rfind(')');
+                std::string inner = (lp != std::string::npos && rp > lp) ? label.substr(lp + 1, rp - lp - 1) : "";
+                if (!inner.empty()) ps.push_back({{"label", inner}});
+                sig = {{"label", label}, {"parameters", ps},
+                       {"documentation", it.value("documentation", "")}};
+            }
+        } else {
+            builtinSigForType(recv, false);
+        }
     } else if (ctx.scopeTarget == "array") {
         // ADR-033 ad alanı: array::push(arr, x) — kategori sabit
         const DataMethod* m = dataLookupMethod(
@@ -1277,11 +1272,14 @@ nlohmann::json LspHandler::handleSignatureHelp(const nlohmann::json& id,
         // "x::push(" — değişken ya da eski tip-adı sözdizimi (receiver açık)
         builtinSigForType(typeOfName(ctx.scopeTarget), true);
     } else {
-        // Kullanıcı fonksiyonu (ya da print gibi builtin fonksiyon sembolü)
-        for (Symbol* s : state->symbolTable.allSymbols()) {
-            if (s->name == ctx.callee && s->kind == SymbolKind::Function) {
-                sig = signatureForFunction(s);
-                break;
+        // Kullanıcı fonksiyonu (import edilen dahil) ya da print gibi builtin.
+        Symbol* s = resolveNameAt(view, scopes, ctx.callee, byteOff);
+        if (s && s->kind == SymbolKind::Function) {
+            sig = signatureForFunction(s);
+            if (s->definitionLoc.isValid()) {
+                std::string doc = docCommentAbove(contentForLoc(*state, s->definitionLoc),
+                                                  s->definitionLoc.line);
+                if (!doc.empty()) sig["documentation"] = doc;
             }
         }
     }
@@ -1322,33 +1320,49 @@ nlohmann::json LspHandler::handleSemanticTokens(const nlohmann::json& id,
     // Legend indeksleri — initialize'daki tokenTypes sırasıyla birebir.
     enum : int {
         T_KEYWORD = 0, T_TYPE = 1, T_FUNCTION = 2, T_BUILTIN = 3,
-        T_PARAMETER = 4, T_VARIABLE = 5, T_STRING = 6, T_NUMBER = 7
+        T_PARAMETER = 4, T_VARIABLE = 5, T_STRING = 6, T_NUMBER = 7,
+        T_STRUCT = 8, T_ENUM = 9, T_ENUM_MEMBER = 10
     };
+    enum : int { M_DECLARATION = 1, M_GLOBAL = 2, M_SHARED = 4 };
 
     std::vector<int> data;
     int prevLine = 0, prevChar = 0;
-    auto emit = [&](int line, int ch, int len, int type) {
+    auto emit = [&](int line, int ch, int len, int type, int mods) {
         data.push_back(line - prevLine);
         data.push_back(line == prevLine ? ch - prevChar : ch);
         data.push_back(len);
         data.push_back(type);
-        data.push_back(0); // tokenModifiers — boş legend
+        data.push_back(mods);
         prevLine = line;
         prevChar = ch;
     };
 
     const auto& toks   = state->tokens;
     const auto& starts = state->lineStarts;
-    for (Token* tok : toks) {
+    for (size_t ti = 0; ti < toks.size(); ++ti) {
+        Token* tok = toks[ti];
         const std::string& kind = tok->gettype();
         int type = -1;
+        int mods = 0;
 
         if (kind == "keyword") {
-            type = T_KEYWORD;
+            // Pool/List/Thread kütüphane tipleridir (TextMate'te de
+            // storage.type); ilkel tipler anahtar kelime olarak kalır.
+            type = (tok->token == "Pool" || tok->token == "List" || tok->token == "Thread")
+                ? T_TYPE : T_KEYWORD;
         } else if (kind == "string") {
             type = T_STRING;
         } else if (kind == "number") {
             type = T_NUMBER;
+        } else if (kind == "identifier" && ti > 0 && toks[ti - 1]->token == ".") {
+            // Üye adı: yalnız `Renk.Kirmizi` (enum üyesi) sınıflandırılır;
+            // struct alanlarını ada göre çözmek aynı adlı bir globale düşerdi.
+            if (ti >= 2 && toks[ti - 2]->gettype() == "identifier") {
+                Symbol* base = state->symbolTable.resolve(toks[ti - 2]->token);
+                if (base && base->kind == SymbolKind::Enum &&
+                    state->symbolTable.hasEnumMember(base->name, tok->token))
+                    type = T_ENUM_MEMBER;
+            }
         } else if (kind == "identifier") {
             Symbol* sym = nullptr;
             auto found = state->symbolByOffset.find(tok->start);
@@ -1373,21 +1387,26 @@ nlohmann::json LspHandler::handleSemanticTokens(const nlohmann::json& id,
             if (sym) {
                 switch (sym->kind) {
                     case SymbolKind::Function:
-                        type = sym->isBuiltin ? T_BUILTIN : T_FUNCTION;
+                        type = (sym->isBuiltin || sym->hostFnId >= 0) ? T_BUILTIN : T_FUNCTION;
                         break;
-                    case SymbolKind::Struct:
-                    case SymbolKind::Enum:
-                        type = T_TYPE;
-                        break;
-                    case SymbolKind::Parameter:
-                        type = T_PARAMETER;
-                        break;
+                    case SymbolKind::Struct:    type = T_STRUCT; break;
+                    case SymbolKind::Enum:      type = T_ENUM; break;
+                    case SymbolKind::EnumValue: type = T_ENUM_MEMBER; break;
+                    case SymbolKind::Parameter: type = T_PARAMETER; break;
                     case SymbolKind::Variable:
                     case SymbolKind::Field:
-                    case SymbolKind::EnumValue:
                         type = T_VARIABLE;
+                        if (sym->kind == SymbolKind::Variable && sym->scope &&
+                            sym->scope->parent == nullptr)
+                            mods |= M_GLOBAL;
+                        if (sym->isShared) mods |= M_SHARED;
                         break;
                 }
+                // Tanım yeri: bildirimdeki tanımlayıcının kendisi.
+                if (sym->definitionLoc.isValid() && sym->definitionLoc.filePath() == state->filePath &&
+                    identOffsetFromDecl(state->content, sym->definitionLoc.offset,
+                                        displayName(sym->name)) == tok->start)
+                    mods |= M_DECLARATION;
             }
         }
         if (type < 0) continue;
@@ -1398,7 +1417,7 @@ nlohmann::json LspHandler::handleSemanticTokens(const nlohmann::json& id,
         if (line < 0) continue;
         int colByte = tok->start - starts[line] + 1; // 1-bazlı byte kolon
         int ch = byteColToLspAt(state->content, starts, line, colByte);
-        emit(line, ch, tok->end - tok->start, type);
+        emit(line, ch, tok->end - tok->start, type, mods);
     }
 
     return JsonRpc::makeResponse(id, nlohmann::json{{"data", data}});

@@ -5,8 +5,94 @@
 #include "lsp/lsp_analysis.hpp"
 #include "data/data_registry.hpp"
 #include "symbol/scope.hpp"
+#include "parser/nodes/binary_expr.hpp"
+#include "parser/nodes/declarations.hpp"
+#include "parser/nodes/expressions.hpp"
+#include "parser/nodes/statements.hpp"
 #include <algorithm>
 #include <cctype>
+#include <unordered_set>
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AST gezinti
+// ─────────────────────────────────────────────────────────────────────────────
+
+void forEachChild(ASTNode* n, const std::function<void(ASTNode*)>& fn) {
+    if (!n) return;
+    std::unordered_set<ASTNode*> seen;
+    auto visit = [&](ASTNode* c) { if (c && seen.insert(c).second) fn(c); };
+    switch (n->kind) {
+        case ASTKind::FunctionDecl:
+            for (auto* p : static_cast<FunctionDeclNode*>(n)->params) visit(p);
+            break;
+        case ASTKind::VariableDecl:
+            visit(static_cast<VariableDeclNode*>(n)->initExpr); break;
+        case ASTKind::IfStatement: {
+            auto* s = static_cast<IfStatementNode*>(n);
+            visit(s->condition); visit(s->thenBranch); visit(s->elseBranch); break;
+        }
+        case ASTKind::WhileStatement: {
+            auto* s = static_cast<WhileStatementNode*>(n);
+            visit(s->condition); visit(s->body); break;
+        }
+        case ASTKind::DoWhileStatement: {
+            auto* s = static_cast<DoWhileStatementNode*>(n);
+            visit(s->body); visit(s->condition); break;
+        }
+        case ASTKind::ForStatement: {
+            auto* s = static_cast<ForStatementNode*>(n);
+            visit(s->init); visit(s->condition); visit(s->update); visit(s->body); break;
+        }
+        case ASTKind::ReturnStatement: visit(static_cast<ReturnStatementNode*>(n)->value); break;
+        case ASTKind::ThrowStatement:  visit(static_cast<ThrowStatementNode*>(n)->value); break;
+        case ASTKind::ExpressionStatement:
+            visit(static_cast<ExpressionStatementNode*>(n)->expression); break;
+        case ASTKind::TryStatement: {
+            auto* s = static_cast<TryStatementNode*>(n);
+            visit(s->body); visit(s->handler); break;
+        }
+        case ASTKind::SwitchStatement: {
+            auto* s = static_cast<SwitchStatementNode*>(n);
+            visit(s->subject);
+            for (auto& c : s->cases) { for (auto* v : c.values) visit(v); for (auto* b : c.body) visit(b); }
+            break;
+        }
+        case ASTKind::LockStatement:
+            for (auto* t : static_cast<LockStatementNode*>(n)->targets) visit(t);
+            break;
+        case ASTKind::WaitStatement: visit(static_cast<WaitStatementNode*>(n)->condition); break;
+        case ASTKind::BinaryExpression: {
+            auto* b = static_cast<BinaryExpressionNode*>(n);
+            visit(b->Left); visit(b->Right); break;
+        }
+        case ASTKind::Postfix: visit(static_cast<PostfixNode*>(n)->operand); break;
+        case ASTKind::Call: {
+            auto* c = static_cast<CallExpressionNode*>(n);
+            visit(c->callee); for (auto* a : c->arguments) visit(a); break;
+        }
+        case ASTKind::CastExpression: visit(static_cast<CastExpressionNode*>(n)->operand); break;
+        case ASTKind::MemberAccess: visit(static_cast<MemberAccessNode*>(n)->object); break;
+        case ASTKind::IndexExpression: {
+            auto* ix = static_cast<IndexExpressionNode*>(n);
+            visit(ix->object); visit(ix->index); break;
+        }
+        case ASTKind::ArrayLiteral:
+            for (auto* e : static_cast<ArrayLiteralNode*>(n)->elements) visit(e);
+            break;
+        case ASTKind::ScopeCall:
+            for (auto* a : static_cast<ScopeCallNode*>(n)->arguments) visit(a);
+            break;
+        case ASTKind::ThreadExpr: visit(static_cast<ThreadExprNode*>(n)->body); break;
+        default: break;
+    }
+    for (ASTNode* c : n->getChildren()) visit(c);
+}
+
+void walkAst(ASTNode* n, const std::function<void(ASTNode*)>& fn) {
+    if (!n) return;
+    fn(n);
+    forEachChild(n, [&](ASTNode* c) { walkAst(c, fn); });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ScopeIndex
