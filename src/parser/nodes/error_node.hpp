@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // DİZİN:   src/parser/nodes/error_node.hpp
-// KATMAN:  Katman 3 — Sözdizimi hatası yer tutucusu (Faz 2)
+// KATMAN:  Parser — sözdizimi hatası yer tutucusu
 //
 // AMAÇ:
 //   Parser sözdizimsel bir hatayla karşılaşınca konumlu bir tanı üretir,

@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // DİZİN:   src/semantic/type_checker.cpp
-// KATMAN:  Faz 3 — Tip denetimi ve tip çıkarımı
+// KATMAN:  Anlam denetimi — tip denetimi ve tip çıkarımı
 //
 // AMAÇ:
 //   AST'yi gezerek tip denetimi yapar ve her ifadeye resolvedType atar.
@@ -1254,7 +1254,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             leftType.isNumeric() && !fractionalIntoIntegral(bin->Right, leftType))
             rightType = checkExpr(bin->Right, leftType);
 
-        // byte aritmetiği (ADR-040 Faz 4 kararı, ürün sahibi 2026-09-13):
+        // byte aritmetiği (ADR-040, ürün sahibi kararı 2026-09-13):
         //
         //   byte ⊕ byte  → byte, 8 bit'e SARAR (& 0xFF)
         //   byte ⊕ int   → int  (byte terfi eder, sonuç int)
@@ -2076,7 +2076,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ADR-045 (Faz 3-b) yardımcıları
+// ADR-045 (izole thread modeli) yardımcıları
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool TypeChecker::isSendable(const Type& t) const {

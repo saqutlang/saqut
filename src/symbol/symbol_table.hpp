@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // DİZİN:   src/symbol/symbol_table.hpp
-// KATMAN:  Faz 2 — Sembol ömrü yönetimi + struct/enum layout haritaları
+// KATMAN:  Sembol toplama — sembol ömrü yönetimi + struct/enum layout haritaları
 //
 // AMAÇ:
 //   Sembollerin (Symbol) ve kapsamların (Scope) ömrünü yönetir.

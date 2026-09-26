@@ -166,7 +166,8 @@ IRProgram IRGenerator::generate(ASTNode* programNode, SymbolTable& symbolTable,
     // Tek modül: moduleId = "" ile slot sayısını kaydet
     program.moduleGlobalCounts[currentModuleId_] = program.globalCount;
 
-    // Dilim 1.5: CALL sonuç türü için dönüş türlerini önceden topla.
+    // CALL sonuç slotunun türü için dönüş türlerini önceden topla
+    // (finalizeSlotTypes → funcReturnKind_).
     for (ASTNode* child : programNode->getChildren()) {
         if (child->kind != ASTKind::FunctionDecl)
             continue;
@@ -208,7 +209,7 @@ IRProgram IRGenerator::generate(ASTNode* programNode, SymbolTable& symbolTable,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ADR-045 global başlatma (1-g, PLAN B — docs/threading-decisions.md)
+// ADR-045 global başlatma (gerekçe: docs/threading-decisions.md)
 // ─────────────────────────────────────────────────────────────────────────────
 
 void IRGenerator::emitGlobalInitializers(const std::vector<VariableDeclNode*>& vars) {
@@ -298,7 +299,7 @@ void IRGenerator::generateFunction(ASTNode* functionDeclNode) {
         emitReturn(zeroSlot, fn->loc.line, fn->loc.column);
     }
 
-    // Faz 5: (sourceLine) → ilk instruction IP indeksi (breakpoint eşlemesi için)
+    // (sourceLine) → ilk instruction IP indeksi (DAP breakpoint eşlemesi için)
     for (int i = 0; i < (int) currentFunction_->instructions.size(); ++i) {
         int sl = currentFunction_->instructions[i].sourceLine;
         if (sl > 0 && !currentFunction_->instructions[i].debugHidden &&
@@ -338,7 +339,7 @@ void IRGenerator::generateStatementImpl(ASTNode* node) {
     if (!node)
         return;
 
-    // Faz 5: tüm emit noktaları için kaynak konum güncelle
+    // Bundan sonra üretilen her talimat bu düğümün kaynak konumunu taşır.
     if (node->loc.isValid())
         currentLoc_ = node->loc;
 
@@ -774,7 +775,7 @@ int IRGenerator::generateExpression(ASTNode* node) {
     if (!node)
         return 0;
 
-    // Faz 5: tüm emit noktaları için kaynak konum güncelle
+    // Bundan sonra üretilen her talimat bu düğümün kaynak konumunu taşır.
     if (node->loc.isValid())
         currentLoc_ = node->loc;
 
@@ -1085,7 +1086,7 @@ int IRGenerator::generateExpression(ASTNode* node) {
                                                    rhsType, bin->loc.line, bin->loc.column,
                                                    nullptr);
 
-            // byte ⊕ byte → byte: sonucu 8 bite sar (ADR-040 Faz 4).
+            // byte ⊕ byte → byte: sonucu 8 bite sar (ADR-040).
             int storeSlot = resultSlot;
             if (lhsType.isByte())
                 storeSlot = emitByteWrap(resultSlot, bin->loc.line, bin->loc.column);
@@ -1463,7 +1464,7 @@ int IRGenerator::generateExpression(ASTNode* node) {
         return destSlot;
     }
 
-    // ── ADR-045: thread { gövde } (lambda lifting, Faz 3-c) ────────────────
+    // ── ADR-045: thread { gövde } (lambda lifting) ─────────────────────────
     case ASTKind::ThreadExpr:
         return generateThreadExpr((ThreadExprNode*) node);
 
@@ -1897,7 +1898,7 @@ int IRGenerator::generateIncDec(ASTNode* operand, bool isIncrement, bool isPrefi
 
     emitBinaryOp(op, newSlot, oldSlot, oneSlot, loc.line, loc.column);
 
-    // byte ⊕ byte → byte: sonucu 8 bite sar (ADR-040 Faz 4), normal
+    // byte ⊕ byte → byte: sonucu 8 bite sar (ADR-040), normal
     // aritmetikle aynı kural.
     int storeSlot = newSlot;
     if (resultType.isByte())
@@ -1936,7 +1937,7 @@ int IRGenerator::emitTypedBinary(Opcode opcode, int leftSlot, const Type& leftTy
     bool leftIsDouble = false, rightIsDouble = false; // 64-bit double
     bool leftIsLong = false, rightIsLong = false; // 64-bit int
     bool leftIsString = false, rightIsString = false;
-    bool leftIsByte = false, rightIsByte = false;   // ADR-040 Faz 4: tip-içi sarma
+    bool leftIsByte = false, rightIsByte = false;   // ADR-040: tip-içi sarma
     auto classify = [](const Type& t, bool& isDec, bool& isF32, bool& isDbl, bool& isLong,
                        bool& isStr, bool& isByte) {
         isDec = t.isDecimal();
@@ -2114,7 +2115,7 @@ int IRGenerator::emitTypedBinary(Opcode opcode, int leftSlot, const Type& leftTy
         emitBinaryOp(floatOp, destSlot, leftSlot, rightSlot, line, col);
     } else {
         emitBinaryOp(opcode, destSlot, leftSlot, rightSlot, line, col);
-        // byte ⊕ byte → byte: sonucu 8 bite sar (ADR-040 Faz 4).
+        // byte ⊕ byte → byte: sonucu 8 bite sar (ADR-040).
         //
         // Kaynak TypeChecker'ın verdiği sonuç tipidir, operandların tipi
         // değil: literal taraf bağlamsal olarak byte tiplenebilir
@@ -2130,7 +2131,7 @@ int IRGenerator::emitTypedBinary(Opcode opcode, int leftSlot, const Type& leftTy
     return destSlot;
 }
 
-// byte ⊕ byte sonucunu 8 bite sarar (ADR-040 Faz 4): `& 0xFF`.
+// byte ⊕ byte sonucunu 8 bite sarar (ADR-040): `& 0xFF`.
 //
 // TypeChecker yalnız İKİ operandı da byte olan aritmetik/bitsel ifadeye byte
 // tipi verir (type_checker.cpp, "byte aritmetiği" bloğu); karışık işlem int
@@ -2157,7 +2158,7 @@ int IRGenerator::emitByteWrap(int valueSlot, int line, int col) {
 
 int IRGenerator::freshSlot() {
     int s = nextSlot_++;
-    // Faz 5: slotNames vektörünü büyüt
+    // slotNames (DAP/debug slot adları) slot sayısıyla birlikte büyür
     if (currentFunction_ && s >= (int) currentFunction_->slotNames.size())
         currentFunction_->slotNames.resize(s + 1);
     return s;
@@ -2175,7 +2176,7 @@ void IRGenerator::registerVariable(const std::string& name, int slot) {
     }
 
     nameToSlot_[name] = slot;
-    // Faz 5: slot → isim eşlemesi (DAP/debug için)
+    // slot → isim eşlemesi (DAP/debug için)
     if (currentFunction_) {
         if (slot >= (int) currentFunction_->slotNames.size())
             currentFunction_->slotNames.resize(slot + 1);
@@ -2214,7 +2215,7 @@ int IRGenerator::lookupVariable(const std::string& name) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Slot tipi hesaplama (Dilim 1.5, MIRPLAN §3)
+// Slot tipi hesaplama (JIT register türü seçimi için; MIRPLAN §3)
 // ─────────────────────────────────────────────────────────────────────────────
 
 SlotType IRGenerator::slotTypeFromType(const Type& t) const {
@@ -2443,12 +2444,11 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
             case Opcode::SHARED_EPOCH:
                 nk = SlotType::LongInt;
                 break;
-            // FIELD_GET/ARRAY_GET/LOAD_GLOBAL: sonuç türü opcode'dan
-            // belli değil (eleman/alan türü gerekir). Dilim 1.5 JIT'i bu
-            // opcode'ları zaten reddediyor; `--types` için Int kalır.
-            // TODO(Dilim 2/3): bu opcode'lara sonuç-türü alanı ekle.
+            // Burada listelenmeyen opcode sonucu Int sayılır. Int üretmeyen
+            // yeni bir opcode ya bir dal ister ya da sonuç tipini
+            // Instruction::valueType'ta taşımalıdır (yukarıdaki dal).
             default:
-                break; // Int-üreten opcode'lar: varsayılan Int
+                break;
             }
             if (nk != cur) {
                 fn->slotTypes[static_cast<size_t>(ins.dest)] = nk;
@@ -3047,7 +3047,7 @@ int IRGenerator::currentInstrIndex() const {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ADR-045 (Faz 3-c/3-d): izole thread modeli IR üretimi
+// ADR-045: izole thread modeli IR üretimi
 // ─────────────────────────────────────────────────────────────────────────────
 
 // shared global → SharedSlots girdisi. kind runtime SharedKind sırasıyla aynı.
@@ -3216,7 +3216,7 @@ int IRGenerator::generateThreadIntrinsic(ScopeCallNode* sc) {
     return z;
 }
 
-// Lambda lifting (Faz 3-c, karar günlüğü): gövde 0 parametreli sentetik
+// Lambda lifting: gövde 0 parametreli sentetik
 // `__thread_<fn>_<n>` fonksiyonuna üretilir. Çağıran taraf THREAD_SPAWN ile
 // yakalanan yerellerin slotlarını verir (runtime tek mesajda deep copy'ler).
 // Sentetik fonksiyon: CALL __init_globals (thread'in kendi global kopyası),
@@ -3294,7 +3294,7 @@ int IRGenerator::generateThreadExpr(ThreadExprNode* te) {
     }
     popScope();
 
-    // Faz 5: satır → ilk IP (breakpoint eşlemesi; generateFunction ile aynı)
+    // satır → ilk IP (breakpoint eşlemesi; generateFunction ile aynı)
     for (int i = 0; i < (int) currentFunction_->instructions.size(); ++i) {
         const int sl = currentFunction_->instructions[i].sourceLine;
         if (sl > 0 && !currentFunction_->instructions[i].debugHidden &&

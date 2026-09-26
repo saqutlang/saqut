@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // DİZİN:   src/opt/optimization_pass.hpp
-// KATMAN:  Faz 4 — Tüm optimizasyon pasajları için soyut arayüz
+// KATMAN:  AST optimizasyonu — tüm optimizasyon geçişleri için soyut arayüz
 //
 // AMAÇ:
 //   Her somut pasaj (ConstantFoldingPass, DeadCodeElimPass) bu sınıftan

@@ -18,7 +18,7 @@
 #include <unordered_map>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Keyword hash map — O(1) lookup yerine O(n) for döngüsü
+// Keyword tablosu — okunan ad burada varsa keyword token'ı olur
 // ─────────────────────────────────────────────────────────────────────────────
 static const std::unordered_map<std::string_view, std::string_view> KW_MAP = {
     {"if","if"},{"else","else"},{"for","for"},{"while","while"},{"do","do"},
@@ -41,7 +41,7 @@ static const std::unordered_map<std::string_view, std::string_view> KW_MAP = {
     {"noexcept","noexcept"},{"native","native"},
     {"synchronized","synchronized"},{"volatile","volatile"},
     {"transient","transient"},
-    // ADR-045 Faz 3: izole thread modeli
+    // ADR-045: izole thread modeli
     {"shared","shared"},{"lock","lock"},{"unlock","unlock"},{"wait","wait"},
     {"thread","thread"},{"Pool","Pool"},{"List","List"},{"Thread","Thread"}
 };
@@ -236,7 +236,8 @@ Token* Tokenizer::scope() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// readIdentifier — değişmedi
+// readIdentifier — ASCII harf, rakam, '_' ve '$' dizisini okur. Hiç karakter
+// okunamazsa (tanınmayan karakter) bir karakter atlayıp boş ad döndürür.
 // ─────────────────────────────────────────────────────────────────────────────
 IdentifierToken* Tokenizer::readIdentifier() {
     hmx.beginPosition();

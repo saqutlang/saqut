@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // DİZİN:   src/semantic/type_checker.hpp
-// KATMAN:  Faz 3 — AST üzerinde tip denetimi ve tip çıkarımı
+// KATMAN:  Anlam denetimi — AST üzerinde tip denetimi ve tip çıkarımı
 //
 // AMAÇ:
 //   Her ifade düğümüne resolvedType atar, atama/parametre/dönüş uyumunu
@@ -66,7 +66,7 @@ private:
     // ADR-021: akış-duyarlı null daraltma — bu kapsamda non-null olduğu bilinen değişkenler
     std::unordered_set<std::string> narrowedNonNull_;
 
-    // ── ADR-045 (Faz 3-b) ─────────────────────────────────────────────────
+    // ── ADR-045: izole thread modeli ──────────────────────────────────────
     // Modül kapsamındaki bildirim denetleniyor mu (shared / Pool / List).
     bool inGlobalDecl_ = false;
     // Pool(T)/List(T) yalnız shared global başlatıcısında geçerli.

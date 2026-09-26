@@ -413,21 +413,12 @@ enum class TokenType : uint16_t {
 // ANAHTAR: std::string_view — keyword string'i (kopyalanmaz, salt okunur)
 // DEĞER:   TokenType — Parser'ın anlayacağı anlamsal tip
 //
-// VERİ YAPISI: std::unordered_map<string_view, TokenType>
-//   - O(1) ortalama arama süresi
-//   - constexpr: derleme zamanı sabiti (derleyici tabloya gömer)
-//   - std::string_view: string kopyalamadan kaçınır (performans)
-//
-// BOYUT: ~60 girdi (tüm keyword'ler)
-// NEDEN unordered_map, neden map değil?
-//   - Arama sıklığı: her token için bir kez
-//   - unordered_map O(1) vs map O(log n) — fark küçük ama var
-//   - Sıralı erişim gerekmez
-//
-// SENKRONİZASYON UYARISI:
-//   Bu harita, Tokenizer'daki keywords[] dizisi İLE EŞLEŞMELİDİR.
-//   Birinde ekleme yapılırsa diğerine de eklenmelidir.
-//   TODO: İki listeyi ortak bir kaynaktan üretecek bir makro/kod üreteci.
+// SENKRONİZASYON UYARISI (#287):
+//   Tokenizer bir adı keyword sayarken src/tokenizer/tokenizer.cpp `KW_MAP`
+//   tablosuna bakar; bu harita yalnız keyword'ün TokenType'ını verir. İki
+//   tablo elle senkron tutulur: KW_MAP'e eklenip buraya eklenmeyen kelime
+//   parser'da tanımsız davranıştır. (`tokenizer.hpp` `keywords[]` hiçbir yerde
+//   okunmaz.)
 //
 inline const std::unordered_map<std::string_view, TokenType> KEYWORD_MAP = {
     // --- Tip dönüşümü (ADR-026) ---
@@ -507,7 +498,7 @@ inline const std::unordered_map<std::string_view, TokenType> KEYWORD_MAP = {
     {"volatile",    TokenType::KW_VOLATILE},
     {"transient",   TokenType::KW_TRANSIENT},
 
-    // --- İzole thread modeli (ADR-045 Faz 3) ---
+    // --- İzole thread modeli (ADR-045) ---
     {"shared",      TokenType::KW_SHARED},
     {"lock",        TokenType::KW_LOCK},
     {"unlock",      TokenType::KW_UNLOCK},

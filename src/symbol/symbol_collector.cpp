@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // DİZİN:   src/symbol/symbol_collector.cpp
-// KATMAN:  Faz 2 — 3 geçişli sembol toplama
+// KATMAN:  Sembol toplama — 3 geçişli sembol toplama
 //
 // AMAÇ:
 //   AST üzerinde 3 geçiş (pass1a, pass1b, pass2) ile sembolleri toplar,
@@ -140,7 +140,7 @@ Type SymbolCollector::declType(const std::string& varType, ASTNode* initExpr,
     return typeFromName(varType, loc);
 }
 
-// ADR-045 (Faz 3-c): id, açık thread gövdelerinden bazılarının DIŞINDA
+// ADR-045: id, açık thread gövdelerinden bazılarının DIŞINDA
 // tanımlı, global olmayan bir değişkeni (yerel/parametre) gösteriyorsa o
 // gövde(ler) için yakalanan bir kopyadır. İçten dışa: sembolün tanımlandığı
 // gövdeye gelince durulur (daha dıştaki thread'ler onu görmez).
@@ -870,7 +870,7 @@ void SymbolCollector::walkExpr(ASTNode* node) {
 
     case ASTKind::MemberAccess: {
         auto* ma = (MemberAccessNode*)node;
-        if (ma->object) walkExpr(ma->object); // member çözümü Faz 3 → TODO
+        if (ma->object) walkExpr(ma->object); // üye adı TypeChecker'da çözülür (nesnenin tipi gerekir)
         break;
     }
 

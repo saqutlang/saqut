@@ -16,10 +16,20 @@ ona dokunmaz.
 
 ## Sıra (en yeniden en eskiye)
 
+İlk tur #291'den başladı; #292–#298 o sırada açıldı ve kural gereği sıranın
+başına girdi.
+
 | Issue | Konu | Dosya | Durum |
 |---|---|---|---|
-| #291 | CLI: komut bilgisi 5 yerde kopya | [291-cli-komut-kaydi.md](291-cli-komut-kaydi.md) | uygulandı, commit bekliyor |
-| #290 | Built-in metot sistemi kopyaları | — | bekliyor |
+| #298 | Yanlış / süreç anlatan yorumlar + çöp dosya | [298-yanlis-yorumlar.md](298-yanlis-yorumlar.md) | uygulandı |
+| #297 | IR slot tipleri üretimde kaydedilmiyor | — | bekliyor |
+| #296 | Token modeli: string tür + parser'da yeniden sınıflandırma | — | bekliyor |
+| #295 | Tanı kodlarının merkezi kaydı yok | — | bekliyor (JSONL sözleşmesi kararı) |
+| #294 | Derleme hattı 10 yerde elle kuruluyor | — | bekliyor |
+| #293 | Dev fonksiyonlar (checkExpr, generateExpression) | — | bekliyor |
+| #292 | AST yürüyücüleri, ortak çocuk gezme yok | — | bekliyor |
+| #291 | CLI: komut bilgisi 5 yerde kopya | [291-cli-komut-kaydi.md](291-cli-komut-kaydi.md) | uygulandı, `46f6026`, issue kapandı |
+| #290 | Built-in metot sistemi kopyaları | [290-builtin-metot-kaydi.md](290-builtin-metot-kaydi.md) | uygulandı, `84760a3`, issue kapandı |
 | #289 | `char` tipi yarım | — | bekliyor (dil kararı) |
 | #288 | FFI tablo ↔ ffi.sqt tutarlılık denetimi | — | bekliyor |
 | #287 | Keyword tabloları + tip adı string eşlemeleri | — | bekliyor |

@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // DİZİN:   src/semantic/structural_validator.hpp
-// KATMAN:  Faz 3 — break/continue/return bağlamı, iç-içe bildirim yasağı
+// KATMAN:  Anlam denetimi — break/continue/return bağlamı, iç-içe bildirim yasağı
 //
 // AMAÇ:
 //   AST'yi gezerek yapısal kuralları denetler: break/continue'in doğru

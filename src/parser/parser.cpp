@@ -98,7 +98,7 @@ ASTNode* Parser::parse(TokenList toks) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Faz 2 — sözdizimi hata raporlama + panic-mode kurtarma
+// Sözdizimi hata raporlama + panic-mode kurtarma
 // ─────────────────────────────────────────────────────────────────────────────
 
 void Parser::reportError(const SourceLocation& loc, const std::string& code,
@@ -517,7 +517,7 @@ ASTNode* Parser::parseNullDenotation() {
     // tanınmayan herhangi bir token gibi. Buradan yükselen nullptr, çağıran
     // (genelde parseExpressionStatement) tarafından TEK bir konumlu tanıya
     // (E901) ve panic-mode kurtarmaya çevrilir; burada ikinci bir mesaj
-    // basılırsa aynı hata için çift tanı üretilirdi (Faz 2).
+    // basılırsa aynı hata için çift tanı üretilirdi.
 
     // ── ADR-045: Pool(T) / List(T) — argüman TİP adıdır ────────────────────
     if ((ct.type == TokenType::KW_POOL || ct.type == TokenType::KW_LIST) &&
@@ -1533,7 +1533,7 @@ ASTNode* Parser::parseExpressionStatement() {
 
     ASTNode* expr = parseExpression();
     if (!expr) {
-        // Faz 2: bu noktadan önce hiçbir alt-kural bir mesaj basmadı (bkz.
+        // Bu noktadan önce hiçbir alt-kural bir mesaj basmadı (bkz.
         // parseNullDenotation) — tek konumlu tanı burada üretilir, ardından
         // panic-mode recovery ile bilinen bir sınıra kadar atlanır.
         std::string tokText = ct.token ? ct.token->token : "<eof>";
@@ -1677,7 +1677,7 @@ ASTNode* Parser::parseThrowStatement() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ADR-045 (Faz 3-a): izole thread dil yüzeyi
+// ADR-045: izole thread dil yüzeyi
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::string Parser::parseTypeName() {

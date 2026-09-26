@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // DİZİN:   src/symbol/scope.hpp
-// KATMAN:  Faz 2 — Kapsam hiyerarşisi ve lexical scoping
+// KATMAN:  Sembol toplama — kapsam hiyerarşisi ve lexical scoping
 //
 // AMAÇ:
 //   Sembol kapsamını temsil eder. parent işaretçisi ile iç içe bloklar

@@ -1,5 +1,5 @@
 // ============================================================================
-// saQut CLI — symbols komutu (sembol tablosu — Faz 2)
+// saQut CLI — symbols komutu (sembol tablosu)
 //
 // Varsayılan: insan-okur düz metin (KORUNUR).
 // #145 (SQ-100-SYMBOLS-JSONL): makine yüzeyi açıkça --jsonl ile seçilir.

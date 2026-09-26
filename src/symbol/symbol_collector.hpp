@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // DİZİN:   src/symbol/symbol_collector.hpp
-// KATMAN:  Faz 2 — 3 geçişli (3-pass) sembol toplama algoritması
+// KATMAN:  Sembol toplama — 3 geçişli (3-pass) sembol toplama algoritması
 //
 // AMAÇ:
 //   AST üzerinde gezerek tüm bildirimleri kaydeder, tipleri çözümler,
@@ -69,7 +69,7 @@ private:
     // Pool(T)/List(T)'den alır.
     Type declType(const std::string& varType, ASTNode* initExpr, const SourceLocation& loc);
 
-    // ADR-045 (Faz 3-c): açık `thread { }` gövdeleri (içten dışa). Bir ad bir
+    // ADR-045: açık `thread { }` gövdeleri (içten dışa). Bir ad bir
     // gövdenin kapsamı dışında tanımlı ve global değilse o thread için
     // yakalanan (kopya) değişkendir.
     struct ThreadCtx {

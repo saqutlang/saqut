@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // DİZİN:   src/symbol/symbol.hpp
-// KATMAN:  Faz 2 — Symbol struct'ı ve SymbolKind enum'ı
+// KATMAN:  Sembol toplama — Symbol struct'ı ve SymbolKind enum'ı
 //
 // AMAÇ:
 //   Bir ismin (değişken, fonksiyon, struct, enum, alan, parametre) tüm
