@@ -227,8 +227,8 @@ int main() {
         // Kayıt tamlığı sabit toplamdır: gömülü host fonksiyonları (hostFnTable +
         // dataDateFunctions) + builtin metodlar. Her FFI ekleyişinde güncellenir;
         // toplam, 256 tabanının altında olduğu sürece blok çakışması olmaz.
-        assert(checked == 79 + 28);
-        std::printf("kayit tamligi: %d kayit (79 host + 28 builtin)\n", checked);
+        assert(checked == 94 + 28);
+        std::printf("kayit tamligi: %d kayit (94 host + 28 builtin)\n", checked);
     }
 
     std::printf("test_host_abi: TUM TESTLER GECTI\n");

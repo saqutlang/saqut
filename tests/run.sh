@@ -8,6 +8,9 @@ CXX="${CXX:-g++}"
 FLAGS=(-std=c++20 -Wall -Wextra -I"$ROOT/src")
 # SAQUT ortam değişkeniyle başka bir build (Debug / TSan) sınanabilir.
 SAQUT="${SAQUT:-$ROOT/build/saqut}"
+# net/tls host modülleri vendor OpenSSL'e bağlıdır; CMake onu build dizininin
+# altına derler (cmake/openssl.cmake). test_host_abi aynı arşivlere bağlanır.
+OPENSSL_DIR="${SAQUT_OPENSSL:-$(dirname "$SAQUT")/openssl/install}"
 
 # ── Birim testler ─────────────────────────────────────────────────────────────
 for t in test_type test_diagnostic test_opcode test_value_rep_contract test_cfg test_host_abi test_decimal_core; do
@@ -25,7 +28,7 @@ for t in test_type test_diagnostic test_opcode test_value_rep_contract test_cfg 
     # ve object.cpp gerekir. SAQUT_VERSION normalde CMake'ten gelir.
     # #223: registry built-in metodları src/data/ modüllerinden alır.
     # Host gövdeleri src/ffi/functions/ altında bölünmüştür (organizasyon, #115).
-    [ "$t" = "test_host_abi" ] && extra="$ROOT/src/core/utf8.cpp $ROOT/src/gc/gc_heap.cpp $ROOT/src/ffi/host_registry.cpp $ROOT/src/ffi/host_functions.cpp $ROOT/src/ffi/functions/math.cpp $ROOT/src/ffi/functions/fs.cpp $ROOT/src/ffi/functions/sys.cpp $ROOT/src/ffi/functions/date.cpp $ROOT/src/ffi/functions/core.cpp $ROOT/src/ffi/functions/process.cpp $ROOT/src/ffi/functions/io.cpp $ROOT/src/ffi/functions/path.cpp $ROOT/src/ffi/functions/utf8.cpp $ROOT/src/ffi/functions/os.cpp $ROOT/src/data/data_registry.cpp $ROOT/src/data/string.cpp $ROOT/src/data/array.cpp $ROOT/src/data/struct.cpp $ROOT/src/data/date.cpp -DSAQUT_VERSION=\"test\""
+    [ "$t" = "test_host_abi" ] && extra="$ROOT/src/core/utf8.cpp $ROOT/src/gc/gc_heap.cpp $ROOT/src/ffi/host_registry.cpp $ROOT/src/ffi/host_functions.cpp $ROOT/src/ffi/functions/math.cpp $ROOT/src/ffi/functions/fs.cpp $ROOT/src/ffi/functions/sys.cpp $ROOT/src/ffi/functions/date.cpp $ROOT/src/ffi/functions/core.cpp $ROOT/src/ffi/functions/process.cpp $ROOT/src/ffi/functions/io.cpp $ROOT/src/ffi/functions/path.cpp $ROOT/src/ffi/functions/utf8.cpp $ROOT/src/ffi/functions/os.cpp $ROOT/src/ffi/functions/net.cpp $ROOT/src/net/net_runtime.cpp -I$OPENSSL_DIR/include $OPENSSL_DIR/lib/libssl.a $OPENSSL_DIR/lib/libcrypto.a -lpthread $ROOT/src/data/data_registry.cpp $ROOT/src/data/string.cpp $ROOT/src/data/array.cpp $ROOT/src/data/struct.cpp $ROOT/src/data/date.cpp -DSAQUT_VERSION=\"test\""
     "$CXX" "${FLAGS[@]}" "$ROOT/tests/$t.cpp" $extra -o "/tmp/saqut_$t"
     "/tmp/saqut_$t"
 done

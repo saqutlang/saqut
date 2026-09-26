@@ -4,7 +4,7 @@
 //
 // Gömülü (C++ gövdeli) host fonksiyonlarının tek düz dispatch tablosu.
 // Gövdeler ilgi alanına göre src/ffi/functions/ altında ayrı TU'lardadır:
-//   functions/{math, fs, sys, date, core, process, io, path, utf8, os}.cpp
+//   functions/{math, fs, sys, date, core, process, io, path, utf8, os, net}.cpp
 // Bu dosya o alt tabloları tek hostFnTable() listesinde birleştirir.
 //
 // Alt tablo sırası sayısal host id'yi belirler; root.sqt sembolik HOST_ID
@@ -30,6 +30,8 @@ const std::vector<HostFn>& hostFnTable() {
         const auto& utf8Ref = utf8HostFunctions(); all.insert(all.end(), utf8Ref.begin(), utf8Ref.end());
         const auto& osRef   = osHostFunctions();   all.insert(all.end(), osRef.begin(), osRef.end());
         const auto& termRef = terminalHostFunctions(); all.insert(all.end(), termRef.begin(), termRef.end());
+        const auto& netRef  = netHostFunctions();  all.insert(all.end(), netRef.begin(), netRef.end());
+        const auto& tlsRef  = tlsHostFunctions();  all.insert(all.end(), tlsRef.begin(), tlsRef.end());
         return all;
     }();
     return table;

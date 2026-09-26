@@ -1,0 +1,116 @@
+// net/tls smoke testinin sunucusu (tests/net/net_smoke.py sürer).
+// HTTP/1.1 echo: gövdeyi aynen geri yollar, gövdesiz istekte "merhaba\n".
+// "Connection: close" isteğinde yanıttan sonra kapatır. Başlık okunup gövde
+// henüz tam gelmediyse bağlantı `pending` listesinde bekler — readSocketExact
+// null döndüğünde başlık zaten tüketilmiş olduğu için durum tutulmalıdır.
+// Port 0 → çekirdek seçer; seçilen port stdout'a "port N" olarak yazılır.
+import {listenTcp, acceptSocket, pollSockets, readSocketUntil, readSocketExact,
+        writeSocket, closeSocket, socketPort} from net;
+import {serverContext, listenTls} from tls;
+import {env, args} from sys;
+
+struct Pending {
+    int conn;
+    int need;
+    bool close;
+}
+
+Pending[] pending = [];
+
+int contentLength(string head) {
+    int? at = head.indexOf("Content-Length: ");
+    if (at == null) { return 0; }
+    string rest = head.substring(at + 16, head.length());
+    int? end = rest.indexOf("\r\n");
+    if (end == null) { return 0; }
+    int? n = rest.substring(0, end) as int?;
+    if (n == null) { return 0; }
+    return n;
+}
+
+// conn için bekleyen kayıt varsa listeden çıkarıp döndürür.
+Pending? takePending(int conn) {
+    Pending? found = null;
+    Pending[] rest = [];
+    for (int i = 0; i < pending.length(); i = i + 1) {
+        if (pending[i].conn == conn) { found = pending[i]; } else { rest.push(pending[i]); }
+    }
+    pending = rest;
+    return found;
+}
+
+void respond(int conn, string body, int bodyBytes, bool close) {
+    string head = "HTTP/1.1 200 OK\r\nContent-Length: " + (bodyBytes as string) + "\r\n";
+    if (close) { head = head + "Connection: close\r\n"; }
+    writeSocket(conn, head + "\r\n" + body);
+}
+
+// false: bağlantı kapatılmalı.
+bool serve(int conn) {
+    while (true) {
+        int need = 0;
+        bool close = false;
+        Pending? p = takePending(conn);
+        if (p != null) {
+            need = p.need;
+            close = p.close;
+        } else {
+            string? head = readSocketUntil(conn, "\r\n\r\n", 65536);
+            if (head == null) { return true; }
+            if (head == "") { return false; }
+            need = contentLength(head);
+            close = head.indexOf("Connection: close") != null;
+        }
+        if (need == 0) {
+            respond(conn, "merhaba\n", 8, close);
+        } else {
+            string? body = readSocketExact(conn, need);
+            if (body == null) {
+                Pending w;
+                w.conn = conn;
+                w.need = need;
+                w.close = close;
+                pending.push(w);
+                return true;
+            }
+            if (body == "") { return false; }
+            respond(conn, body, need, close);
+        }
+        if (close) { return false; }
+    }
+    return true;
+}
+
+int main() {
+    int port = 0;
+    string[] a = args();
+    if (a.length() > 0) {
+        int? p = a[0] as int?;
+        if (p != null) { port = p; }
+    }
+    int srv = 0;
+    string? cert = env("SAQUT_TLS_CERT");
+    string? key = env("SAQUT_TLS_KEY");
+    if (cert != null) {
+        if (key != null) { srv = listenTls("127.0.0.1", port, false, serverContext(cert, key)); }
+    }
+    if (srv == 0) { srv = listenTcp("127.0.0.1", port, false); }
+    print("port " + (socketPort(srv) as string) + "\n");
+
+    while (true) {
+        int[] ready = pollSockets(-1);
+        for (int i = 0; i < ready.length(); i = i + 1) {
+            int h = ready[i];
+            if (h == srv) {
+                int? c = acceptSocket(srv);
+                while (c != null) { c = acceptSocket(srv); }
+            } else {
+                if (!serve(h)) {
+                    Pending? drop = takePending(h);
+                    closeSocket(h);
+                }
+            }
+        }
+    }
+    return 0;
+}

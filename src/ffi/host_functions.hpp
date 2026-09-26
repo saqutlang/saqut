@@ -36,9 +36,9 @@
 using HostFn = HostEntry;
 
 // Alt küme tabloları (bölüm başına ayrı TU; src/ffi/functions/{math,fs,sys,date,core,
-// process,io,path,utf8,os}.cpp). Her biri kendi sabit tablosunu kurar (tek tanım,
+// process,io,path,utf8,os,net}.cpp). Her biri kendi sabit tablosunu kurar (tek tanım,
 // §10.2). io.cpp stdin/stdout/stderr modüllerini birden barındırır; os.cpp
-// os + terminal modüllerini.
+// os + terminal modüllerini; net.cpp net + tls modüllerini.
 const std::vector<HostFn>& mathHostFunctions();
 const std::vector<HostFn>& fsHostFunctions();
 const std::vector<HostFn>& sysHostFunctions();
@@ -52,6 +52,9 @@ const std::vector<HostFn>& pathHostFunctions();
 const std::vector<HostFn>& utf8HostFunctions();
 const std::vector<HostFn>& osHostFunctions();
 const std::vector<HostFn>& terminalHostFunctions();
+// net.cpp — net + tls modülleri (motor: src/net/net_runtime.cpp).
+const std::vector<HostFn>& netHostFunctions();
+const std::vector<HostFn>& tlsHostFunctions();
 
 // Tüm gömülü host fonksiyonların düz tablosu (math/fs/sys/date_now/core/...
 // yeni modüller). Index = sayısal host id; root.sqt'e gömülmez, hostEntryIndex

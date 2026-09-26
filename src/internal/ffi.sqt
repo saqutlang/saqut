@@ -137,3 +137,31 @@ ffi string osHostname() : OS_HOSTNAME  from os;
 ffi string? osUser()    : OS_USER      from os;
 ffi int    osCpuCount() : OS_CPU_COUNT from os;
 ffi bool   isTTY()      : TERMINAL_IS_TTY from terminal;
+
+// ── net modülü (TCP, non-blocking + epoll) ──────────────────────────────────
+// Soket/dinleyici int handle'dır (C++ nesnesi host tablosunda, dilde numara).
+// Tek bloklayan çağrı pollSockets: çağıran thread'in epoll'unda bekler, yeni
+// veri/bağlantı/EOF olan handle'ları döndürür. Yazma tamponludur (kısmi yazma
+// görünmez). Okuma: null = şimdilik veri yok, "" = bağlantı kapandı (EOF),
+// dolu = veri. Bildirilen bir bağlantı null dönene dek okunmalıdır.
+// Motor: src/net/net_runtime.hpp.
+ffi int     listenTcp(string host, int port, bool reusePort)       : NET_LISTEN_TCP  from net;
+ffi int?    acceptSocket(int listener)                              : NET_ACCEPT      from net;
+ffi int[]   pollSockets(int timeoutMs)                              : NET_POLL        from net;
+ffi string? readSocket(int conn, int maxBytes)                      : NET_READ        from net;
+ffi byte[]? readSocketBytes(int conn, int maxBytes)                 : NET_READ_BYTES  from net;
+ffi string? readSocketUntil(int conn, string delimiter, int maxBytes) : NET_READ_UNTIL from net;
+ffi string? readSocketExact(int conn, int size)                     : NET_READ_EXACT  from net;
+ffi void    writeSocket(int conn, string data)                      : NET_WRITE       from net;
+ffi void    writeSocketBytes(int conn, byte[] data)                 : NET_WRITE_BYTES from net;
+ffi void    closeSocket(int handle)                                 : NET_CLOSE       from net;
+ffi int     socketPort(int handle)                                  : NET_PORT        from net;
+ffi string  socketPeer(int conn)                                    : NET_PEER        from net;
+ffi int     socketPending(int conn)                                 : NET_PENDING     from net;
+
+// ── tls modülü (TLS 1.3 sunucu, vendor OpenSSL statik) ──────────────────────
+// serverContext bir bağlam handle'ı döndürür; listenTls ile açılan dinleyicinin
+// kabul ettiği bağlantılar TLS'tir ve net'in read/write fonksiyonlarıyla aynı
+// şekilde kullanılır (el sıkışma görünmez).
+ffi int serverContext(string certPath, string keyPath)                 : TLS_SERVER_CONTEXT from tls;
+ffi int listenTls(string host, int port, bool reusePort, int context)  : TLS_LISTEN         from tls;

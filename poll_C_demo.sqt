@@ -1,0 +1,595 @@
+// ============================================================================
+// poll_C_demo.sqt — "Seçenek C" kurgusu: bloklayan TCP/TLS + mevcut Thread/Pool
+// ============================================================================
+//
+// DURUM: TASLAK / PSEUDO KOD. Bugünkü derleyiciyle DERLENMEZ. Amaç, C
+// seçeneğinin sonunda kullanıcıya nasıl görüneceğini ve derleyicinin her
+// parçayı hangi katmanda nasıl değerlendireceğini göstermektir.
+//
+// Etiketler:
+//   [VAR]   bugün kaynakta olan davranış (kanıt: yanındaki file:satır)
+//   [YENİ]  önerilen; uygulanmadı, ürün kararı bekliyor
+//   [KARAR] ürün sahibinin seçmesi gereken nokta
+//
+// İlke: kullanıcıya callback YOK, event loop YOK, fonksiyon değeri YOK.
+// Bütün IO çağrıları BLOKLAYAN görünür. Eşzamanlılık = mevcut ADR-045
+// thread + Pool. İleride green thread gelirse bu dosya DEĞİŞMEDEN çalışmalı:
+// bloklayan API'nin altı fiber park'ına çevrilir, kullanıcı kodu aynı kalır.
+//
+// Katman dağılımı:
+//   Dışarıdan (C++ host, FFI):  TCP soket, TLS (OpenSSL/mbedTLS [KARAR]),
+//                               sinyal yakalama, poll.
+//   İçeriden (saQut kaynağı):   HTTP ayrıştırma, header, cookie, URL
+//                               decode, query, yanıt üretimi, yönlendirme.
+// ============================================================================
+//
+// ── 1. Host tarafı: src/internal/ffi.sqt'ye eklenecek bildirimler [YENİ] ────
+//
+// ffi.sqt gömülü bir saQut dosyası [VAR: src/ffi/root_sqt.hpp, ADR-034].
+// Her satır = C++ thunk + HostRegistry girdisi [VAR: src/ffi/host_abi.hpp:232].
+// Ad kuralı fs ile aynı: fiil+özne (readFile → readSocket) [VAR: ffi.sqt fs
+// bölümündeki ürün kararı 2026-08-25].
+//
+//   // net — TCP. Socket opak handle tipidir (aşağıda §2).
+//   ffi Socket   listenTcp(string host, int port, int backlog)      : NET_LISTEN     from net;
+//   ffi Socket?  acceptTcp(Socket listener, int timeoutMs)          : NET_ACCEPT     from net;
+//   ffi Socket   connectTcp(string host, int port, int timeoutMs)   : NET_CONNECT    from net;
+//   ffi byte[]?  readSocket(Socket s, int maxBytes, int timeoutMs)  : NET_READ       from net;
+//   ffi void     writeSocket(Socket s, byte[] data)                 : NET_WRITE      from net;
+//   ffi void     closeSocket(Socket s)                              : NET_CLOSE      from net;
+//   ffi string   peerAddress(Socket s)                              : NET_PEER       from net;
+//   ffi int[]    pollSockets(Socket[] set, int timeoutMs)           : NET_POLL       from net;
+//
+//   // tls — mevcut Socket'i yerinde TLS'e yükseltir; sonrası readSocket/
+//   // writeSocket şifreli çalışır (tek Socket tipi, iki ayrı tip yok).
+//   ffi TlsContext tlsServerContext(string certPath, string keyPath) : TLS_SERVER_CTX from tls;
+//   ffi bool       tlsAccept(Socket s, TlsContext ctx, int timeoutMs): TLS_ACCEPT     from tls;
+//   ffi bool       tlsConnect(Socket s, string serverName, int timeoutMs) : TLS_CONNECT from tls;
+//
+//   // signal — kullanıcı thread'i AÇMADAN sinyal yakalama.
+//   ffi void trapSignal(string name)      : SIGNAL_TRAP     from signal;  // "SIGINT" | "SIGTERM"
+//   ffi bool signalReceived(string name)  : SIGNAL_RECEIVED from signal;
+//
+// Dönüş sözleşmesi (host thunk içinde, tüm backend'lerde aynı):
+//   - null   → zaman aşımı YA DA (yalnız main thread'de) tuzaklanmış sinyal.
+//   - []     → readSocket'te karşı taraf kapattı (EOF).
+//   - Error  → gerçek ağ hatası: thunk HostError doldurur, VM saQut Error'a
+//              çevirir [VAR: host_abi.hpp:116 HostError, "exception yok"].
+//              e.code = "E_NET" | "E_TLS" | "E_HANDLE" [YENİ].
+//
+// ── 2. Socket / TlsContext tipleri — derleyici nasıl görür [YENİ] ───────────
+//
+// Emsal: Thread. `thread {}` runtime'da Value::fromInt(core.id) üretir ve id
+// süreç-global ThreadTable'a işaret eder [VAR: src/vm/interpreter.cpp:1811].
+// Socket ve TlsContext AYNI modelle temsil edilir:
+//
+//   Parser        : yeni sözdizimi YOK. `Socket` sıradan bir tip adıdır.
+//   TypeChecker   : Thread/Pool/List gibi yerleşik opak tip. Aritmetik yok,
+//                   `as int` yok, yalnız null karşılaştırması. Kullanıcı
+//                   Socket üretemez; tek kaynak net/tls ffi dönüşleridir.
+//   IR            : slot tipi Int (handle id). GC'nin göreceği bir pointer YOK
+//                   → shadow stack/GC kökü gerekmez, JIT'te sorun çıkmaz.
+//   Runtime       : süreç-global HandleTable { id → fd, SSL*, sahip isolate }.
+//                   GC finalizer YOK (bilinçli): kapanış açık closeSocket ile,
+//                   ya da sahip isolate bittiğinde tablo onun handle'larını
+//                   süpürür (sızıntı ağı).
+//   Gönderilebilirlik (E015 genişletmesi) [VAR: threading-guide.md "Pool(T)
+//   kuralları"; ADR-045 §10 "native handle → sahiplik devri"]:
+//     Socket     → TAŞINIR. Pool'a push edilince gönderende geçersizleşir;
+//                  eski isolate kullanırsa runtime E_HANDLE (bu sahiplik
+//                  kontrolü thunk'ta, handle tablosunda yapılır).
+//     TlsContext → PAYLAŞILIR (değişmez yapılandırma, refcount'lu), Thread
+//                  handle'ı gibi kopyalanır.
+//   [KARAR] alternatif: Socket yerine çıplak `int` fd. Tip sistemi değişmez
+//   ama sahiplik devri kuralı atlanır ve fd sayısal olarak karışabilir.
+//
+// ── 3. Bloklama nasıl uygulanır (kullanıcı görmez) [YENİ] ───────────────────
+//
+// acceptTcp/readSocket/tlsAccept thunk'ları içeride:
+//     poll({fd, POLLIN}, {isolateWakeFd, POLLIN}, timeoutMs)
+// isolateWakeFd isolate başına bir eventfd. Onu tetikleyenler:
+//   - t.stop()              → bloklu IO null/Error ile döner, thread temiz çıkar
+//                             (bugün IO beklemesi stop ile kesilemez
+//                             [VAR: park.hpp "sleep ve IO sayılmaz"]).
+//   - tuzaklanmış sinyal    → yalnız main isolate'in wakeFd'si.
+// Beklerken park katmanına "IO bekliyor: accept :8080" olarak kaydolur →
+// DAP işçi yığınında görünür, deadlock dedektöründe SAYILMAZ [VAR: park.hpp
+// countsForDeadlock=false]. Bu, ADR-045 §RUNTIME 5'in öngördüğü event loop'un
+// ilk parçasıdır: poller şimdilik tek fd'lik; green thread gelince aynı
+// poller birçok fiber'i bekletir.
+//
+// Sinyal: trapSignal("SIGINT") çağrılınca runtime bir kez İÇ bir C++ thread'i
+// açar (saQut isolate'i DEĞİL, kullanıcı görmez): sigwait → atomik bayrak →
+// main wakeFd + notifyShared(). Signal handler içinde kilit/tahsis yok
+// (async-signal-safe sorunu doğmaz çünkü handler yerine sigwait kullanılır).
+// ============================================================================
+
+import {listenTcp, acceptTcp, readSocket, writeSocket, closeSocket,
+        peerAddress, pollSockets} from net;                         // [YENİ]
+import {tlsServerContext, tlsAccept} from tls;                       // [YENİ]
+import {trapSignal, signalReceived} from signal;                     // [YENİ]
+import {encode, decode} from utf8;                                   // [VAR]
+import {osCpuCount} from os;                                         // [VAR]
+import {env} from sys;                                               // [VAR]
+
+// Gerçek projede HTTP katmanı ayrı modüldür:
+//   import {Request, Response, parseHead, ...} from "http.sqt";
+// Modül çözümü: tırnaklı ad = dosya, tırnaksız ad = ffi modülü
+// [VAR: examples/library-system/library_ops.sqt:9 ile ffi_demo.sqt:4].
+// Demo tek dosya kalsın diye aşağıda satır içi.
+
+// ============================================================================
+// 4. Paylaşımlı durum — tamamı mevcut ADR-045 yüzeyi
+// ============================================================================
+
+// Kabul edilen bağlantıların kuyruğu. Eleman tipi Socket? (nullable):
+// null = "işçi, kapan" nöbetçisi. Nullable eleman [VAR: threading-guide.md
+// "nullable'ları" gönderilebilir]; Socket'in kendisi [YENİ] (§2).
+// push → Socket'in sahipliği main'den işçi isolate'e TAŞINIR.
+shared Pool conns = Pool(Socket?);
+
+shared int served = 0;        // [VAR] atomik sayaç; += atomik RMW
+shared int active = 0;
+
+// Sabitler düz global: modül düzeyinde `const` yok [VAR: E901 "unexpected
+// token 'const'"]. shared olmadıkları için her isolate kendi kopyasını
+// başlatır — değişmedikleri sürece zararsız.
+int MAX_HEAD  = 16384;        // başlık için üst sınır (bayt)
+int MAX_BODY  = 1048576;
+int IDLE_MS   = 5000;         // keep-alive boşta bekleme
+int ACCEPT_MS = 1000;         // main'in sinyal yoklama periyodu
+
+// ============================================================================
+// 5. HTTP veri modeli — SAF saQut, host'a hiç dokunmaz
+// ============================================================================
+// Derleyici açısından sıradan struct'lar [VAR]. Map tipi olmadığı için header
+// ve cookie'ler ad/değer dizisidir; arama doğrusal (başlık sayısı küçük).
+
+struct Pair {
+    string name;
+    string value;
+}
+
+struct Request {
+    string method;
+    string path;        // decode edilmiş yol ("/a b")
+    Pair[] query;       // ?x=1&y=2
+    string version;     // "HTTP/1.1"
+    Pair[] headers;     // adlar küçük harfe normalize
+    Pair[] cookies;
+    byte[] body;
+}
+
+struct Response {
+    int status;
+    Pair[] headers;
+    byte[] body;
+}
+
+// ============================================================================
+// 6. URL / query / cookie ayrıştırma — SAF saQut
+// ============================================================================
+
+int? hexValue(byte c) {
+    if (c >= 48 && c <= 57)  { return c - 48; }        // 0-9
+    if (c >= 65 && c <= 70)  { return c - 55; }        // A-F
+    if (c >= 97 && c <= 102) { return c - 87; }        // a-f
+    return null;
+}
+
+// %C3%A7 → "ç". Bayt düzeyinde çalışır, sonra tek seferde UTF-8 decode eder:
+// çok baytlı karakterler doğru birleşir. Geçersiz %-kaçışı olduğu gibi kalır.
+string urlDecode(string s, bool plusIsSpace) {
+    byte[] src = encode(s);                              // [VAR] utf8::encode
+    byte[] out = [];
+    int i = 0;
+    while (i < src.length()) {
+        byte c = src[i];
+        if (c == 37 && i + 2 < src.length()) {           // '%'
+            int? hi = hexValue(src[i + 1]);
+            int? lo = hexValue(src[i + 2]);
+            if (hi != null && lo != null) {
+                out.push((hi * 16 + lo) as byte);
+                i = i + 3;
+                continue;
+            }
+        }
+        if (c == 43 && plusIsSpace) {                    // '+'
+            out.push(32);
+        } else {
+            out.push(c);
+        }
+        i = i + 1;
+    }
+    return decode(out);                                  // [VAR] utf8::decode
+}
+
+// "x=1&y=%20a" → [{x,1},{y," a"}]
+Pair[] parseQuery(string qs) {
+    Pair[] result = [];
+    if (qs.length() == 0) { return result; }
+    string[] parts = qs.split("&");                      // [VAR] string.split
+    for (int i = 0; i < parts.length(); i = i + 1) {
+        Pair p;
+        int? eq = parts[i].indexOf("=");                 // [VAR] bulunamazsa null
+        if (eq == null) {
+            p.name = urlDecode(parts[i], true);
+            p.value = "";
+        } else {
+            p.name = urlDecode(parts[i].substring(0, eq), true);
+            p.value = urlDecode(parts[i].substring(eq + 1, parts[i].length()), true);
+        }
+        result.push(p);
+    }
+    return result;
+}
+
+// "Cookie: sid=abc; theme=dark" → [{sid,abc},{theme,dark}]
+Pair[] parseCookies(string header) {
+    Pair[] result = [];
+    string[] parts = header.split(";");
+    for (int i = 0; i < parts.length(); i = i + 1) {
+        string item = parts[i].trim();
+        int? eq = item.indexOf("=");
+        if (eq != null && eq > 0) {
+            Pair p;
+            p.name = item.substring(0, eq);
+            p.value = item.substring(eq + 1, item.length());
+            result.push(p);
+        }
+    }
+    return result;
+}
+
+// string.toLower() yerleşik değil [VAR: E001 "'toLower' is not a built-in
+// method for type 'string'"]. Header adları ASCII olduğu için saQut'ta
+// bayt düzeyinde yazılır — "içeride dahili" katmanın örneği.
+string asciiLower(string s) {
+    byte[] b = encode(s);
+    for (int i = 0; i < b.length(); i = i + 1) {
+        if (b[i] >= 65 && b[i] <= 90) { b[i] = (b[i] + 32) as byte; }
+    }
+    return decode(b);
+}
+
+string? findPair(Pair[] list, string name) {
+    for (int i = 0; i < list.length(); i = i + 1) {
+        if (list[i].name == name) { return list[i].value; }
+    }
+    return null;
+}
+
+// ============================================================================
+// 7. Çerçeveleme — soketten bir HTTP isteği oku (saQut + 1 host çağrısı)
+// ============================================================================
+// Bayt akışını istek sınırlarına bölmek saQut'ta yapılır; host yalnız
+// "en fazla N bayt ver" der. Sonraki isteğin baytları `carry` içinde kalır
+// (keep-alive / pipelining).
+
+struct ReadState {
+    byte[] carry;       // önceki okumadan artan baytlar
+}
+
+// \r\n\r\n konumunu döndürür; artımlı tarama için `from`.
+int? findHeadEnd(byte[] buf, int from) {
+    int i = from;
+    if (i < 3) { i = 3; }
+    while (i < buf.length()) {
+        if (buf[i - 3] == 13 && buf[i - 2] == 10 && buf[i - 1] == 13 && buf[i] == 10) {
+            return i + 1;
+        }
+        i = i + 1;
+    }
+    return null;
+}
+
+// null → bağlantı kapanmalı (EOF, zaman aşımı, sınır aşımı).
+// Error → ağ/TLS hatası; çağıran try/catch ile yakalar.
+Request? readRequest(Socket s, ReadState st) {
+    byte[] buf = st.carry;
+    int? headEnd = findHeadEnd(buf, 0);
+    while (headEnd == null) {
+        if (buf.length() > MAX_HEAD) { return null; }
+        // BLOKLAYAN ÇAĞRI. Derleyici: CALLHOST <NET_READ idx> [VAR ABI].
+        // VM/JIT aynı thunk'ı çağırır [VAR: host_abi.hpp:151 rt_host_call].
+        // Thunk içinde poll(fd, wakeFd) — işçi burada uyurken t.stop() onu
+        // uyandırabilir [YENİ, §3].
+        byte[]? chunk = readSocket(s, 4096, IDLE_MS);
+        if (chunk == null || chunk.length() == 0) { return null; }
+        int scanFrom = buf.length();
+        for (int k = 0; k < chunk.length(); k = k + 1) { buf.push(chunk[k]); }
+        headEnd = findHeadEnd(buf, scanFrom);
+    }
+
+    // Başlık ASCII'dir (RFC 9112) → decode güvenli.
+    string head = decode(buf.slice(0, headEnd - 4));
+    string[] lines = head.split("\r\n");
+    string[] first = lines[0].split(" ");
+    if (first.length() != 3) { return null; }
+
+    Request req;
+    req.method = first[0];
+    req.version = first[2];
+    string target = first[1];
+    int? q = target.indexOf("?");
+    if (q == null) {
+        req.path = urlDecode(target, false);
+        req.query = [];
+    } else {
+        req.path = urlDecode(target.substring(0, q), false);
+        req.query = parseQuery(target.substring(q + 1, target.length()));
+    }
+
+    req.headers = [];
+    for (int i = 1; i < lines.length(); i = i + 1) {
+        int? colon = lines[i].indexOf(":");
+        if (colon != null) {
+            Pair h;
+            h.name = asciiLower(lines[i].substring(0, colon).trim());
+            h.value = lines[i].substring(colon + 1, lines[i].length()).trim();
+            req.headers.push(h);
+        }
+    }
+    string? cookieHeader = findPair(req.headers, "cookie");
+    // Ternary `?:` yok [VAR: E003] → if/else.
+    if (cookieHeader == null) {
+        req.cookies = [];
+    } else {
+        req.cookies = parseCookies(cookieHeader);
+    }
+
+    // Gövde: Content-Length kadar bayt. chunked encoding bu demoda yok.
+    int bodyLen = 0;
+    string? cl = findPair(req.headers, "content-length");
+    if (cl != null) {
+        int? n = cl as int?;                              // [VAR] güvenli dönüşüm
+        if (n == null || n < 0 || n > MAX_BODY) { return null; }
+        bodyLen = n;
+    }
+    byte[] rest = buf.slice(headEnd, buf.length());
+    while (rest.length() < bodyLen) {
+        byte[]? chunk = readSocket(s, 65536, IDLE_MS);
+        if (chunk == null || chunk.length() == 0) { return null; }
+        for (int k = 0; k < chunk.length(); k = k + 1) { rest.push(chunk[k]); }
+    }
+    req.body = rest.slice(0, bodyLen);
+    st.carry = rest.slice(bodyLen, rest.length());       // pipelined sonraki istek
+    return req;
+}
+
+// ============================================================================
+// 8. Yanıt üretimi ve uygulama mantığı — SAF saQut
+// ============================================================================
+
+string reasonPhrase(int status) {
+    switch (status) {
+        case 200: return "OK";
+        case 400: return "Bad Request";
+        case 404: return "Not Found";
+        case 500: return "Internal Server Error";
+    }
+    return "Unknown";
+}
+
+void sendResponse(Socket s, Response res, bool keepAlive) {
+    string head = "HTTP/1.1 " + (res.status as string) + " " + reasonPhrase(res.status) + "\r\n";
+    for (int i = 0; i < res.headers.length(); i = i + 1) {
+        head = head + res.headers[i].name + ": " + res.headers[i].value + "\r\n";
+    }
+    head = head + "Content-Length: " + (res.body.length() as string) + "\r\n";
+    if (keepAlive) {
+        head = head + "Connection: keep-alive\r\n";
+    } else {
+        head = head + "Connection: close\r\n";
+    }
+    head = head + "\r\n";
+    // İki host çağrısı; writeSocket tümünü yazana dek bloklar (kısmi yazma
+    // döngüsü thunk içinde — kullanıcı EAGAIN görmez).
+    writeSocket(s, encode(head));
+    writeSocket(s, res.body);
+}
+
+Response textResponse(int status, string text) {
+    Response r;
+    r.status = status;
+    r.headers = [];
+    Pair ct;
+    ct.name = "Content-Type";
+    ct.value = "text/plain; charset=utf-8";
+    r.headers.push(ct);
+    r.body = encode(text);
+    return r;
+}
+
+Response route(Request req) {
+    if (req.path == "/") {
+        return textResponse(200, "merhaba\n");
+    }
+    if (req.path == "/hello") {
+        string? name = findPair(req.query, "name");
+        string? theme = findPair(req.cookies, "theme");
+        string msg = "selam anonim";
+        if (name != null) { msg = "selam " + name; }
+        if (theme != null) { msg = msg + " (tema: " + theme + ")"; }
+        Response r = textResponse(200, msg + "\n");
+        Pair sc;
+        sc.name = "Set-Cookie";
+        sc.value = "seen=1; Path=/; HttpOnly";
+        r.headers.push(sc);
+        return r;
+    }
+    return textResponse(404, "yok: " + req.path + "\n");
+}
+
+// ============================================================================
+// 9. Bağlantı işleyici — her işçi thread'inde koşar
+// ============================================================================
+// Socket sahipliği bu isolate'tedir (Pool.pop ile geldi). Fonksiyon her
+// durumda closeSocket ile bitirir; unutulsa bile isolate sonunda handle
+// tablosu süpürür (§2).
+
+void handleConnection(Socket s, TlsContext? tlsCtx) {
+    active += 1;
+    try {
+        // TLS el sıkışması İŞÇİDE yapılır: yavaş istemci accept döngüsünü
+        // (main) tıkamasın. Handshake'in WANT_READ/WANT_WRITE durum makinesi
+        // tamamen thunk içinde kalır — bloklayan modelin TLS'teki kazancı.
+        if (tlsCtx != null && !tlsAccept(s, tlsCtx, IDLE_MS)) {
+            closeSocket(s);
+            active -= 1;
+            return;
+        }
+        ReadState st;
+        st.carry = [];
+        while (true) {
+            Request? req = readRequest(s, st);
+            if (req == null) { break; }
+            string? conn = findPair(req.headers, "connection");
+            bool keepAlive = req.version == "HTTP/1.1" && conn != "close";
+            Response res = route(req);
+            sendResponse(s, res, keepAlive);
+            served += 1;
+            if (!keepAlive) { break; }
+        }
+    } catch (Error e) {
+        // E_NET / E_TLS: istemci koptu, sertifika hatası vb. Sunucu sürer.
+        // Uygulama hatası (ör. route içinde) da buraya düşer: 500 dene.
+        if (e.code != "E_NET" && e.code != "E_TLS") {
+            try { sendResponse(s, textResponse(500, "hata\n"), false); } catch (Error ignored) { }
+        }
+    }
+    closeSocket(s);
+    active -= 1;
+}
+
+// ============================================================================
+// 10. main — thread modeli (C'nin ana biçimi)
+// ============================================================================
+
+int main() {
+    // Sinyal: kullanıcı thread'i YOK. Runtime iç bir sigwait thread'i açar
+    // (§1 "signal"). Bundan sonra Ctrl+C süreci öldürmez; main'in bloklu
+    // acceptTcp'si null döner ve döngü signalReceived ile karar verir.
+    trapSignal("SIGINT");
+    trapSignal("SIGTERM");
+
+    TlsContext? tlsCtx = null;
+    string? cert = env("SAQUT_TLS_CERT");                 // [VAR] sys::env
+    string? key  = env("SAQUT_TLS_KEY");
+    if (cert != null && key != null) {
+        tlsCtx = tlsServerContext(cert, key);             // hata → Error, main'den çıkış
+    }
+
+    Socket srv = listenTcp("0.0.0.0", 8080, 128);
+    conns.setMax(256);                                    // [VAR] geri basınç: doluysa accept bekler
+
+    // İşçi havuzu: çekirdek başına bir isolate. Bağlantı başına thread
+    // AÇILMAZ — her thread yeni bir isolate + globallerin yeniden başlatılması
+    // demek [VAR: threading-guide.md "başlatıcıları her thread'de yeniden
+    // çalışır"].
+    int workerCount = osCpuCount();                       // [VAR] os::osCpuCount
+    Thread[] workers = [];                                // [VAR] Thread[] + push + [i].join() çalışıyor
+    for (int i = 0; i < workerCount; i = i + 1) {
+        // thread {} lambda lifting [VAR: ir_generator.cpp:1466]. tlsCtx
+        // yakalanır → TlsContext PAYLAŞILIR (§2), kopya değil aynı id.
+        Thread w = thread {
+            while (true) {
+                Socket? s = conns.pop();                  // [VAR] boşsa park eder
+                if (s == null) { return; }                // nöbetçi: temiz çıkış
+                handleConnection(s, tlsCtx);
+            }
+        };
+        workers.push(w);
+    }
+
+    print("dinleniyor :8080\n");
+    while (true) {
+        // BLOKLAYAN. null = zaman aşımı veya sinyal (yalnız main'de).
+        Socket? c = acceptTcp(srv, ACCEPT_MS);
+        if (c == null) {
+            if (signalReceived("SIGINT") || signalReceived("SIGTERM")) { break; }
+            continue;
+        }
+        // Sahiplik devri: bu satırdan sonra main `c`'yi kullanırsa runtime
+        // E_HANDLE [YENİ]. Derleme zamanı "push sonrası kullanım" uyarısı
+        // ileride akış analiziyle eklenebilir [KARAR].
+        conns.push(c);
+    }
+
+    // Düzenli kapanış: yeni bağlantı alma, işçilere nöbetçi gönder. Her işçi
+    // elindeki isteği bitirir; keep-alive'da boşta bekleyen işçi en geç
+    // IDLE_MS sonra readSocket'ten null alıp döner.
+    closeSocket(srv);
+    for (int i = 0; i < workerCount; i = i + 1) { conns.push(null); }
+    for (int i = 0; i < workers.length(); i = i + 1) { workers[i].join(); }
+    print("kapandı, sunulan istek: " + (served as string) + "\n");
+    return 0;
+}
+
+// ============================================================================
+// 11. Alternatif: tek thread reactor (pollSockets) — isteğe bağlı yüzey
+// ============================================================================
+// Thread istemeyen kullanıcı için. Dil değişikliği yok; olay döngüsü
+// KULLANICININ yazdığı açık bir while döngüsüdür, gizli zamanlayıcı yoktur.
+// Sınırı: işleyici bloklayan bir şey yaparsa (uzun hesap, readFile) tüm
+// bağlantılar bekler. TLS burada zordur: handshake çok turludur ve
+// "okunabilir" olmak "SSL_read veri verir" demek değildir (SSL_pending).
+// Bu yüzden reactor modunda TLS [KARAR]: ya thunk içinde zaman aşımlı
+// bloklayan handshake, ya host'ta bağlantı başına TLS durum makinesi.
+// Ana öneri §10'daki thread modelidir; bu bölüm C'nin tamamlayıcısıdır.
+
+struct Conn {
+    Socket sock;
+    ReadState st;
+}
+
+// array.removeAt() yerleşik değil [VAR: E001] → yeni dizi kurulur.
+Conn[] withoutIndex(Conn[] list, int drop) {
+    Conn[] out = [];
+    for (int i = 0; i < list.length(); i = i + 1) {
+        if (i != drop) { out.push(list[i]); }
+    }
+    return out;
+}
+
+void runReactor(Socket srv) {
+    Conn[] open = [];
+    while (!signalReceived("SIGINT")) {
+        // Küme: [dinleyici, bağlantı0, bağlantı1, ...]. Yeniden kurulumu her
+        // turda O(n); v1 için kabul (epoll kaydı host'ta kalıcı tutulabilir).
+        Socket[] set = [srv];
+        for (int i = 0; i < open.length(); i = i + 1) { set.push(open[i].sock); }
+
+        // BLOKLAYAN: en az biri hazır olana, zaman aşımına ya da sinyale dek.
+        // Dönüş: hazır olanların indeksleri (artan sıralı → deterministik
+        // işlem sırası).
+        int[] ready = pollSockets(set, 1000);
+
+        for (int r = ready.length() - 1; r >= 0; r = r - 1) {   // sondan: silme indeksleri kaydırmasın
+            int idx = ready[r];
+            if (idx == 0) {
+                Socket? c = acceptTcp(srv, 0);                  // 0 ms: bloklamaz
+                if (c != null) {
+                    Conn nc;
+                    nc.sock = c;
+                    nc.st.carry = [];
+                    open.push(nc);
+                }
+                continue;
+            }
+            Conn cur = open[idx - 1];
+            // NOT: readRequest tam bir istek gelene dek okumaya devam eder;
+            // yavaş istemci reactor'u tıkar. Gerçek reactor için artımlı
+            // "readAvailable + parse edebildiğin kadar" sürümü gerekir.
+            // Bu fark, thread modelinin neden ana öneri olduğunu gösterir.
+            Request? req = readRequest(cur.sock, cur.st);
+            if (req == null) {
+                closeSocket(cur.sock);
+                open = withoutIndex(open, idx - 1);
+                continue;
+            }
+            sendResponse(cur.sock, route(req), true);
+        }
+    }
+    for (int i = 0; i < open.length(); i = i + 1) { closeSocket(open[i].sock); }
+}

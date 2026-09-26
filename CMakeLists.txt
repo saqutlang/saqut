@@ -73,12 +73,15 @@ if(SAQUT_MIR_HAS_NO_IPA_CP_CLONE)
     target_compile_options(mir_core PRIVATE -fno-ipa-cp-clone)
 endif()
 
+find_package(Threads REQUIRED)
+# net/tls host modülleri için vendor OpenSSL (statik) — cmake/openssl.cmake.
+include(cmake/openssl.cmake)
+
 add_library(saqut_core OBJECT ${SOURCES})
 # Üretilen başlık kaynaklardan önce hazır olmalı.
-add_dependencies(saqut_core embed_internal)
+add_dependencies(saqut_core embed_internal openssl_build)
 target_include_directories(saqut_core PUBLIC "${CMAKE_BINARY_DIR}/generated" src)
-find_package(Threads REQUIRED)
-target_link_libraries(saqut_core PUBLIC mir_core Threads::Threads)
+target_link_libraries(saqut_core PUBLIC mir_core saqut_openssl_ssl Threads::Threads)
 
 add_executable(saqut src/main.cpp)
 target_link_libraries(saqut PRIVATE saqut_core)
@@ -440,6 +443,17 @@ add_test(
     NAME dap_threads_smoke
     COMMAND "${PYTHON3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tests/dap/dap_threads_smoke.py"
+        "${SAQUT_BINARY}" "${CMAKE_SOURCE_DIR}"
+)
+
+# net/tls host modülleri: gerçek soketlerle protokol senaryoları
+# (pipelining, bölünmüş istek, büyük gövde, yavaş okuyucu, kapanışta tampon
+# boşaltma, RST, TLS 1.3 + 1.2 reddi). TLS kısmı sistem openssl CLI'si
+# yoksa SKIP yazar.
+add_test(
+    NAME net_smoke
+    COMMAND "${PYTHON3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tests/net/net_smoke.py"
         "${SAQUT_BINARY}" "${CMAKE_SOURCE_DIR}"
 )
 

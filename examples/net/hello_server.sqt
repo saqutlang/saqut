@@ -1,0 +1,78 @@
+// net modülü örneği: tek thread, epoll tabanlı HTTP/1.1 "merhaba" sunucusu.
+// Çalıştır:  saqut run examples/net/hello_server.sqt -- [port]
+// TLS için:  SAQUT_TLS_CERT=cert.pem SAQUT_TLS_KEY=key.pem saqut run ...
+// HTTP ayrıştırma burada bilerek en küçük haliyle; yalnız istek başlığının
+// sonunu (\r\n\r\n) bekler ve Content-Length gövdesini okur.
+import {listenTcp, acceptSocket, pollSockets, readSocketUntil, readSocketExact,
+        writeSocket, closeSocket, socketPort} from net;
+import {serverContext, listenTls} from tls;
+import {env, args} from sys;
+
+int contentLength(string head) {
+    int? at = head.indexOf("Content-Length: ");
+    if (at == null) { return 0; }
+    string rest = head.substring(at + 16, head.length());
+    int? end = rest.indexOf("\r\n");
+    if (end == null) { return 0; }
+    int? n = rest.substring(0, end) as int?;
+    if (n == null) { return 0; }
+    return n;
+}
+
+// Bağlantıda bekleyen tüm istekleri yanıtlar. false: bağlantı kapandı.
+bool serve(int conn) {
+    while (true) {
+        string? head = readSocketUntil(conn, "\r\n\r\n", 16384);
+        if (head == null) { return true; }          // tampon boşaldı, yeni veri bekle
+        if (head == "") { return false; }           // EOF
+        int bodyLen = contentLength(head);
+        if (bodyLen > 0) {
+            string? body = readSocketExact(conn, bodyLen);
+            // Basitlik için: gövde henüz tam gelmediyse bağlantıyı bırak.
+            if (body == null || body == "") { return false; }
+        }
+        if (head.indexOf("Connection: close") != null) {
+            writeSocket(conn, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\nConnection: close\r\n\r\nmerhaba\n");
+            return false;                              // yanıt gönderildikten sonra kapanır
+        }
+        writeSocket(conn, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\nmerhaba\n");
+    }
+    return true;
+}
+
+int main() {
+    int port = 8080;
+    string[] a = args();
+    if (a.length() > 0) {
+        int? p = a[0] as int?;
+        if (p != null) { port = p; }
+    }
+
+    // Nullable daraltma `&&` üzerinden geçmiyor → iç içe if.
+    int srv = 0;
+    string? cert = env("SAQUT_TLS_CERT");
+    string? key = env("SAQUT_TLS_KEY");
+    if (cert != null) {
+        if (key != null) {
+            srv = listenTls("0.0.0.0", port, false, serverContext(cert, key));
+        }
+    }
+    if (srv == 0) {
+        srv = listenTcp("0.0.0.0", port, false);
+    }
+    print("dinleniyor :" + (socketPort(srv) as string) + "\n");
+
+    while (true) {
+        int[] ready = pollSockets(-1);
+        for (int i = 0; i < ready.length(); i = i + 1) {
+            int h = ready[i];
+            if (h == srv) {
+                int? c = acceptSocket(srv);
+                while (c != null) { c = acceptSocket(srv); }
+            } else {
+                if (!serve(h)) { closeSocket(h); }
+            }
+        }
+    }
+    return 0;
+}
