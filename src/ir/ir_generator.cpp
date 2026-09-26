@@ -2298,103 +2298,27 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
                 continue;
             SlotType cur = fn->slotTypes[static_cast<size_t>(ins.dest)];
             SlotType nk = cur;
-            switch (ins.opcode) {
-            case Opcode::LOAD_FLOAT:
-            case Opcode::FADD:
-            case Opcode::FSUB:
-            case Opcode::FMUL:
-            case Opcode::FDIV:
-            case Opcode::FPOW:
-            case Opcode::FMOD:
-            case Opcode::FNEG:
-            case Opcode::INT_TO_FLOAT:
-            case Opcode::FLOAT32_TO_FLOAT:
-                nk = SlotType::Float;
+            // Sonuç türü OPCODE_LIST'in dördüncü sütunundan (#297). Switch
+            // default'suzdur: OpResult'a yeni değer eklenirse -Wswitch uyarır.
+            switch (opcodeResult(ins.opcode)) {
+            // Int slot varsayılanıdır; None dest'e yazmaz — ikisi de dokunmaz.
+            case OpResult::None:
+            case OpResult::Int:
                 break;
-            // ADR-040: float32 (32-bit) üreten op'lar
-            case Opcode::LOAD_FLOAT32:
-            case Opcode::F32ADD:
-            case Opcode::F32SUB:
-            case Opcode::F32MUL:
-            case Opcode::F32DIV:
-            case Opcode::F32POW:
-            case Opcode::F32MOD:
-            case Opcode::F32NEG:
-            case Opcode::INT_TO_FLOAT32:
-            case Opcode::FLOAT_TO_FLOAT32:
-            case Opcode::CAST_STR_TO_FLOAT32:
-                nk = SlotType::Float32;
-                break;
-            // ADR-040: longint (64-bit) üreten op'lar
-            case Opcode::LOAD_LONG:
-            case Opcode::LADD:
-            case Opcode::LSUB:
-            case Opcode::LMUL:
-            case Opcode::LDIV:
-            case Opcode::LMOD:
-            case Opcode::LPOW:
-            case Opcode::LNEG:
-            case Opcode::LBAND:
-            case Opcode::LBOR:
-            case Opcode::LBXOR:
-            case Opcode::LSHL:
-            case Opcode::LSHR:
-            case Opcode::LBNOT:
-            case Opcode::INT_TO_LONG:
-            case Opcode::CAST_STR_TO_LONG:
-            case Opcode::CAST_FLOAT_TO_LONG_CHECKED:
-                nk = SlotType::LongInt;
-                break;
-            case Opcode::STRUCT_NEW:
-            case Opcode::ARRAY_NEW:
-            // catch değişkeni (ENTER_TRY dest) bir Error struct referansıdır.
-            // İşaretlenmezse Int kalıyor, JIT onu host çağrısına tamsayı
-            // olarak geçiriyor ve `e.toJson()` "null" dönüyordu (#260).
-            case Opcode::ENTER_TRY:
-                nk = SlotType::Ref;
-                break;
-            case Opcode::LOAD_STRING:
-            case Opcode::STRING_CONCAT:
-            case Opcode::CAST_INT_TO_STR:
-            case Opcode::CAST_FLOAT_TO_STR:
-            case Opcode::CAST_FLOAT32_TO_STR:
-            case Opcode::CAST_LONG_TO_STR:
-            case Opcode::CAST_BOOL_TO_STR:
-            case Opcode::CAST_DECIMAL_TO_STR:
-                nk = SlotType::Str;
-                break;
-            case Opcode::CAST_STR_TO_FLOAT:
-            case Opcode::CAST_DECIMAL_TO_FLOAT:
-                nk = SlotType::Float;
-                break;
-            // CAST_STR_TO_INT / CAST_FLOAT_TO_INT_CHECKED /
-            // CAST_INT_TO_BYTE_CHECKED / CAST_DECIMAL_TO_INT → Int (default).
-            case Opcode::LOAD_DECIMAL:
-            case Opcode::DADD:
-            case Opcode::DSUB:
-            case Opcode::DMUL:
-            case Opcode::DDIV:
-            case Opcode::DMOD:
-            case Opcode::DNEG:
-            case Opcode::INT_TO_DECIMAL:
-            case Opcode::FLOAT_TO_DECIMAL:
-            case Opcode::CAST_STR_TO_DECIMAL:
-                nk = SlotType::Decimal;
-                break;
+            case OpResult::Long:    nk = SlotType::LongInt; break;
+            case OpResult::Float:   nk = SlotType::Float;   break;
+            case OpResult::Float32: nk = SlotType::Float32; break;
+            case OpResult::Decimal: nk = SlotType::Decimal; break;
+            case OpResult::Str:     nk = SlotType::Str;     break;
+            case OpResult::Ref:     nk = SlotType::Ref;     break;
             // #239: LOAD_NULL'ın dest'i DEĞER TİPİ taşımaz — null her tipte
-            // olabilir. Buraya düşüp `default:` ile Int işaretlenirse ve o
-            // slot bir LOAD_SLOT ile string/ref bir slota kopyalanırsa,
-            // hedefin gerçek tipi (Str) Int'e EZİLİR. Sonuç: JIT o slotu
-            // tamsayı sanar ve `print(s)` ham işaretçiyi basar (VM etkilenmez,
-            // çünkü tipi Value'nun kendisinde taşır — slotTypes yalnız JIT'in
-            // okuduğu türetilmiş bilgidir).
-            //
-            // Null'luk bilgisi zaten AYRI bir fixpoint'te (slotNullable,
-            // aşağıda madde 3) taşınır ve orada LOAD_NULL'ın case'i vardır.
-            // Burada tipi olduğu gibi bırakmak doğru davranıştır.
-            case Opcode::LOAD_NULL:
+            // olabilir. Int işaretlenip bir LOAD_SLOT ile string/ref bir
+            // slota kopyalanırsa hedefin gerçek tipi (Str) Int'e EZİLİR ve
+            // JIT `print(s)`'te ham işaretçiyi basar (VM etkilenmez: tipi
+            // Value taşır). Null'luk ayrı fixpoint'te (madde 3) taşınır.
+            case OpResult::Null:
                 break;
-            case Opcode::LOAD_SLOT: {
+            case OpResult::Copy: {
                 // Kaynak tip taşımıyorsa (yalnız LOAD_NULL ile yazılmış bir
                 // slot) hedefin mevcut tipini KORU — null bir değer tipi
                 // dayatmaz, taşıyıcının tipini devralır.
@@ -2404,13 +2328,13 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
                 nk = srcKind;
                 break;
             }
-            case Opcode::CALL: {
+            case OpResult::Call: {
                 auto it = funcReturnKind_.find(ins.functionName);
                 if (it != funcReturnKind_.end())
                     nk = it->second;
                 break;
             }
-            case Opcode::CALLHOST: {
+            case OpResult::Host: {
                 if (ins.valueType != SlotType::Unknown) { nk = ins.valueType; break; }
                 // #227: dönüş türü registry'den gelir. Bu bilgi olmadan JIT
                 // double dönen bir host fonksiyonunun sonucunu Int register'a
@@ -2430,24 +2354,10 @@ void IRGenerator::finalizeSlotTypes(IRFunction* fn, FunctionDeclNode* decl) {
                 }
                 break;
             }
-            case Opcode::ARRAY_GET:
-            case Opcode::FIELD_GET:
-            case Opcode::LOAD_GLOBAL:
-            // ADR-045: sonuç türü valueType'ta (shared slot / eleman / arg türü)
-            case Opcode::SHARED_LOAD:
-            case Opcode::SHARED_RMW:
-            case Opcode::POOL_POP:
-            case Opcode::LIST_GET:
-            case Opcode::THREAD_ARG:
+            // Eleman / alan / global / shared tipi: IRGenerator talimatı
+            // üretirken valueType'a yazar.
+            case OpResult::ValueType:
                 if (ins.valueType != SlotType::Unknown) nk = ins.valueType;
-                break;
-            case Opcode::SHARED_EPOCH:
-                nk = SlotType::LongInt;
-                break;
-            // Burada listelenmeyen opcode sonucu Int sayılır. Int üretmeyen
-            // yeni bir opcode ya bir dal ister ya da sonuç tipini
-            // Instruction::valueType'ta taşımalıdır (yukarıdaki dal).
-            default:
                 break;
             }
             if (nk != cur) {

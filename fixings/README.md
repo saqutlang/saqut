@@ -21,8 +21,8 @@ başına girdi.
 
 | Issue | Konu | Dosya | Durum |
 |---|---|---|---|
-| #298 | Yanlış / süreç anlatan yorumlar + çöp dosya | [298-yanlis-yorumlar.md](298-yanlis-yorumlar.md) | uygulandı |
-| #297 | IR slot tipleri üretimde kaydedilmiyor | — | bekliyor |
+| #298 | Yanlış / süreç anlatan yorumlar + çöp dosya | [298-yanlis-yorumlar.md](298-yanlis-yorumlar.md) | uygulandı, `117bbe1`, issue kapandı |
+| #297 | IR slot tipleri üretimde kaydedilmiyor | [297-slot-tipleri.md](297-slot-tipleri.md) | uygulandı |
 | #296 | Token modeli: string tür + parser'da yeniden sınıflandırma | — | bekliyor |
 | #295 | Tanı kodlarının merkezi kaydı yok | — | bekliyor (JSONL sözleşmesi kararı) |
 | #294 | Derleme hattı 10 yerde elle kuruluyor | — | bekliyor |

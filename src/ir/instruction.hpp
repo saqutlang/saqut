@@ -62,7 +62,7 @@ inline const char* slotTypeName(SlotType t) {
 // OPCODE_LIST — Opcode spec tablosu (TEK KAYNAK, #132)
 //
 // Her opcode tam olarak tek satırda tanımlanır:
-//   X(ISIM, ARITE, BACKENDS)
+//   X(ISIM, ARITE, BACKENDS, SONUC)
 //     ISIM     : kanonik opcode adı (enum değeri; sıralama pozisyoneldir,
 //                eklerken listenin SONUNA değil doğru gruba ekle)
 //     ARITE    : talimatın anlamlı operand alanı sayısı. Kural:
@@ -81,10 +81,18 @@ inline const char* slotTypeName(SlotType t) {
 //                [EXPERIMENTAL] — tablodaki OP_JIT yalnızca "temel" desteği
 //                gösterir, talimata bağlı ek koşullar
 //                (mir_backend.cpp::opcodeSupported'da) ayrıca uygulanır.
+//     SONUC    : talimatın dest slotuna yazdığı değerin türü (OpResult, aşağıda).
+//                IRGenerator::finalizeSlotTypes slot tiplerini buradan
+//                çıkarır; JIT register türünü bu tiplere göre seçer. Yanlış
+//                sütun derleme hatası değil, --jit'te yanlış değerdir: yeni
+//                opcode'un sonucunu dikkatle seç (#297).
 //
 // Yeni opcode eklemek = bu listeye bir satır eklemek. enum, opcodeName(),
-// opcodeArity(), opcodeBackends() ve JIT temel destek filtresi buradan
-// türetilir — başka yerde elle senkron switch kalmadı.
+// opcodeArity(), opcodeBackends(), opcodeResult() ve JIT temel destek
+// filtresi buradan türetilir. Opcode'un GÖVDESİ ayrıca yazılır: VM
+// (interpreter.cpp), IR yazdırma (ir_function.cpp — default'suz switch,
+// -Werror=switch: eksik dal derleme hatası) ve JIT desteklenecekse
+// mir_backend.cpp.
 // ----------------------------------------------------------------------------
 
 // Backend bayrakları (OPCODE_LIST üçüncü alanı)
@@ -93,159 +101,176 @@ enum : uint8_t {
     OP_JIT = 1u << 1,  // MIR JIT [EXPERIMENTAL] — ek koşullar mir_backend.cpp'de
 };
 
+// Sonuç türü (OPCODE_LIST dördüncü alanı): talimatın dest slotuna ne yazdığı.
+enum class OpResult : uint8_t {
+    None,       // dest'e yazmaz (FIELD_SET/ARRAY_SET'te dest okunan nesnedir)
+    Int,        // int / bool / byte / enum değeri
+    Long,       // longint
+    Float,      // double
+    Float32,    // float
+    Decimal,
+    Str,
+    Ref,        // struct / array / Error referansı
+    ValueType,  // tip Instruction::valueType'ta (eleman / alan / global / shared)
+    Copy,       // LOAD_SLOT: kaynak slotun tipi
+    Call,       // CALL: çağrılan saQut fonksiyonunun dönüş tipi
+    Host,       // CALLHOST: valueType, yoksa host kaydının retKind'ı
+    Null,       // LOAD_NULL: tip taşımaz (null her tipte olabilir)
+};
+
 #define OPCODE_LIST(X) \
     /* --- Değer yükleme --- */ \
-    X(LOAD_CONST,  2, OP_VM | OP_JIT) /* slots[dest] = intValue (tam sayı sabiti) */ \
-    X(LOAD_STRING, 2, OP_VM | OP_JIT) /* slots[dest] = stringValue */ \
-    X(LOAD_NULL,   1, OP_VM | OP_JIT) /* slots[dest] = null (ADR-021); JIT'te yandaş isNull bayrağı (#221) */ \
-    X(LOAD_SLOT,   2, OP_VM | OP_JIT) /* slots[dest] = slots[src] */ \
+    X(LOAD_CONST,  2, OP_VM | OP_JIT, Int)  /* slots[dest] = intValue (tam sayı sabiti) */ \
+    X(LOAD_STRING, 2, OP_VM | OP_JIT, Str)  /* slots[dest] = stringValue */ \
+    X(LOAD_NULL,   1, OP_VM | OP_JIT, Null) /* slots[dest] = null (ADR-021); JIT'te yandaş isNull bayrağı (#221) */ \
+    X(LOAD_SLOT,   2, OP_VM | OP_JIT, Copy) /* slots[dest] = slots[src] */ \
     /* --- Aritmetik (dest = left OP right) --- */ \
-    X(ADD, 3, OP_VM | OP_JIT) \
-    X(SUB, 3, OP_VM | OP_JIT) \
-    X(MUL, 3, OP_VM | OP_JIT) \
-    X(DIV, 3, OP_VM | OP_JIT) /* UYARI: sıfıra bölme → runtime_error */ \
-    X(MOD, 3, OP_VM | OP_JIT) \
+    X(ADD, 3, OP_VM | OP_JIT, Int) \
+    X(SUB, 3, OP_VM | OP_JIT, Int) \
+    X(MUL, 3, OP_VM | OP_JIT, Int) \
+    X(DIV, 3, OP_VM | OP_JIT, Int) /* UYARI: sıfıra bölme → runtime_error */ \
+    X(MOD, 3, OP_VM | OP_JIT, Int) \
     /* #237: ** üs alma. Tamsayı tabanı tamsayı üsle yükseltir (tekrarlı
        çarpma — libm pow() değil, çünkü pow() büyük değerlerde yuvarlama
        hatası verir ve VM≡JIT bit-birebirliği bozulur). Negatif üs E_POWNEG
        ile hata: tamsayı sonucu kesirli olurdu. */ \
-    X(POW,  3, OP_VM | OP_JIT) \
-    X(LPOW, 3, OP_VM | OP_JIT) /* longint taban/üs */ \
+    X(POW,  3, OP_VM | OP_JIT, Int) \
+    X(LPOW, 3, OP_VM | OP_JIT, Long) /* longint taban/üs */ \
     /* --- Bitsel (dest = left OP right) --- */ \
-    X(BAND, 3, OP_VM | OP_JIT) /* slots[left] & slots[right] */ \
-    X(BOR,  3, OP_VM | OP_JIT) /* slots[left] | slots[right] */ \
-    X(BXOR, 3, OP_VM | OP_JIT) /* slots[left] ^ slots[right] */ \
-    X(SHL,  3, OP_VM | OP_JIT) /* slots[left] << slots[right] */ \
-    X(SHR,  3, OP_VM | OP_JIT) /* slots[left] >> slots[right] */ \
-    X(BNOT, 2, OP_VM | OP_JIT) /* slots[dest] = ~slots[src] (tekli) */ \
+    X(BAND, 3, OP_VM | OP_JIT, Int) /* slots[left] & slots[right] */ \
+    X(BOR,  3, OP_VM | OP_JIT, Int) /* slots[left] | slots[right] */ \
+    X(BXOR, 3, OP_VM | OP_JIT, Int) /* slots[left] ^ slots[right] */ \
+    X(SHL,  3, OP_VM | OP_JIT, Int) /* slots[left] << slots[right] */ \
+    X(SHR,  3, OP_VM | OP_JIT, Int) /* slots[left] >> slots[right] */ \
+    X(BNOT, 2, OP_VM | OP_JIT, Int) /* slots[dest] = ~slots[src] (tekli) */ \
     /* --- Karşılaştırma (sonuç: 1 = doğru, 0 = yanlış) --- */ \
-    X(LESS,          3, OP_VM | OP_JIT) \
-    X(LESS_EQUAL,    3, OP_VM | OP_JIT) \
-    X(GREATER,       3, OP_VM | OP_JIT) \
-    X(GREATER_EQUAL, 3, OP_VM | OP_JIT) \
-    X(EQUAL_EQUAL,   3, OP_VM | OP_JIT) \
-    X(NOT_EQUAL,     3, OP_VM | OP_JIT) \
+    X(LESS,          3, OP_VM | OP_JIT, Int) \
+    X(LESS_EQUAL,    3, OP_VM | OP_JIT, Int) \
+    X(GREATER,       3, OP_VM | OP_JIT, Int) \
+    X(GREATER_EQUAL, 3, OP_VM | OP_JIT, Int) \
+    X(EQUAL_EQUAL,   3, OP_VM | OP_JIT, Int) \
+    X(NOT_EQUAL,     3, OP_VM | OP_JIT, Int) \
     /* --- Kontrol akışı --- */ \
-    X(JMP,       1, OP_VM | OP_JIT) /* ip = jumpTarget */ \
-    X(JIF_FALSE, 2, OP_VM | OP_JIT) /* cond falsy ise ip = jumpTarget */ \
-    X(JIF_TRUE,  2, OP_VM | OP_JIT) /* cond truthy ise ip = jumpTarget */ \
+    X(JMP,       1, OP_VM | OP_JIT, None) /* ip = jumpTarget */ \
+    X(JIF_FALSE, 2, OP_VM | OP_JIT, None) /* cond falsy ise ip = jumpTarget */ \
+    X(JIF_TRUE,  2, OP_VM | OP_JIT, None) /* cond truthy ise ip = jumpTarget */ \
     /* --- Fonksiyon çağrısı --- */ \
-    X(CALL,   3, OP_VM | OP_JIT) /* dest, functionName, argSlots */ \
-    X(RETURN, 1, OP_VM | OP_JIT) /* slots[src]'yi caller'a ilet */ \
+    X(CALL,   3, OP_VM | OP_JIT, Call) /* dest, functionName, argSlots */ \
+    X(RETURN, 1, OP_VM | OP_JIT, None) /* slots[src]'yi caller'a ilet */ \
     /* --- Float aritmetik (#44) --- */ \
-    X(LOAD_FLOAT,   2, OP_VM | OP_JIT) /* slots[dest] = floatValue */ \
-    X(FADD, 3, OP_VM | OP_JIT) \
-    X(FSUB, 3, OP_VM | OP_JIT) \
-    X(FMUL, 3, OP_VM | OP_JIT) \
-    X(FDIV, 3, OP_VM | OP_JIT) /* sıfır → runtime_error */ \
-    X(FPOW, 3, OP_VM | OP_JIT) /* #237: double üs — libm pow() */ \
-    X(FMOD, 3, OP_VM | OP_JIT) /* #241: double % — fmod(); sıfır → Error */ \
-    X(FNEG, 2, OP_VM | OP_JIT) /* -slots[src] */ \
-    X(INT_TO_FLOAT, 2, OP_VM | OP_JIT) /* gizli int→float */ \
-    X(FLOAT_TO_INT, 2, OP_VM | OP_JIT) /* açık cast */ \
+    X(LOAD_FLOAT,   2, OP_VM | OP_JIT, Float) /* slots[dest] = floatValue */ \
+    X(FADD, 3, OP_VM | OP_JIT, Float) \
+    X(FSUB, 3, OP_VM | OP_JIT, Float) \
+    X(FMUL, 3, OP_VM | OP_JIT, Float) \
+    X(FDIV, 3, OP_VM | OP_JIT, Float) /* sıfır → runtime_error */ \
+    X(FPOW, 3, OP_VM | OP_JIT, Float) /* #237: double üs — libm pow() */ \
+    X(FMOD, 3, OP_VM | OP_JIT, Float) /* #241: double % — fmod(); sıfır → Error */ \
+    X(FNEG, 2, OP_VM | OP_JIT, Float) /* -slots[src] */ \
+    X(INT_TO_FLOAT, 2, OP_VM | OP_JIT, Float) /* gizli int→float */ \
+    X(FLOAT_TO_INT, 2, OP_VM | OP_JIT, Int)   /* açık cast */ \
     /* --- Float32 aritmetik (ADR-040: tek sonuç (float) truncate) --- */ \
-    X(LOAD_FLOAT32,     2, OP_VM | OP_JIT) /* single sabit yükle */ \
-    X(F32ADD, 3, OP_VM | OP_JIT) \
-    X(F32SUB, 3, OP_VM | OP_JIT) \
-    X(F32MUL, 3, OP_VM | OP_JIT) \
-    X(F32DIV, 3, OP_VM | OP_JIT) /* sıfır → runtime_error */ \
-    X(F32POW, 3, OP_VM | OP_JIT) /* #237: float32 üs — powf() */ \
-    X(F32MOD, 3, OP_VM | OP_JIT) /* #241: float32 % — fmodf(); sıfır → Error */ \
-    X(F32NEG, 2, OP_VM | OP_JIT) \
-    X(INT_TO_FLOAT32,   2, OP_VM | OP_JIT) /* int → float32 */ \
-    X(FLOAT32_TO_INT,   2, OP_VM | OP_JIT) /* float32 → int (checked) */ \
-    X(FLOAT_TO_FLOAT32, 2, OP_VM | OP_JIT) /* double → float (E003 veri kaybı) */ \
-    X(FLOAT32_TO_FLOAT, 2, OP_VM | OP_JIT) /* float → double (kayıpsız) */ \
+    X(LOAD_FLOAT32,     2, OP_VM | OP_JIT, Float32) /* single sabit yükle */ \
+    X(F32ADD, 3, OP_VM | OP_JIT, Float32) \
+    X(F32SUB, 3, OP_VM | OP_JIT, Float32) \
+    X(F32MUL, 3, OP_VM | OP_JIT, Float32) \
+    X(F32DIV, 3, OP_VM | OP_JIT, Float32) /* sıfır → runtime_error */ \
+    X(F32POW, 3, OP_VM | OP_JIT, Float32) /* #237: float32 üs — powf() */ \
+    X(F32MOD, 3, OP_VM | OP_JIT, Float32) /* #241: float32 % — fmodf(); sıfır → Error */ \
+    X(F32NEG, 2, OP_VM | OP_JIT, Float32) \
+    X(INT_TO_FLOAT32,   2, OP_VM | OP_JIT, Float32) /* int → float32 */ \
+    X(FLOAT32_TO_INT,   2, OP_VM | OP_JIT, Int)     /* float32 → int (checked) */ \
+    X(FLOAT_TO_FLOAT32, 2, OP_VM | OP_JIT, Float32) /* double → float (E003 veri kaybı) */ \
+    X(FLOAT32_TO_FLOAT, 2, OP_VM | OP_JIT, Float)   /* float → double (kayıpsız) */ \
     /* --- LongInt aritmetik (ADR-040: 64-bit signed, wrap tanımlı) --- */ \
-    X(LOAD_LONG, 2, OP_VM | OP_JIT) /* 64-bit sabit yükle */ \
-    X(LADD, 3, OP_VM | OP_JIT) \
-    X(LSUB, 3, OP_VM | OP_JIT) \
-    X(LMUL, 3, OP_VM | OP_JIT) \
-    X(LDIV, 3, OP_VM | OP_JIT) /* sıfır → Error; INT64_MIN/-1 → INT64_MIN */ \
-    X(LMOD, 3, OP_VM | OP_JIT) /* sıfır → Error; INT64_MIN/-1 → 0 */ \
-    X(LNEG, 2, OP_VM | OP_JIT) \
-    X(LBAND, 3, OP_VM | OP_JIT) \
-    X(LBOR,  3, OP_VM | OP_JIT) \
-    X(LBXOR, 3, OP_VM | OP_JIT) \
-    X(LSHL,  3, OP_VM | OP_JIT) \
-    X(LSHR,  3, OP_VM | OP_JIT) /* aritmetik */ \
-    X(LBNOT, 2, OP_VM | OP_JIT) \
-    X(INT_TO_LONG,         2, OP_VM | OP_JIT) /* int → longint (kayıpsız) */ \
-    X(LONG_TO_INT_CHECKED, 3, OP_VM | OP_JIT) /* int32 aralığı dışı → fallible */ \
+    X(LOAD_LONG, 2, OP_VM | OP_JIT, Long) /* 64-bit sabit yükle */ \
+    X(LADD, 3, OP_VM | OP_JIT, Long) \
+    X(LSUB, 3, OP_VM | OP_JIT, Long) \
+    X(LMUL, 3, OP_VM | OP_JIT, Long) \
+    X(LDIV, 3, OP_VM | OP_JIT, Long) /* sıfır → Error; INT64_MIN/-1 → INT64_MIN */ \
+    X(LMOD, 3, OP_VM | OP_JIT, Long) /* sıfır → Error; INT64_MIN/-1 → 0 */ \
+    X(LNEG, 2, OP_VM | OP_JIT, Long) \
+    X(LBAND, 3, OP_VM | OP_JIT, Long) \
+    X(LBOR,  3, OP_VM | OP_JIT, Long) \
+    X(LBXOR, 3, OP_VM | OP_JIT, Long) \
+    X(LSHL,  3, OP_VM | OP_JIT, Long) \
+    X(LSHR,  3, OP_VM | OP_JIT, Long) /* aritmetik */ \
+    X(LBNOT, 2, OP_VM | OP_JIT, Long) \
+    X(INT_TO_LONG,         2, OP_VM | OP_JIT, Long) /* int → longint (kayıpsız) */ \
+    X(LONG_TO_INT_CHECKED, 3, OP_VM | OP_JIT, Int)  /* int32 aralığı dışı → fallible */ \
     /* --- Struct (ADR-020: referans semantiği) --- */ \
-    X(STRUCT_NEW, 3, OP_VM | OP_JIT) /* dest, intValue alan sayısı, functionName tip adı */ \
-    X(FIELD_GET,  3, OP_VM | OP_JIT) /* slots[dest] = slots[src].fields[intValue] */ \
-    X(FIELD_SET,  3, OP_VM | OP_JIT) /* slots[dest].fields[intValue] = slots[right] */ \
+    X(STRUCT_NEW, 3, OP_VM | OP_JIT, Ref)       /* dest, intValue alan sayısı, functionName tip adı */ \
+    X(FIELD_GET,  3, OP_VM | OP_JIT, ValueType) /* slots[dest] = slots[src].fields[intValue] */ \
+    X(FIELD_SET,  3, OP_VM | OP_JIT, None)      /* slots[dest].fields[intValue] = slots[right] */ \
     /* --- Array (ADR-020: referans semantiği; #206 packed elemanlar) --- */ \
-    X(ARRAY_NEW, 3, OP_VM | OP_JIT) /* dest, intValue kapasite, arrayElemKind packed tip */ \
-    X(ARRAY_GET, 3, OP_VM | OP_JIT) /* slots[dest] = slots[left][slots[right]] — sınır kontrolü */ \
-    X(ARRAY_SET, 3, OP_VM | OP_JIT) /* slots[dest][slots[left]] = slots[right] — sınır kontrolü */ \
-    X(ARRAY_LEN, 2, OP_VM | OP_JIT) /* slots[dest] = slots[src].uzunluk() */ \
+    X(ARRAY_NEW, 3, OP_VM | OP_JIT, Ref)       /* dest, intValue kapasite, arrayElemKind packed tip */ \
+    X(ARRAY_GET, 3, OP_VM | OP_JIT, ValueType) /* slots[dest] = slots[left][slots[right]] — sınır kontrolü */ \
+    X(ARRAY_SET, 3, OP_VM | OP_JIT, None)      /* slots[dest][slots[left]] = slots[right] — sınır kontrolü */ \
+    X(ARRAY_LEN, 2, OP_VM | OP_JIT, Int)       /* slots[dest] = slots[src].uzunluk() */ \
     /* --- Modül-düzeyi değişken erişimi --- */ \
-    X(LOAD_GLOBAL,  2, OP_VM | OP_JIT) /* slots[dest] = moduleSlots[intValue] */ \
-    X(STORE_GLOBAL, 2, OP_VM | OP_JIT) /* moduleSlots[intValue] = slots[src] */ \
+    X(LOAD_GLOBAL,  2, OP_VM | OP_JIT, ValueType) /* slots[dest] = moduleSlots[intValue] */ \
+    X(STORE_GLOBAL, 2, OP_VM | OP_JIT, None)      /* moduleSlots[intValue] = slots[src] */ \
     /* --- String işlemleri (ADR-024: immutable değer-tipi) --- */ \
-    X(STRING_CONCAT, 3, OP_VM | OP_JIT) /* slots[dest] = slots[left] + slots[right] */ \
+    X(STRING_CONCAT, 3, OP_VM | OP_JIT, Str) /* slots[dest] = slots[left] + slots[right] */ \
     /* --- Hata yönetimi (ADR-025: UNCHECKED try/catch/throw) --- */ \
-    X(ENTER_TRY, 2, OP_VM | OP_JIT) /* dest, jumpTarget; callDepth'i VM kaydeder */ \
-    X(LEAVE_TRY, 0, OP_VM | OP_JIT) /* TryFrame'i çıkar (operand yok) */ \
-    X(THROW,     1, OP_VM | OP_JIT) /* slots[src] değerini fırlat */ \
+    X(ENTER_TRY, 2, OP_VM | OP_JIT, Ref)  /* dest (catch'teki Error referansı), jumpTarget (#260) */ \
+    X(LEAVE_TRY, 0, OP_VM | OP_JIT, None) /* TryFrame'i çıkar (operand yok) */ \
+    X(THROW,     1, OP_VM | OP_JIT, None) /* slots[src] değerini fırlat */ \
     /* --- Tip dönüşümleri (ADR-026: as operatörü) — hatasız --- */ \
-    X(CAST_INT_TO_STR,   2, OP_VM | OP_JIT) \
-    X(CAST_FLOAT_TO_STR, 2, OP_VM | OP_JIT) \
-    X(CAST_BOOL_TO_STR,  2, OP_VM | OP_JIT) \
+    X(CAST_INT_TO_STR,   2, OP_VM | OP_JIT, Str) \
+    X(CAST_FLOAT_TO_STR, 2, OP_VM | OP_JIT, Str) \
+    X(CAST_BOOL_TO_STR,  2, OP_VM | OP_JIT, Str) \
     /* --- Tip dönüşümleri — fallible (left=0 → Error; left=1 → null) --- */ \
-    X(CAST_STR_TO_INT,            3, OP_VM | OP_JIT) \
-    X(CAST_STR_TO_FLOAT,          3, OP_VM | OP_JIT) \
-    X(CAST_FLOAT_TO_INT_CHECKED,  3, OP_VM | OP_JIT) /* NaN/Inf/taşma → fallible */ \
-    X(CAST_INT_TO_BYTE_CHECKED,   3, OP_VM | OP_JIT) /* 0-255 dışı → fallible (#86) */ \
-    X(CAST_LONG_TO_STR,           2, OP_VM | OP_JIT) /* longint → string (hatasız) */ \
-    X(CAST_STR_TO_LONG,           3, OP_VM | OP_JIT) /* string → longint (fallible) */ \
-    X(CAST_FLOAT32_TO_STR,        2, OP_VM | OP_JIT) /* float32 → string (hatasız) */ \
-    X(CAST_STR_TO_FLOAT32,        3, OP_VM | OP_JIT) /* string → float32 (fallible) */ \
-    X(CAST_FLOAT_TO_LONG_CHECKED, 3, OP_VM | OP_JIT) /* NaN/Inf/int64 taşma → fallible */ \
+    X(CAST_STR_TO_INT,            3, OP_VM | OP_JIT, Int) \
+    X(CAST_STR_TO_FLOAT,          3, OP_VM | OP_JIT, Float) \
+    X(CAST_FLOAT_TO_INT_CHECKED,  3, OP_VM | OP_JIT, Int)     /* NaN/Inf/taşma → fallible */ \
+    X(CAST_INT_TO_BYTE_CHECKED,   3, OP_VM | OP_JIT, Int)     /* 0-255 dışı → fallible (#86) */ \
+    X(CAST_LONG_TO_STR,           2, OP_VM | OP_JIT, Str)     /* longint → string (hatasız) */ \
+    X(CAST_STR_TO_LONG,           3, OP_VM | OP_JIT, Long)    /* string → longint (fallible) */ \
+    X(CAST_FLOAT32_TO_STR,        2, OP_VM | OP_JIT, Str)     /* float32 → string (hatasız) */ \
+    X(CAST_STR_TO_FLOAT32,        3, OP_VM | OP_JIT, Float32) /* string → float32 (fallible) */ \
+    X(CAST_FLOAT_TO_LONG_CHECKED, 3, OP_VM | OP_JIT, Long)    /* NaN/Inf/int64 taşma → fallible */ \
     /* --- Decimal aritmetik (ADR-028) --- */ \
-    X(LOAD_DECIMAL,   2, OP_VM | OP_JIT) /* decimal sabit yükle */ \
-    X(DADD, 3, OP_VM | OP_JIT) \
-    X(DSUB, 3, OP_VM | OP_JIT) \
-    X(DMUL, 3, OP_VM | OP_JIT) \
-    X(DDIV, 3, OP_VM | OP_JIT) /* sıfır → Error */ \
-    X(DMOD, 3, OP_VM | OP_JIT) /* sıfır → Error */ \
-    X(DNEG, 2, OP_VM | OP_JIT) \
-    X(INT_TO_DECIMAL,   2, OP_VM | OP_JIT) /* gizli int→decimal terfi */ \
-    X(FLOAT_TO_DECIMAL, 2, OP_VM | OP_JIT) /* gizli float→decimal terfi */ \
-    X(CAST_DECIMAL_TO_STR,   2, OP_VM | OP_JIT) /* hatasız */ \
-    X(CAST_DECIMAL_TO_FLOAT, 2, OP_VM | OP_JIT) /* hatasız */ \
-    X(CAST_DECIMAL_TO_INT,   3, OP_VM | OP_JIT) /* trunc; taşma → fallible */ \
-    X(CAST_STR_TO_DECIMAL,   3, OP_VM | OP_JIT) /* fallible */ \
-    /* --- Dış dünya (FFI) --- */ \
-    X(CALLHOST, 2, OP_VM | OP_JIT) /* functionName, argSlots; şu an yalnız print */ \
-    /* --- İzole thread modeli (ADR-045 Faz 3). intValue = shared slot indeksi \
+    X(LOAD_DECIMAL,   2, OP_VM | OP_JIT, Decimal) /* decimal sabit yükle */ \
+    X(DADD, 3, OP_VM | OP_JIT, Decimal) \
+    X(DSUB, 3, OP_VM | OP_JIT, Decimal) \
+    X(DMUL, 3, OP_VM | OP_JIT, Decimal) \
+    X(DDIV, 3, OP_VM | OP_JIT, Decimal) /* sıfır → Error */ \
+    X(DMOD, 3, OP_VM | OP_JIT, Decimal) /* sıfır → Error */ \
+    X(DNEG, 2, OP_VM | OP_JIT, Decimal) \
+    X(INT_TO_DECIMAL,   2, OP_VM | OP_JIT, Decimal) /* gizli int→decimal terfi */ \
+    X(FLOAT_TO_DECIMAL, 2, OP_VM | OP_JIT, Decimal) /* gizli float→decimal terfi */ \
+    X(CAST_DECIMAL_TO_STR,   2, OP_VM | OP_JIT, Str)     /* hatasız */ \
+    X(CAST_DECIMAL_TO_FLOAT, 2, OP_VM | OP_JIT, Float)   /* hatasız */ \
+    X(CAST_DECIMAL_TO_INT,   3, OP_VM | OP_JIT, Int)     /* trunc; taşma → fallible */ \
+    X(CAST_STR_TO_DECIMAL,   3, OP_VM | OP_JIT, Decimal) /* fallible */ \
+    /* --- Dış dünya: print, curated FFI ve built-in metotlar (intValue = host kaydı) --- */ \
+    X(CALLHOST, 2, OP_VM | OP_JIT, Host) /* functionName, argSlots */ \
+    /* --- İzole thread modeli (ADR-045). intValue = shared slot indeksi \
        (SharedSlots); valueType = sonuç/eleman SlotType. Bloklayanlar \
        (POOL_PUSH/POP, WAIT, THREAD_JOIN) iptal noktasıdır. --- */ \
-    X(SHARED_LOAD,    2, OP_VM | OP_JIT) /* slots[dest] = shared[intValue] (atomik) */ \
-    X(SHARED_STORE,   2, OP_VM | OP_JIT) /* shared[intValue] = slots[src] (atomik) */ \
-    X(SHARED_RMW,     3, OP_VM | OP_JIT) /* slots[dest] = (shared[intValue] += / -= slots[src]); int64Value: 0 ekle, 1 çıkar */ \
-    X(LOCK,           1, OP_VM | OP_JIT) /* shared[intValue] kilidini al */ \
-    X(UNLOCK,         1, OP_VM | OP_JIT) /* shared[intValue] kilidini bırak */ \
-    X(POOL_PUSH,      2, OP_VM | OP_JIT) /* Pool shared[intValue].push(deep copy slots[src]) — bloklar */ \
-    X(POOL_POP,       2, OP_VM | OP_JIT) /* slots[dest] = Pool shared[intValue].pop() — bloklar */ \
-    X(POOL_LEN,       2, OP_VM | OP_JIT) /* slots[dest] = Pool shared[intValue].length() */ \
-    X(POOL_SETMAX,    2, OP_VM | OP_JIT) /* Pool shared[intValue].setMax(slots[src]) */ \
-    X(LIST_APPEND,    2, OP_VM | OP_JIT) /* List shared[intValue].append(deep copy slots[src]) */ \
-    X(LIST_GET,       3, OP_VM | OP_JIT) /* slots[dest] = List shared[intValue].get(slots[left]) */ \
-    X(LIST_LEN,       2, OP_VM | OP_JIT) /* slots[dest] = List shared[intValue].length() */ \
-    X(SHARED_EPOCH,   1, OP_VM | OP_JIT) /* slots[dest] = park katmanı epoch'u (wait döngüsü) */ \
-    X(WAIT,           1, OP_VM | OP_JIT) /* epoch slots[src]'den farklı olana dek park — bloklar */ \
-    X(THREAD_SPAWN,   3, OP_VM | OP_JIT) /* slots[dest] = spawn(functionName, argSlots kopyası) */ \
-    X(THREAD_ARG,     2, OP_VM | OP_JIT) /* slots[dest] = başlangıç argümanı[intValue] */ \
-    X(THREAD_STOP,    1, OP_VM | OP_JIT) /* Thread slots[src].stop() — bloklamaz */ \
-    X(THREAD_JOIN,    1, OP_VM | OP_JIT) /* Thread slots[src].join() — bloklar */ \
-    X(THREAD_RUNNING, 2, OP_VM | OP_JIT) /* slots[dest] = Thread slots[src].running() */
+    X(SHARED_LOAD,    2, OP_VM | OP_JIT, ValueType) /* slots[dest] = shared[intValue] (atomik) */ \
+    X(SHARED_STORE,   2, OP_VM | OP_JIT, None)      /* shared[intValue] = slots[src] (atomik) */ \
+    X(SHARED_RMW,     3, OP_VM | OP_JIT, ValueType) /* slots[dest] = (shared[intValue] += / -= slots[src]); int64Value: 0 ekle, 1 çıkar */ \
+    X(LOCK,           1, OP_VM | OP_JIT, None)      /* shared[intValue] kilidini al */ \
+    X(UNLOCK,         1, OP_VM | OP_JIT, None)      /* shared[intValue] kilidini bırak */ \
+    X(POOL_PUSH,      2, OP_VM | OP_JIT, None)      /* Pool shared[intValue].push(deep copy slots[src]) — bloklar */ \
+    X(POOL_POP,       2, OP_VM | OP_JIT, ValueType) /* slots[dest] = Pool shared[intValue].pop() — bloklar */ \
+    X(POOL_LEN,       2, OP_VM | OP_JIT, Int)       /* slots[dest] = Pool shared[intValue].length() */ \
+    X(POOL_SETMAX,    2, OP_VM | OP_JIT, None)      /* Pool shared[intValue].setMax(slots[src]) */ \
+    X(LIST_APPEND,    2, OP_VM | OP_JIT, None)      /* List shared[intValue].append(deep copy slots[src]) */ \
+    X(LIST_GET,       3, OP_VM | OP_JIT, ValueType) /* slots[dest] = List shared[intValue].get(slots[left]) */ \
+    X(LIST_LEN,       2, OP_VM | OP_JIT, Int)       /* slots[dest] = List shared[intValue].length() */ \
+    X(SHARED_EPOCH,   1, OP_VM | OP_JIT, Long)      /* slots[dest] = park katmanı epoch'u (wait döngüsü) */ \
+    X(WAIT,           1, OP_VM | OP_JIT, None)      /* epoch slots[src]'den farklı olana dek park — bloklar */ \
+    X(THREAD_SPAWN,   3, OP_VM | OP_JIT, Int)       /* slots[dest] = spawn(functionName, argSlots kopyası) — tamsayı handle */ \
+    X(THREAD_ARG,     2, OP_VM | OP_JIT, ValueType) /* slots[dest] = başlangıç argümanı[intValue] */ \
+    X(THREAD_STOP,    1, OP_VM | OP_JIT, None)      /* Thread slots[src].stop() — bloklamaz */ \
+    X(THREAD_JOIN,    1, OP_VM | OP_JIT, None)      /* Thread slots[src].join() — bloklar */ \
+    X(THREAD_RUNNING, 2, OP_VM | OP_JIT, Int)       /* slots[dest] = Thread slots[src].running() */
 
 // Spec tablosundan türetilen enum — OPCODE_LIST'e satır eklemek yeterlidir.
 enum class Opcode {
-#define X(name, arity, backends) name,
+#define X(name, arity, backends, result) name,
     OPCODE_LIST(X)
 #undef X
 };
@@ -253,7 +278,7 @@ enum class Opcode {
 // Hata ayıklama ve IR dump için okunabilir isim (spec tablosundan türetilir)
 inline const char* opcodeName(Opcode op) {
     switch (op) {
-#define X(name, arity, backends) case Opcode::name: return #name;
+#define X(name, arity, backends, result) case Opcode::name: return #name;
         OPCODE_LIST(X)
 #undef X
     }
@@ -263,7 +288,7 @@ inline const char* opcodeName(Opcode op) {
 // Operand arite bilgisi (spec tablosundan; tanım üstteki kurala göre)
 constexpr int opcodeArity(Opcode op) {
     switch (op) {
-#define X(name, arity, backends) case Opcode::name: return arity;
+#define X(name, arity, backends, result) case Opcode::name: return arity;
         OPCODE_LIST(X)
 #undef X
     }
@@ -273,11 +298,21 @@ constexpr int opcodeArity(Opcode op) {
 // Destekleyen backend bayrakları (spec tablosundan; VM her zaman normatiftir)
 constexpr uint8_t opcodeBackends(Opcode op) {
     switch (op) {
-#define X(name, arity, backends) case Opcode::name: return backends;
+#define X(name, arity, backends, result) case Opcode::name: return backends;
         OPCODE_LIST(X)
 #undef X
     }
     return 0;
+}
+
+// Dest slotuna yazılan değerin türü (spec tablosundan; OpResult)
+constexpr OpResult opcodeResult(Opcode op) {
+    switch (op) {
+#define X(name, arity, backends, result) case Opcode::name: return OpResult::result;
+        OPCODE_LIST(X)
+#undef X
+    }
+    return OpResult::None;
 }
 
 // MIR JIT temel destek filtresi — talimata bağlı ek koşullar
@@ -287,7 +322,7 @@ constexpr bool opcodeJitBaseSupported(Opcode op) {
 }
 
 // Spec tablosundaki toplam opcode sayısı (testler ve iterasyon için)
-#define X(name, arity, backends) +1
+#define X(name, arity, backends, result) +1
 constexpr int kOpcodeCount = OPCODE_LIST(X);
 #undef X
 
