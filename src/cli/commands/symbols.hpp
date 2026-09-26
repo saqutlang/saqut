@@ -6,7 +6,8 @@
 //   İlk kayıt  : {"record":"symbols.header","schemaVersion":1}
 //   Ara kayıt  : satır başına bir symbol veya diagnostic kaydı (deterministik)
 //   Son kayıt  : {"record":"symbols.end","errors":N,"warnings":M,"symbolCount":K}
-//   Eski `--json` tek-büyük-JSON preview KALDIRILDI (flag → usage error 64).
+//   Eski `--json` tek-büyük-JSON preview KALDIRILDI: symbols `--json`'ı
+//   kabul etmez, parseArgs usage error 64 verir ve geçerli seçenekleri sayar.
 //   `--compact` JSONL'de anlamsız → sessizce yutulmaz (usage error 64).
 //   Error-tolerant davranış ve nonzero exit korunur (65 = veri hatası).
 // ============================================================================
@@ -31,11 +32,6 @@ inline int cmdSymbols(const CliArgs& args) {
     std::string source   = readSource(args);
     if (source.empty()) return saqut::exit_code::kUsageError;
 
-    // #145: eski --json preview kaldırıldı — makine yüzeyi yalnız --jsonl.
-    if (args.jsonOutput) {
-        std::cerr << "error: --json is removed for symbols; use --jsonl for machine output\n";
-        return saqut::exit_code::kUsageError;
-    }
     // --compact JSONL'de anlamsız → sessizce yutulmaz.
     if (args.compact && args.jsonlOutput) {
         std::cerr << "error: --compact is meaningless with --jsonl\n";
@@ -139,5 +135,13 @@ inline int cmdSymbols(const CliArgs& args) {
     for (auto* t : tokens) delete t;
     return diag.hasErrors() ? saqut::exit_code::kDataError : saqut::exit_code::kSuccess;
 }
+
+inline constexpr CliCommand kSymbolsCommand{
+    .name        = "symbols",
+    .usage       = "saqut symbols <file> [--jsonl]",
+    .description = "print symbol table (functions, variables)",
+    .options     = OPT_JSONL | OPT_COMPACT,
+    .run         = cmdSymbols,
+};
 
 #endif // SAQUT_CLI_SYMBOLS

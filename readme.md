@@ -4,10 +4,10 @@
 > every internal phase is a first-class, inspectable output.
 
 ```
-saqut tokens  file:fib.sqt     →  token stream, JSON
-saqut ast     file:fib.sqt     →  full AST, JSON
-saqut ast     file:fib.sqt --optimized  →  constant-folded + DCE'd AST
-saqut run     file:fib.sqt     →  execute via IR + bytecode VM
+saqut tokens  fib.sqt     →  token stream, JSON
+saqut ast     fib.sqt     →  full AST, JSON
+saqut ast     fib.sqt --optimized  →  constant-folded + DCE'd AST
+saqut run     fib.sqt     →  execute via IR + bytecode VM
 ```
 
 Most compilers are black boxes. saQut is a **glass box.**
@@ -87,13 +87,13 @@ Binary lands at `build/saqut`.
 
 | Command | What you get |
 |---|---|
-| `saqut tokens file:src.sqt` | Token stream with positions |
-| `saqut ast file:src.sqt` | Full AST as JSON |
-| `saqut ast file:src.sqt --optimized` | AST after constant folding + dead-code elimination |
-| `saqut symbols file:src.sqt` | Symbol table dump |
-| `saqut check file:src.sqt` | Semantic analysis only — errors and warnings, JSON |
-| `saqut ir file:src.sqt` | IR instruction dump |
-| `saqut run file:src.sqt` | Compile and run via bytecode VM |
+| `saqut tokens src.sqt` | Token stream with positions |
+| `saqut ast src.sqt` | Full AST as JSON |
+| `saqut ast src.sqt --optimized` | AST after constant folding + dead-code elimination |
+| `saqut symbols src.sqt` | Symbol table dump |
+| `saqut check src.sqt` | Semantic analysis only — errors and warnings, JSON |
+| `saqut ir src.sqt` | IR instruction dump |
+| `saqut run src.sqt` | Compile and run via bytecode VM |
 
 Every output is designed to be piped, diffed, or consumed by other tools.
 

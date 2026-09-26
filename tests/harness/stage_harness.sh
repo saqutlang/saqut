@@ -132,12 +132,12 @@ for f in "${FILES[@]}"; do
         done < "$flags_file"
     fi
 
-    run_stage "$tmp/tokens" "$BINARY" tokens "file:$f";              e_tok=$STAGE_EXIT
-    run_stage "$tmp/ast"    "$BINARY" ast    "file:$f";              e_ast=$STAGE_EXIT
-    run_stage "$tmp/check"  "$BINARY" check  "file:$f";              e_chk=$STAGE_EXIT
-    run_stage "$tmp/ir"     "$BINARY" ir     "file:$f";              e_ir=$STAGE_EXIT
-    run_stage "$tmp/vm"     "$BINARY" run "${extra[@]}" "file:$f";   e_vm=$STAGE_EXIT
-    run_stage "$tmp/jit"    "$BINARY" run --jit "${extra[@]}" "file:$f"; e_jit=$STAGE_EXIT
+    run_stage "$tmp/tokens" "$BINARY" tokens "$f";              e_tok=$STAGE_EXIT
+    run_stage "$tmp/ast"    "$BINARY" ast    "$f";              e_ast=$STAGE_EXIT
+    run_stage "$tmp/check"  "$BINARY" check  "$f";              e_chk=$STAGE_EXIT
+    run_stage "$tmp/ir"     "$BINARY" ir     "$f";              e_ir=$STAGE_EXIT
+    run_stage "$tmp/vm"     "$BINARY" run "${extra[@]}" "$f";   e_vm=$STAGE_EXIT
+    run_stage "$tmp/jit"    "$BINARY" run --jit "${extra[@]}" "$f"; e_jit=$STAGE_EXIT
 
     # JIT bu fixture'ı derlemiyorsa parity karşılaştırması ANLAMSIZDIR —
     # UNSUPPORTED'dır, PASS değil (#207 kabul kriteri 3).

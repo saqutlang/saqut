@@ -484,4 +484,13 @@ inline int cmdBench(const CliArgs& args) {
     return 0;
 }
 
+inline constexpr CliCommand kBenchCommand{
+    .name        = "bench",
+    .usage       = "saqut bench <file> [--runs=N] [--jit] [options]",
+    .description = "phase-level benchmark (tokenize|parse|symbol|typecheck|ir|vm)",
+    .options     = OPT_JIT | OPT_VERBOSE | OPT_RUNS | OPT_COMPILE_ONLY | OPT_MAX_CALL_DEPTH |
+                   OPT_PROGRAM_ARGS,
+    .run         = cmdBench,
+};
+
 #endif // SAQUT_CLI_BENCH

@@ -73,4 +73,12 @@ inline int cmdIr(const CliArgs& args) {
     return saqut::exit_code::kSuccess;
 }
 
+inline constexpr CliCommand kIrCommand{
+    .name        = "ir",
+    .usage       = "saqut ir <file> [--dont-optimize] [--cfg]",
+    .description = "print IR instruction list (intermediate representation)",
+    .options     = OPT_DONT_OPTIMIZE | OPT_CFG,
+    .run         = cmdIr,
+};
+
 #endif // SAQUT_CLI_IR

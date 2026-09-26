@@ -185,4 +185,13 @@ inline int cmdRun(const CliArgs& args) {
     return exitCode;
 }
 
+inline constexpr CliCommand kRunCommand{
+    .name        = "run",
+    .usage       = "saqut run <file> [options] [-- args]",
+    .description = "run program (token → AST → IR → VM)",
+    .options     = OPT_JIT | OPT_DONT_OPTIMIZE | OPT_VERBOSE | OPT_PROFILE | OPT_GC_STATS |
+                   OPT_MAX_CALL_DEPTH | OPT_GC_THRESHOLD | OPT_PROGRAM_ARGS,
+    .run         = cmdRun,
+};
+
 #endif // SAQUT_CLI_RUN

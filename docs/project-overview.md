@@ -12,10 +12,10 @@ The language is C-flavored on purpose — it is a vehicle, not the product.
 The product is **a compilation pipeline where every internal phase is a first-class, inspectable, machine-readable output.**
 
 ```
-saqut tokens  file:fib.sqt     →  token stream, JSON
-saqut ast     file:fib.sqt     →  full AST, JSON
-saqut ast     file:fib.sqt --optimized  →  const-folded + DCE'd AST
-saqut run     file:fib.sqt     →  execute via IR + bytecode VM
+saqut tokens  fib.sqt     →  token stream, JSON
+saqut ast     fib.sqt     →  full AST, JSON
+saqut ast     fib.sqt --optimized  →  const-folded + DCE'd AST
+saqut run     fib.sqt     →  execute via IR + bytecode VM
 ```
 
 Source language: **saQut** — a procedural, statically-typed language with value semantics.

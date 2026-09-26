@@ -21,14 +21,14 @@ if(EXTRA_ARGS)
 endif()
 
 execute_process(
-    COMMAND "${BINARY}" run ${EXTRA_FLAGS} "file:${SOURCE}"
+    COMMAND "${BINARY}" run ${EXTRA_FLAGS} "${SOURCE}"
     OUTPUT_VARIABLE VM_OUT
     ERROR_VARIABLE  VM_ERR
     RESULT_VARIABLE VM_EXIT
 )
 
 execute_process(
-    COMMAND "${BINARY}" run --jit ${EXTRA_FLAGS} "file:${SOURCE}"
+    COMMAND "${BINARY}" run --jit ${EXTRA_FLAGS} "${SOURCE}"
     OUTPUT_VARIABLE JIT_OUT
     ERROR_VARIABLE  JIT_ERR
     RESULT_VARIABLE JIT_EXIT

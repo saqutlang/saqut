@@ -3,36 +3,18 @@
 // ============================================================================
 //
 // DİZİN:   src/main.cpp
-// KATMAN:  En üst — CLI dispatcher'ı başlatır
+// KATMAN:  En üst — argümanları ayrıştırır, komutu çalıştırır
 //
-// KULLANIM:
-//   saqut                         → yardım
-//   saqut run <dosya>             → pipeline debug çıktısı
-//   saqut tokens <dosya>          → token listesi
-//   saqut ast <dosya> [-o çıktı]  → JSON AST + analiz
-//   saqut symbols <dosya>         → sembol tablosu
-//   saqut -                       → stdin modu (TODO)
-//
-// YENİ KOMUT EKLEMEK İÇİN:
-//   1. src/cli/commands/x.hpp oluştur
-//   2. Bu dosyada #include et
-//   3. cli.registerCommand({...}) ile kaydet
+// Komutlar cli/command_list.hpp'de listelenir; yeni komut eklemek için o
+// dosyanın başlığındaki adımlara bak. Bu dosyaya dokunmak gerekmez.
 //
 // ============================================================================
 
 #include <iostream>
 #include "cli/args.hpp"
 #include "cli/cli.hpp"
-#include "cli/commands/run.hpp"
-#include "cli/commands/tokens.hpp"
-#include "cli/commands/ast.hpp"
-#include "cli/commands/symbols.hpp"
-#include "cli/commands/check.hpp"
-#include "cli/commands/ir.hpp"
-#include "cli/commands/exec.hpp"
-#include "cli/commands/lsp.hpp"
-#include "cli/commands/dap.hpp"
-#include "cli/commands/bench.hpp"
+#include "cli/command_list.hpp"
+#include "cli/exit_codes.hpp"
 #include "runtime/isolate.hpp"
 
 int main(int argc, char* argv[]) {
@@ -40,57 +22,15 @@ int main(int argc, char* argv[]) {
     // kalır; Isolate::current() artık lazy değildir (c2).
     Isolate::currentOrCreate();
 
-    // Komutları kaydet
-    CliDispatcher cli;
+    const std::vector<const CliCommand*>& commands = allCommands();
 
-    cli.registerCommand({"run",
-        "run program (token → AST → IR → VM)",
-        false, cmdRun});
-
-    cli.registerCommand({"tokens",
-        "print token list",
-        false, cmdTokens});
-
-    cli.registerCommand({"ast",
-        "print AST hierarchy and analysis as JSON",
-        false, cmdAst});
-
-    cli.registerCommand({"symbols",
-        "print symbol table (functions, variables)",
-        false, cmdSymbols});
-
-    cli.registerCommand({"check",
-        "semantic analysis — type checking + structural validation",
-        false, cmdCheck});
-
-    cli.registerCommand({"ir",
-        "print IR instruction list (intermediate representation)",
-        false, cmdIr});
-
-    cli.registerCommand({"exec",
-        "evaluate an expression and print the result  (saqut exec \"1+2\")",
-        false, cmdExec});
-
-    cli.registerCommand({"lsp",
-        "start LSP server (JSON-RPC on stdin/stdout)",
-        false, cmdLsp});
-
-    cli.registerCommand({"dap",
-        "start DAP debug adapter (JSON-RPC on stdin/stdout)",
-        false, cmdDap});
-
-    cli.registerCommand({"bench",
-        "phase-level benchmark (tokenize|parse|symbol|typecheck|ir|vm)",
-        false, cmdBench});
-
-    // Argümanları ayrıştır
-    CliArgs args = parseArgs(argc, argv);
-
-    // Argümansız çağrı → help
+    // Argümansız çağrı → yardım
     if (argc <= 1) {
-        cli.printHelp();
-        return 0;
+        printHelp(commands);
+        return saqut::exit_code::kSuccess;
     }
+
+    CliArgs args = parseArgs(argc, argv, commands);
 
     // #257: kullanım hataları sessizce yutulmaz.
     if (!args.usageError.empty()) {
@@ -99,5 +39,5 @@ int main(int argc, char* argv[]) {
         return saqut::exit_code::kUsageError;
     }
 
-    return cli.dispatch(args);
+    return dispatch(args, commands);
 }

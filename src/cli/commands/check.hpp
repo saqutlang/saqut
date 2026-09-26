@@ -73,4 +73,11 @@ inline int cmdCheck(const CliArgs& args) {
     return diag.hasErrors() ? saqut::exit_code::kDataError : saqut::exit_code::kSuccess;
 }
 
+inline constexpr CliCommand kCheckCommand{
+    .name        = "check",
+    .usage       = "saqut check <file>",
+    .description = "semantic analysis — type checking + structural validation",
+    .run         = cmdCheck,
+};
+
 #endif // SAQUT_CLI_CHECK

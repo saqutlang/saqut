@@ -12,7 +12,7 @@ trap 'rm -f "$redirect_out" "$redirect_err"' EXIT
 # P1/N1: redirect edilen stdout VE stderr'de hiç ANSI CSI olmamalı.
 # (stdin de /dev/null'a bağlanarak "yalnız stdout TTY durumu belirler" (N1)
 # aynı komutla dolaylı olarak sağlanıyor.)
-"$binary" ir "file:$f" > "$redirect_out" 2>"$redirect_err" < /dev/null
+"$binary" ir "$f" > "$redirect_out" 2>"$redirect_err" < /dev/null
 if grep -qP '\x1b\[' "$redirect_out"; then
     echo "FAIL: redirect edilen stdout ANSI CSI iceriyor" >&2
     exit 1
@@ -25,8 +25,8 @@ fi
 # P4: determinizm — üç kez byte-identical (redirect modunda).
 r2=$(mktemp); r3=$(mktemp)
 trap 'rm -f "$redirect_out" "$redirect_err" "$r2" "$r3"' EXIT
-"$binary" ir "file:$f" > "$r2" 2>/dev/null
-"$binary" ir "file:$f" > "$r3" 2>/dev/null
+"$binary" ir "$f" > "$r2" 2>/dev/null
+"$binary" ir "$f" > "$r3" 2>/dev/null
 diff "$redirect_out" "$r2" >/dev/null
 diff "$r2" "$r3" >/dev/null
 
@@ -36,7 +36,7 @@ diff "$r2" "$r3" >/dev/null
 if command -v script >/dev/null 2>&1; then
     pty_raw=$(mktemp)
     trap 'rm -f "$redirect_out" "$redirect_err" "$r2" "$r3" "$pty_raw"' EXIT
-    script -qc "$binary ir file:$f" "$pty_raw" >/dev/null 2>&1 || true
+    script -qc "$binary ir $f" "$pty_raw" >/dev/null 2>&1 || true
 
     if ! grep -qP '\x1b\[' "$pty_raw"; then
         echo "FAIL: PTY (script) altinda ANSI CSI bulunamadi — TTY renk davranisi kayip" >&2

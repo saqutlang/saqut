@@ -43,4 +43,11 @@ inline int cmdTokens(const CliArgs& args) {
     return 0;
 }
 
+inline constexpr CliCommand kTokensCommand{
+    .name        = "tokens",
+    .usage       = "saqut tokens <file>",
+    .description = "print token list",
+    .run         = cmdTokens,
+};
+
 #endif // SAQUT_CLI_TOKENS

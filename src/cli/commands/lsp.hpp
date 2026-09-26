@@ -14,4 +14,14 @@ inline int cmdLsp(const CliArgs&) {
     return 0;
 }
 
+inline constexpr CliCommand kLspCommand{
+    .name          = "lsp",
+    .usage         = "saqut lsp",
+    .description   = "start LSP server (JSON-RPC on stdin/stdout)",
+    .minPositional = 0,
+    .maxPositional = 0,
+    .options       = OPT_STDIO,
+    .run           = cmdLsp,
+};
+
 #endif // SAQUT_CLI_LSP

@@ -14,4 +14,14 @@ inline int cmdDap(const CliArgs&) {
     return 0;
 }
 
+inline constexpr CliCommand kDapCommand{
+    .name          = "dap",
+    .usage         = "saqut dap",
+    .description   = "start DAP debug adapter (JSON-RPC on stdin/stdout)",
+    .minPositional = 0,
+    .maxPositional = 0,
+    .options       = OPT_STDIO,
+    .run           = cmdDap,
+};
+
 #endif // SAQUT_CLI_DAP

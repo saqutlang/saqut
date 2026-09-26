@@ -179,4 +179,13 @@ inline int cmdExec(const CliArgs& args) {
     return exitCode;
 }
 
+inline constexpr CliCommand kExecCommand{
+    .name            = "exec",
+    .usage           = "saqut exec \"<expression>\" [--jit] [-- args]",
+    .description     = "evaluate an expression and print the result  (saqut exec \"1+2\")",
+    .options         = OPT_JIT | OPT_MAX_CALL_DEPTH | OPT_PROGRAM_ARGS,
+    .run             = cmdExec,
+    .missingArgument = "no expression given (saqut exec \"1 + 2\")",
+};
+
 #endif // SAQUT_CLI_EXEC

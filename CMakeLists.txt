@@ -124,6 +124,14 @@ add_test(
             "${SAQUT_BINARY}" "${CMAKE_SOURCE_DIR}"
 )
 
+# #291: seçenek geçerliliği ve konumsal argüman sayısı komut tanımından
+# (CliCommand) gelir; komutun kabul etmediği seçenek usage error 64.
+add_test(
+    NAME cli_command_options
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/general/cli_command_options_test.sh"
+            "${SAQUT_BINARY}" "${CMAKE_SOURCE_DIR}"
+)
+
 # #141: saqut ir yalnız gerçek TTY'de renkli; redirect/pipe'ta ANSI CSI yok.
 add_test(
     NAME ir_tty_color
