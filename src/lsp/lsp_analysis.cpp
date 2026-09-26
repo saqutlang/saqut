@@ -9,6 +9,7 @@
 #include "parser/nodes/declarations.hpp"
 #include "parser/nodes/expressions.hpp"
 #include "parser/nodes/statements.hpp"
+#include "semantic/thread_intrinsics.hpp"
 #include <algorithm>
 #include <cctype>
 #include <unordered_set>
@@ -227,22 +228,12 @@ Symbol* resolveNameAt(const AnalysisView& v, const ScopeIndex& si,
 // ─────────────────────────────────────────────────────────────────────────────
 
 Type methodReturnType(const Type& recv, const std::string& method) {
-    if (recv.isPool()) {
-        if (method == "pop") return recv.elementType ? *recv.elementType : Type::error();
-        if (method == "length") return Type::Int();
-        return Type::Void();
+    if (const std::optional<ThreadReceiver> tr = threadReceiverOf(recv)) {
+        const ThreadMethod* tm = findThreadMethod(*tr, method);
+        return tm ? threadValueType(tm->ret, recv) : Type::error();
     }
-    if (recv.isList()) {
-        if (method == "get") return recv.elementType ? *recv.elementType : Type::error();
-        if (method == "length") return Type::Int();
-        return Type::Void();
-    }
-    if (recv.isThread()) {
-        if (method == "running") return Type::Bool();
-        return Type::Void();
-    }
-    const std::string left = recv.isStruct() ? recv.structName : recv.toString();
-    const DataMethod* m = dataLookupMethod(left, method, recv.isStruct(), recv.isArray());
+    const std::optional<DataMethodCategory> category = dataReceiverCategory(recv);
+    const DataMethod* m = category ? dataFindMethod(*category, method) : nullptr;
     if (!m) return Type::error();
     switch (m->ret.kind) {
         case DataReturnKind::Fixed:     return m->ret.fixedType;
@@ -408,93 +399,42 @@ nlohmann::json builtinMethodItem(const DataMethod* m) {
     };
 }
 
-nlohmann::json builtinMethodsForType(const Type& receiverType, const std::string& typeName) {
+// Alıcının metot ailesi ve alıcı kısıtı (toString → byte[]) TypeChecker ile
+// aynı kayıt fonksiyonlarından okunur; tamamlama derleyicinin reddedeceği
+// metodu önermez.
+nlohmann::json builtinMethodsForType(const Type& receiverType) {
     nlohmann::json items = nlohmann::json::array();
+    const std::optional<DataMethodCategory> category = dataReceiverCategory(receiverType);
+    if (!category) return items;   // skalerlerin (int, bool, ...) metodu yok
 
-    bool isReceiverArray = receiverType.isArray();
-    bool isString        = receiverType.isString();
-    bool isStruct        = receiverType.isStruct();
-
-    // Struct array elemanı için de struct kabul et
-    if (isReceiverArray && receiverType.elementType && receiverType.elementType->isStruct())
-        isStruct = true;
-    // Tip adı büyük harfle başlıyorsa struct kabul et
-    if (!typeName.empty() && std::isupper(static_cast<unsigned char>(typeName[0])))
-        isStruct = true;
-
-    // Belirli bir tip grubuna girmeyen skaler tipler için (int, float, bool vb.)
-    // hiçbir builtin metod göstermiyoruz — registry'de bunlara ait metod yok.
-    if (!isReceiverArray && !isString && !isStruct)
-        return items;
-
-    for (const DataMethod& method : dataAllMethods()) {
-        const DataMethod* m = &method;
-        bool include = false;
-        switch (m->category) {
-            case DataMethodCategory::Array:
-                include = isReceiverArray;
-                // `toString` yalnız byte[]'da geçerli (UTF-8 çözme); tip
-                // denetleyici diğer dizilerde reddeder.
-                if (include && std::string(m->name) == "toString")
-                    include = receiverType.elementType && receiverType.elementType->isByte();
-                break;
-            case DataMethodCategory::StringVal:
-                include = isString;
-                break;
-            case DataMethodCategory::StructVal:
-                include = isStruct;
-                break;
-        }
-        if (include) items.push_back(builtinMethodItem(m));
-    }
+    for (const DataMethod& m : dataAllMethods())
+        if (m.category == *category && dataMethodAcceptsReceiver(m, receiverType))
+            items.push_back(builtinMethodItem(&m));
     return items;
 }
 
-// ADR-045: Pool/List/Thread metotları (TypeChecker::checkThreadIntrinsic ile
-// aynı liste; BuiltinMethodRegistry'de değiller). T, gerçek eleman tipiyle
-// değiştirilir ("void push(int value)").
+// ADR-045: Pool/List/Thread metotları — semantic/thread_intrinsics.hpp
+// tablosundan. Eleman tipi imzaya yazılır ("void push(int value)"); bilinmiyorsa T.
 nlohmann::json threadMethodsForType(const Type& t) {
-    struct M { const char* name; const char* ret; const char* params;
-               const char* doc; const char* snippet; };
-    static const M kPool[] = {
-        {"push",   "void", "T value", "Kuyruğa ekler; kuyruk doluysa (setMax) yer açılana kadar bekler.", "push(${1:value})"},
-        {"pop",    "T",    "",        "Kuyruktan alır; kuyruk boşsa eleman gelene kadar bekler.",        "pop()"},
-        {"setMax", "void", "int n",   "Kuyruk kapasitesini sınırlar (push bu sınırda bekler).",         "setMax(${1:n})"},
-        {"length", "int",  "",        "Kuyruktaki eleman sayısı.",                                       "length()"},
-    };
-    static const M kList[] = {
-        {"append", "void", "T value",   "Listenin sonuna ekler (ekle-yalnız, thread'ler arası).", "append(${1:value})"},
-        {"get",    "T",    "int index", "index'teki elemanı döndürür.",                           "get(${1:index})"},
-        {"length", "int",  "",          "Listedeki eleman sayısı.",                               "length()"},
-    };
-    static const M kThread[] = {
-        {"join",    "void", "", "Thread bitene kadar bekler.",           "join()"},
-        {"stop",    "void", "", "Thread'in durmasını ister; beklemez.",  "stop()"},
-        {"running", "bool", "", "Thread hâlâ çalışıyorsa true.",         "running()"},
-    };
-    const std::string elem = t.elementType ? t.elementType->toString() : "T";
-    // Tek başına duran "T" kelimesini eleman tipiyle değiştir.
-    auto subst = [&](const std::string& s) {
-        std::string out;
-        for (size_t p = 0; p < s.size(); ++p) {
-            bool wordStart = p == 0 || !std::isalnum(static_cast<unsigned char>(s[p - 1]));
-            bool wordEnd   = p + 1 >= s.size() || !std::isalnum(static_cast<unsigned char>(s[p + 1]));
-            if (s[p] == 'T' && wordStart && wordEnd) out += elem;
-            else out += s[p];
-        }
-        return out;
-    };
     nlohmann::json items = nlohmann::json::array();
-    auto add = [&](const M* b, const M* e) {
-        for (const M* m = b; m != e; ++m)
-            items.push_back({{"label", m->name}, {"kind", 2},  // Method
-                             {"detail", subst(std::string(m->ret) + " " + m->name + "(" + m->params + ")")},
-                             {"documentation", m->doc},
-                             {"insertText", m->snippet}, {"insertTextFormat", 2}});
+    const std::optional<ThreadReceiver> receiver = threadReceiverOf(t);
+    if (!receiver) return items;
+
+    auto typeText = [&](ThreadValue v) -> std::string {
+        if (v == ThreadValue::Elem && !t.elementType) return "T";
+        return threadValueType(v, t).toString();
     };
-    if (t.isPool())        add(std::begin(kPool),   std::end(kPool));
-    else if (t.isList())   add(std::begin(kList),   std::end(kList));
-    else if (t.isThread()) add(std::begin(kThread), std::end(kThread));
+    for (const ThreadMethod& m : threadMethods()) {
+        if (m.receiver != *receiver) continue;
+        const bool hasArg = m.arg != ThreadValue::None;
+        const std::string params = hasArg ? typeText(m.arg) + " " + m.argName : "";
+        const std::string snippet =
+            std::string(m.name) + "(" + (hasArg ? std::string("${1:") + m.argName + "}" : "") + ")";
+        items.push_back({{"label", m.name}, {"kind", 2},  // Method
+                         {"detail", typeText(m.ret) + " " + m.name + "(" + params + ")"},
+                         {"documentation", m.doc},
+                         {"insertText", snippet}, {"insertTextFormat", 2}});
+    }
     return items;
 }
 
@@ -512,10 +452,10 @@ nlohmann::json memberCompletionItems(const ReceiverType& r, SymbolTable& table,
                                             std::to_string(value)}});
     } else {
         const Type& t = r.type;
-        if (t.isPool() || t.isList() || t.isThread()) {
+        if (threadReceiverOf(t)) {
             items = threadMethodsForType(t);
         } else if (t.isArray() || t.isString()) {
-            items = builtinMethodsForType(t, "");
+            items = builtinMethodsForType(t);
         } else if (t.isStruct()) {
             auto it = table.structLayouts.find(t.structName);
             std::vector<std::string> fieldNames;
@@ -527,7 +467,7 @@ nlohmann::json memberCompletionItems(const ReceiverType& r, SymbolTable& table,
                 }
             }
             // Alan gölgeleme (ADR-033): aynı adlı alan varsa metodu önerme.
-            for (auto& m : builtinMethodsForType(t, t.structName))
+            for (auto& m : builtinMethodsForType(t))
                 if (std::find(fieldNames.begin(), fieldNames.end(),
                               m["label"].get<std::string>()) == fieldNames.end())
                     items.push_back(m);

@@ -176,7 +176,7 @@ int main() {
         // #223: built-in metodlar da aynı giriş noktasından çalışır.
         // string::upper — id, imza ve gövde artık aynı kayıtta (DataMethod).
         {
-            const DataMethod* m = dataLookupMethod("string", "upper", false, false);
+            const DataMethod* m = dataFindMethod(DataMethodCategory::StringVal, "upper");
             assert(m != nullptr);
             HostSlot in[1] = { HostSlot::fromStr(nullptr) };
             StringObject so("merhaba");
@@ -190,7 +190,7 @@ int main() {
         // Eksik argümanla çağrı bellek hatası DEĞİL, açık hata vermeli —
         // ABI sözleşmesi backend'lere de açıktır.
         {
-            const DataMethod* m = dataLookupMethod("int", "length", false, true);
+            const DataMethod* m = dataFindMethod(DataMethodCategory::Array, "length");
             assert(m != nullptr);
             f.reset();
             f.args = nullptr; f.argc = 0;

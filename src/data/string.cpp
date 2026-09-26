@@ -15,7 +15,7 @@
 //   bir runtimeId sıra sözleşmesi vardı. Artık id/imza/gövde aynı kayıtta.
 //
 // SEMANTİK (ADR-024): string IMMUTABLE bir değer tipidir. Hiçbir metod
-//   receiver'ı değiştirmez; hepsi yeni string üretir (mutating == false).
+//   receiver'ı değiştirmez; hepsi yeni string üretir.
 //   ADR-023 istisnası: eşitlik İÇERİK karşılaştırmasıdır, kimlik değil.
 //
 // BELLEK: VM string'i Value::stringValue içinde inline tutar; sınır temsili
@@ -227,46 +227,44 @@ int str_toBuffer(HostCallFrame* f) {
 
 // ── Metod tablosu ────────────────────────────────────────────────────────────
 //
-// Sıra ÖNEMSİZDİR: id artık gövdeye tablo pozisyonundan değil, kaydın
-// kendisinden bağlıdır. Yeni metod eklemek = bu listeye bir satır eklemek;
-// başka hiçbir dosyaya dokunulmaz.
-//
-// Hepsi mutating == false (ADR-024: string immutable).
+// Yeni metod eklemek = bu listenin SONUNA bir satır eklemek; başka hiçbir
+// dosyaya dokunulmaz. Tablo sırası runtime id'yi belirler ve ADR-044 gereği
+// kararlı tutulur.
 const std::vector<DataMethod>& dataStringMethods() {
     static const std::vector<DataMethod> methods = {
         {"length",     DataMethodCategory::StringVal, {dpString()},
-         drFixed(Type::Int()),    false, HostKind::Int, HOST_PURE, str_length},
+         drFixed(Type::Int()),    HostKind::Int, HOST_PURE, str_length},
         {"upper",      DataMethodCategory::StringVal, {dpString()},
-         drFixed(Type::String()), false, HostKind::Str, HOST_PURE, str_upper},
+         drFixed(Type::String()), HostKind::Str, HOST_PURE, str_upper},
         {"lower",      DataMethodCategory::StringVal, {dpString()},
-         drFixed(Type::String()), false, HostKind::Str, HOST_PURE, str_lower},
+         drFixed(Type::String()), HostKind::Str, HOST_PURE, str_lower},
         {"trim",       DataMethodCategory::StringVal, {dpString()},
-         drFixed(Type::String()), false, HostKind::Str, HOST_PURE, str_trim},
+         drFixed(Type::String()), HostKind::Str, HOST_PURE, str_trim},
         // split heap'te array üretir → GC tetikleyebilir
         {"split",      DataMethodCategory::StringVal, {dpString(), dpFixed(Type::String())},
-         drFixed(Type::array(Type::String())), false, HostKind::Ref,
+         drFixed(Type::array(Type::String())), HostKind::Ref,
          HOST_NEEDS_HEAP, str_split},
         {"substring",  DataMethodCategory::StringVal,
          {dpString(), dpFixed(Type::Int()), dpFixed(Type::Int())},
-         drFixed(Type::String()), false, HostKind::Str, HOST_CAN_FAIL, str_substring},
+         drFixed(Type::String()), HostKind::Str, HOST_CAN_FAIL, str_substring},
         {"replace",    DataMethodCategory::StringVal,
          {dpString(), dpFixed(Type::String()), dpFixed(Type::String())},
-         drFixed(Type::String()), false, HostKind::Str, HOST_PURE, str_replace},
+         drFixed(Type::String()), HostKind::Str, HOST_PURE, str_replace},
         {"repeat",     DataMethodCategory::StringVal, {dpString(), dpFixed(Type::Int())},
-         drFixed(Type::String()), false, HostKind::Str, HOST_PURE, str_repeat},
+         drFixed(Type::String()), HostKind::Str, HOST_PURE, str_repeat},
         {"charAt",     DataMethodCategory::StringVal, {dpString(), dpFixed(Type::Int())},
-         drFixed(Type::String()), false, HostKind::Str, HOST_CAN_FAIL, str_charAt},
+         drFixed(Type::String()), HostKind::Str, HOST_CAN_FAIL, str_charAt},
         // indexOf bulunamazsa null döner (int?) — hata değil
         {"indexOf",    DataMethodCategory::StringVal, {dpString(), dpFixed(Type::String())},
-         drFixed(Type::Int().asNullable()), false, HostKind::Int, HOST_PURE, str_indexOf},
+         drFixed(Type::Int().asNullable()), HostKind::Int, HOST_PURE, str_indexOf},
         {"contains",   DataMethodCategory::StringVal, {dpString(), dpFixed(Type::String())},
-         drFixed(Type::Bool()), false, HostKind::Int, HOST_PURE, str_contains},
+         drFixed(Type::Bool()), HostKind::Int, HOST_PURE, str_contains},
         {"startsWith", DataMethodCategory::StringVal, {dpString(), dpFixed(Type::String())},
-         drFixed(Type::Bool()), false, HostKind::Int, HOST_PURE, str_startsWith},
+         drFixed(Type::Bool()), HostKind::Int, HOST_PURE, str_startsWith},
         {"endsWith",   DataMethodCategory::StringVal, {dpString(), dpFixed(Type::String())},
-         drFixed(Type::Bool()), false, HostKind::Int, HOST_PURE, str_endsWith},
+         drFixed(Type::Bool()), HostKind::Int, HOST_PURE, str_endsWith},
         {"toBuffer",   DataMethodCategory::StringVal, {dpString()},
-         drFixed(Type::array(Type::Byte())), false, HostKind::Ref, HOST_NEEDS_HEAP, str_toBuffer},
+         drFixed(Type::array(Type::Byte())), HostKind::Ref, HOST_NEEDS_HEAP, str_toBuffer},
     };
     return methods;
 }

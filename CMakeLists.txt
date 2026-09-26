@@ -132,6 +132,14 @@ add_test(
             "${SAQUT_BINARY}" "${CMAKE_SOURCE_DIR}"
 )
 
+# #290: built-in metot imzaları, alıcı kısıtları ve tanı ipuçları tek kayıttan
+# (src/data/, semantic/thread_intrinsics.hpp) okunur.
+add_test(
+    NAME builtin_method_registry
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/general/builtin_method_registry_test.sh"
+            "${SAQUT_BINARY}"
+)
+
 # #141: saqut ir yalnız gerçek TTY'de renkli; redirect/pipe'ta ANSI CSI yok.
 add_test(
     NAME ir_tty_color

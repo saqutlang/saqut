@@ -116,11 +116,12 @@ void forEachChild(ASTNode* n, const std::function<void(ASTNode*)>& fn);
 // Önce-kök özyinelemeli gezinti.
 void walkAst(ASTNode* n, const std::function<void(ASTNode*)>& fn);
 
-// Yerleşik (BuiltinMethodRegistry) metot öğeleri ve Pool/List/Thread
-// metotları — handler'daki :: tamamlaması da bunları kullanır.
+// Yerleşik metot öğeleri (src/data/ kaydı) ve Pool/List/Thread metotları
+// (semantic/thread_intrinsics.hpp) — handler'daki :: tamamlaması da bunları
+// kullanır.
 struct DataMethod;
 nlohmann::json builtinMethodItem(const DataMethod* m);
-nlohmann::json builtinMethodsForType(const Type& receiverType, const std::string& typeName);
+nlohmann::json builtinMethodsForType(const Type& receiverType);
 nlohmann::json threadMethodsForType(const Type& t);
 
 // Dil anahtar kelimeleri (tamamlama + rename hedef ad doğrulaması).

@@ -23,6 +23,7 @@
 #include "parser/nodes/literal.hpp"
 #include "parser/nodes/program.hpp"
 #include "parser/nodes/statements.hpp"
+#include "semantic/thread_intrinsics.hpp"
 
 #include <climits>
 #include <cstdint>   // INT32_MIN / INT32_MAX (#219 A1: int32 literal aralık denetimi)
@@ -1530,15 +1531,8 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             // burası sessizce Type::error() döndürüyordu: tanı üretilmiyor,
             // IR de düğüm için hiçbir talimat üretmiyordu ve sonuç slotu hiç
             // yazılmadan kalıp Int 0 okunuyordu — print(s.length) sessizce 0.
-            std::string lookupName;
-            if (objType.isString())
-                lookupName = "string";
-            else if (objType.isArray())
-                lookupName = "array";
-            const DataMethod* bm =
-                lookupName.empty()
-                    ? nullptr
-                    : dataLookupMethod(lookupName, ma->member, false, objType.isArray());
+            const std::optional<DataMethodCategory> category = dataReceiverCategory(objType);
+            const DataMethod* bm = category ? dataFindMethod(*category, ma->member) : nullptr;
             if (bm) {
                 diag_.report(
                     "E001", node->loc,
@@ -1616,9 +1610,11 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         std::string displayName =
             sc->dotCall ? "." + sc->methodName : sc->leftTypeName + "::" + sc->methodName;
 
-        bool isStruct = false;
+        // Metot ailesi (array / string / struct). Nokta çağrısında alıcı
+        // tipinden dataReceiverCategory() ile, ad alanı ve eski sözdiziminde
+        // sol addan belirlenir.
+        DataMethodCategory category = DataMethodCategory::Array;
         Type elemType = Type::error();
-        std::string lookupName = sc->leftTypeName; // reg.lookup'un sol adı
 
         if (sc->dotCall) {
             // ── 1. UFCS: kategori receiver tipinden ──────────────────────
@@ -1645,28 +1641,25 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 result = Type::error();
                 break;
             }
-            if (isReceiverArray && recvType.elementType) {
-                elemType = *recvType.elementType;
-                lookupName = "array";
-                isStruct = elemType.isStruct(); // struct-array: ar metodları geçerli
-            } else if (recvType.isString()) {
-                elemType = Type::String();
-                lookupName = "string";
-            } else if (recvType.isStruct()) {
-                elemType = recvType;
-                lookupName = recvType.structName;
-                isStruct = true;
-            } else if (recvType.isPool() || recvType.isList() || recvType.isThread()) {
+            if (threadReceiverOf(recvType)) {
                 // ADR-045: Pool/List/Thread intrinsic metotları
                 result = checkThreadIntrinsic(sc, recvType, argTypes);
                 break;
-            } else {
+            }
+            const std::optional<DataMethodCategory> recvCategory = dataReceiverCategory(recvType);
+            if (!recvCategory) {
                 if (!recvType.isError())
                     diag_.report("E001", sc->loc,
                                  "type '" + recvType.toString() + "' has no builtin methods",
                                  "dot-call works on array, string and struct values (ADR-033)");
                 result = Type::error();
                 break;
+            }
+            category = *recvCategory;
+            switch (category) {
+            case DataMethodCategory::Array:     elemType = *recvType.elementType; break;
+            case DataMethodCategory::StringVal: elemType = Type::String(); break;
+            case DataMethodCategory::StructVal: elemType = recvType; break;
             }
         } else if (sc->leftTypeName == "array") {
             // ── 2. array:: ad alanı — element tipi receiver'dan türetilir ──
@@ -1679,8 +1672,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 break;
             }
             elemType = recvType.elementType ? *recvType.elementType : Type::Int();
-            isStruct = elemType.isStruct();
-            // lookup'ta "array" sv/st dallarına düşmez, ar: bulunur
+            category = DataMethodCategory::Array;
         } else if (sc->leftTypeName == "struct") {
             // ── 2. struct:: ad alanı ──────────────────────────────────────
             if (!recvType.isStruct()) {
@@ -1692,9 +1684,10 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 break;
             }
             elemType = recvType;
-            isStruct = true;
+            category = DataMethodCategory::StructVal;
         } else {
             // ── 3. ESKİ sözdizimi: ElemTip::method / StructAd::method ─────
+            bool isStruct = false;
             elemType = dataResolveElemType(sc->leftTypeName);
             if (elemType.isError()) {
                 if (table_.hasStruct(sc->leftTypeName)) {
@@ -1725,29 +1718,36 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                                  "the element-type prefix will be removed in v0.7.0 (ADR-033)",
                              suggestion);
             }
+            // Dizi alıcı → dizi metotları; `string::` → string metotları;
+            // struct adı → struct metotları. Kalan skaler adlar (int::length(x))
+            // dizi metotlarında aranır: eski sözdiziminin eleman-tipi öneki.
+            if (isReceiverArray)
+                category = DataMethodCategory::Array;
+            else if (sc->leftTypeName == "string")
+                category = DataMethodCategory::StringVal;
+            else if (isStruct)
+                category = DataMethodCategory::StructVal;
+            else
+                category = DataMethodCategory::Array;
         }
 
-        const DataMethod* bm = dataLookupMethod(lookupName, sc->methodName, isStruct, isReceiverArray);
-        if (bm && sc->methodName == "toString" &&
-            (!recvType.isArray() || !recvType.elementType || !recvType.elementType->isByte())) {
-            diag_.report("E003", sc->loc,
-                         "byte[]::toString requires a byte[] receiver",
-                         "use `data.toString()` only for byte arrays");
-            result = Type::error();
-            break;
-        }
+        const DataMethod* bm = dataFindMethod(category, sc->methodName);
         if (!bm) {
-            // Hata mesajında hangi tiplerin bu metodu desteklediğini söyle
             std::string typeDesc = sc->dotCall ? recvType.toString() : sc->leftTypeName;
             diag_.report(
                 "E001", sc->loc,
                 "'" + sc->methodName + "' is not a built-in method for type '" + typeDesc + "'",
-                std::string(
-                    "use one of: length, push, pop, insert, remove, slice, reverse, concat, contains, indexOf, clear") +
-                    (lookupName == "string" ?
-                         " — or string methods: upper, lower, trim, split, substring, replace, repeat, charAt, indexOf, contains, startsWith, endsWith" :
-                         "") +
-                    (isStruct ? " — or struct methods: toJson, dump" : ""));
+                "methods of '" + typeDesc + "': " + dataMethodNames(category, recvType));
+            result = Type::error();
+            break;
+        }
+        // Alıcı kısıtı kayıtta (DataMethod::params[0]); ör. toString yalnız byte[].
+        if (!dataMethodAcceptsReceiver(*bm, recvType)) {
+            diag_.report("E003", sc->loc,
+                         "'" + sc->methodName + "' requires a " + bm->params[0].fixedType.toString() +
+                             " receiver, got '" + recvType.toString() + "'",
+                         "methods of '" + recvType.toString() + "': " +
+                             dataMethodNames(category, recvType));
             result = Type::error();
             break;
         }
@@ -2187,27 +2187,11 @@ bool TypeChecker::referencesShared(ASTNode* node) {
 
 Type TypeChecker::checkThreadIntrinsic(ScopeCallNode* sc, const Type& recv,
                                        const std::vector<Type>& argTypes) {
-    const std::string& m    = sc->methodName;
-    const size_t       argc = argTypes.empty() ? 0 : argTypes.size() - 1;   // alıcı hariç
-    const std::string  kind = recv.isPool() ? "Pool" : recv.isList() ? "List" : "Thread";
-
-    auto needArgs = [&](size_t n) {
-        if (argc == n) return true;
-        diag_.report("E008", sc->loc,
-                     "'" + m + "' expects " + std::to_string(n) + " argument(s), " +
-                         std::to_string(argc) + " given",
-                     "see the " + kind + " method list in docs/threading-guide.md");
-        return false;
-    };
-    auto argIsLit = [&](size_t i) {
-        return i < sc->arguments.size() && sc->arguments[i] &&
-               sc->arguments[i]->kind == ASTKind::Literal;
-    };
-    auto blockingInLock = [&](const std::string& what) {
-        if (anyLockHeld())
-            diag_.report("W009", sc->loc, what + " inside a lock scope may block while holding the lock",
-                         "release the lock first, or keep locked sections short");
-    };
+    // İmzalar tek tabloda: semantic/thread_intrinsics.hpp (LSP de okur).
+    const std::string&   m        = sc->methodName;
+    const size_t         argc     = argTypes.empty() ? 0 : argTypes.size() - 1;   // alıcı hariç
+    const ThreadReceiver receiver = *threadReceiverOf(recv);
+    const std::string    kind     = threadReceiverName(receiver);
 
     // Pool/List değerleri yalnız shared global adıyla kullanılabilir (v1 kısıtı).
     if (recv.isPool() || recv.isList()) {
@@ -2219,69 +2203,29 @@ Type TypeChecker::checkThreadIntrinsic(ScopeCallNode* sc, const Type& recv,
             return Type::error();
         }
     }
-    const Type elem = recv.elementType ? *recv.elementType : Type::error();
-
-    if (recv.isPool()) {
-        if (m == "push") {
-            sc->threadOp = TI_PoolPush;
-            if (needArgs(1)) checkAssign(elem, argTypes[1], argIsLit(1), sc->loc, "push argument");
-            blockingInLock("push");
-            return Type::Void();
-        }
-        if (m == "pop") {
-            sc->threadOp = TI_PoolPop;
-            needArgs(0);
-            blockingInLock("pop");
-            return elem;
-        }
-        if (m == "setMax") {
-            sc->threadOp = TI_PoolSetMax;
-            if (needArgs(1)) checkAssign(Type::Int(), argTypes[1], argIsLit(1), sc->loc, "setMax argument");
-            return Type::Void();
-        }
-        if (m == "length") {
-            sc->threadOp = TI_PoolLength;
-            needArgs(0);
-            return Type::Int();
-        }
-    } else if (recv.isList()) {
-        if (m == "append") {
-            sc->threadOp = TI_ListAppend;
-            if (needArgs(1)) checkAssign(elem, argTypes[1], argIsLit(1), sc->loc, "append argument");
-            return Type::Void();
-        }
-        if (m == "get") {
-            sc->threadOp = TI_ListGet;
-            if (needArgs(1)) checkAssign(Type::Int(), argTypes[1], argIsLit(1), sc->loc, "get index");
-            return elem;
-        }
-        if (m == "length") {
-            sc->threadOp = TI_ListLength;
-            needArgs(0);
-            return Type::Int();
-        }
-    } else {
-        if (m == "stop") {
-            sc->threadOp = TI_ThreadStop;
-            needArgs(0);
-            return Type::Void();
-        }
-        if (m == "join") {
-            sc->threadOp = TI_ThreadJoin;
-            needArgs(0);
-            blockingInLock("join");
-            return Type::Void();
-        }
-        if (m == "running") {
-            sc->threadOp = TI_ThreadRunning;
-            needArgs(0);
-            return Type::Bool();
-        }
+    const ThreadMethod* method = findThreadMethod(receiver, m);
+    if (!method) {
+        diag_.report("E001", sc->loc, "'" + m + "' is not a method of " + kind,
+                     kind + " methods: " + threadMethodNames(receiver));
+        return Type::error();
     }
-    const std::string methods = recv.isPool()   ? "push, pop, setMax, length"
-                              : recv.isList()   ? "append, get, length"
-                                                : "stop, join, running";
-    diag_.report("E001", sc->loc, "'" + m + "' is not a method of " + kind,
-                 kind + " methods: " + methods);
-    return Type::error();
+    sc->threadOp = method->op;
+
+    const size_t expected = method->arg == ThreadValue::None ? 0 : 1;
+    if (argc != expected) {
+        diag_.report("E008", sc->loc,
+                     "'" + m + "' expects " + std::to_string(expected) + " argument(s), " +
+                         std::to_string(argc) + " given",
+                     "see the " + kind + " method list in docs/threading-guide.md");
+    } else if (expected == 1) {
+        const bool isLit = sc->arguments[1] && sc->arguments[1]->kind == ASTKind::Literal;
+        checkAssign(threadValueType(method->arg, recv), argTypes[1], isLit, sc->loc,
+                    m + " argument");
+    }
+
+    if (method->blocking && anyLockHeld())
+        diag_.report("W009", sc->loc, m + " inside a lock scope may block while holding the lock",
+                     "release the lock first, or keep locked sections short");
+
+    return threadValueType(method->ret, recv);
 }

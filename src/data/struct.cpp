@@ -141,9 +141,9 @@ int struct_dump(HostCallFrame* f) {
 const std::vector<DataMethod>& dataStructMethods() {
     static const std::vector<DataMethod> methods = {
         {"toJson", DataMethodCategory::StructVal, {dpElem()},
-         drFixed(Type::String()), false, HostKind::Str, HOST_PURE, struct_toJson},
+         drFixed(Type::String()), HostKind::Str, HOST_PURE, struct_toJson},
         {"dump",   DataMethodCategory::StructVal, {dpElem()},
-         drFixed(Type::String()), false, HostKind::Str, HOST_PURE, struct_dump},
+         drFixed(Type::String()), HostKind::Str, HOST_PURE, struct_dump},
     };
     return methods;
 }

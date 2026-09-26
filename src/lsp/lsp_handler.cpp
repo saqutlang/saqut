@@ -1222,11 +1222,9 @@ nlohmann::json LspHandler::handleSignatureHelp(const nlohmann::json& id,
     // Bir tipin builtin metod imzasını üret (UFCS + :: ortak yolu).
     // includeReceiver: :: biçimlerinde receiver açık ilk argümandır.
     auto builtinSigForType = [&](const Type& recvType, bool includeReceiver) {
-        if (recvType.isError()) return;
-        std::string leftName = recvType.isStruct()
-            ? recvType.structName : recvType.toString();
-        const DataMethod* m = dataLookupMethod(
-            leftName, ctx.callee, recvType.isStruct(), recvType.isArray());
+        const std::optional<DataMethodCategory> category = dataReceiverCategory(recvType);
+        if (!category) return;
+        const DataMethod* m = dataFindMethod(*category, ctx.callee);
         if (m) sig = signatureForBuiltinMethod(m, includeReceiver);
     };
     // Kapsam bilinçli ad → tip (Bölüm 1 çözümü; aynı ad başka fonksiyonda
@@ -1245,6 +1243,8 @@ nlohmann::json LspHandler::handleSignatureHelp(const nlohmann::json& id,
         // ADR-045: Pool/List/Thread metotları ayrı tablodan.
         Type recv = typeOfName(ctx.dotReceiver);
         if (recv.isPool() || recv.isList() || recv.isThread()) {
+            // İmza, tamamlama öğesinin detail metninden (tek tablo:
+            // semantic/thread_intrinsics.hpp).
             for (auto& it : threadMethodsForType(recv)) {
                 if (it["label"].get<std::string>() != ctx.callee) continue;
                 const std::string label = it["detail"].get<std::string>();
@@ -1260,13 +1260,11 @@ nlohmann::json LspHandler::handleSignatureHelp(const nlohmann::json& id,
         }
     } else if (ctx.scopeTarget == "array") {
         // ADR-033 ad alanı: array::push(arr, x) — kategori sabit
-        const DataMethod* m = dataLookupMethod(
-            "array", ctx.callee, false, false);
+        const DataMethod* m = dataFindMethod(DataMethodCategory::Array, ctx.callee);
         if (m) sig = signatureForBuiltinMethod(m, true);
     } else if (ctx.scopeTarget == "struct") {
         // ADR-033 ad alanı: struct::toJson(p)
-        const DataMethod* m = dataLookupMethod(
-            "struct", ctx.callee, true, false);
+        const DataMethod* m = dataFindMethod(DataMethodCategory::StructVal, ctx.callee);
         if (m) sig = signatureForBuiltinMethod(m, true);
     } else if (!ctx.scopeTarget.empty()) {
         // "x::push(" — değişken ya da eski tip-adı sözdizimi (receiver açık)

@@ -324,10 +324,10 @@ nlohmann::json LspHandler::handleCompletion(const nlohmann::json& id,
         if (objSym && (objSym->kind == SymbolKind::Struct || objSym->kind == SymbolKind::Enum))
             return JsonRpc::makeResponse(id, items);
         if (objSym) {
-            items = builtinMethodsForType(objSym->type, objSym->name);
+            items = builtinMethodsForType(objSym->type);
         } else {
             Type t = Type::fromName(ctx.target);
-            if (!t.isError()) items = builtinMethodsForType(t, ctx.target);
+            if (!t.isError()) items = builtinMethodsForType(t);
         }
         return JsonRpc::makeResponse(id, items);
     }
