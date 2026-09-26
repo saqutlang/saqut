@@ -1450,6 +1450,23 @@ int IRGenerator::generateExpression(ASTNode* node) {
         int arrSlot = generateExpression(idx->object);
         int idxSlot = generateExpression(idx->index);
         int destSlot = freshSlot();
+        // s[i] → s.charAt(i): aynı built-in metod çağrısı (CALLHOST). Ayrı
+        // opcode yok; sınır dışı hatası da charAt'inkiyle aynıdır.
+        if (auto* objExpr = dynamic_cast<ExpressionNode*>(idx->object);
+            objExpr && objExpr->resolvedType.isString()) {
+            static const int charAtId =
+                dataMethodId(dataLookupMethod("string", "charAt", false, false));
+            Instruction ins(Opcode::CALLHOST);
+            ins.functionName = "__builtin_method__";
+            ins.intValue = kBuiltinBase + charAtId;
+            ins.argSlots = {arrSlot, idxSlot};
+            ins.dest = destSlot;
+            ins.valueType = SlotType::Str;
+            ins.sourceLine = idx->loc.line;
+            ins.sourceCol = idx->loc.column;
+            currentFunction_->instructions.push_back(std::move(ins));
+            return destSlot;
+        }
         // Eleman tipi (#206 packed temsili) talimata yazılır: JIT bunu
         // doğrudan bellek erişimi için kullanır (çağrısız `a[i]`). Kaynak
         // DİZİNİN tipidir — sonucun değil: `idx->resolvedType` eleman tipini

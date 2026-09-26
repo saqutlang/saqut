@@ -1,8 +1,11 @@
-// #135: string[int] statik olarak reddedilmeli (E012). Önceden check
-// sıfır hata veriyor, runtime'da "expected array, got different type"
-// ile (o zaman uncatchable/kodsuz) çöküyordu.
+// #135: indekslenemeyen bir değere [index] statik olarak reddedilmeli (E012).
+// Önceden check sıfır hata veriyor, runtime'da "expected array, got different
+// type" ile (o zaman uncatchable/kodsuz) çöküyordu.
+// Bu fixture eskiden string kullanıyordu; string[i] artık destekleniyor
+// (ürün sahibi kararı 2026-09-26, bkz. string/index_char.sqt), bu yüzden
+// koruma indekslenemeyen bir skalerle (int) sınanır.
 int main() {
-    string probe = "AB";
+    int probe = 42;
     print(probe[0]);
     return 0;
 }

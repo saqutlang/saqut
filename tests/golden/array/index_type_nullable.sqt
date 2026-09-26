@@ -1,0 +1,11 @@
+// Nullable indeks null kontrolü olmadan kullanılamaz. Daraltılmış kullanım
+// (if (i != null) { d[i] }) geçerlidir.
+int main() {
+    int[] d = [1, 2, 3];
+    int? i = 1;
+    if (i != null) {
+        print(d[i]);
+    }
+    print(d[i]);
+    return 0;
+}

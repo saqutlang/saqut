@@ -309,6 +309,13 @@ Source checks include:
 - string equality/inequality, while string ordering is rejected;
 - nullable-operand restrictions;
 - array indexing and aggregate member checks;
+- `[index]` access on arrays and strings only; the index must be a non-null
+  `int`, `byte` or `longint` (other types are `E003`, non-indexable receivers
+  `E012`);
+- `s[i]` on a non-null `string` yields the `i`-th character (0-based UTF-8 code
+  point) as a one-character `string`, lowered to the same call as
+  `s.charAt(i)` (same `E_HOST` out-of-bounds error); strings are immutable, so
+  `s[i] = …` / `s[i] += …` are `E003`;
 - function argument and return compatibility.
 
 Runtime aggregate equality is identity-based for references, while strings use

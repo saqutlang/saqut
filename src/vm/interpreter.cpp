@@ -1101,7 +1101,10 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
                 pendingThrow_ = makeErrorValue("expected array, got different type", "E_TYPE", instr.sourceLine, instr.sourceCol); break;
             }
             auto* arr = (ArrayObject*)arrVal.ref();
-            int idx = frame.slots[instr.right].intValue();
+            // İndeks longint olabilir: 64-bit okunur (int'e kesme büyük bir
+            // indeksi sınır içindeki yanlış bir elemana çevirirdi; JIT zaten
+            // 64-bit karşılaştırır).
+            const long long idx = frame.slots[instr.right].asI64();
             // #206: elemKind'a göre doğru buffer'ın size'ını kontrol et
             int len = 0;
             switch (arr->elemKind) {
@@ -1138,7 +1141,7 @@ Interpreter::RunReason Interpreter::runUntilEvent(int maxInstructions,
                 pendingThrow_ = makeErrorValue("expected array, got different type", "E_TYPE", instr.sourceLine, instr.sourceCol); break;
             }
             auto* arr = (ArrayObject*)arrVal.ref();
-            int idx = frame.slots[instr.left].intValue();
+            const long long idx = frame.slots[instr.left].asI64();   // bkz. ARRAY_GET
             // #206: elemKind'a göre doğru buffer'ın size'ını kontrol et
             int len = 0;
             switch (arr->elemKind) {
