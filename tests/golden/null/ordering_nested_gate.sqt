@@ -1,4 +1,4 @@
-// Karar: sıralama nullable operandla derlenemez (E003). Legal kapı
+// Karar: sıralama nullable operandla derlenemez (E022). Legal kapı
 // nested-if daraltmasıdır: if (a != null) { if (a < 26) ... } — içeride
 // a non-null, karşılaştırma ve atama güvenli.
 int main() {

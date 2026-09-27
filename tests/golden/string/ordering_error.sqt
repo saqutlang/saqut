@@ -1,5 +1,5 @@
 // Negatif test: string sıralama operatörleri derleme hatası vermeli.
-// Bu dosya DERLENMEMELI — TypeChecker E003 üretmeli.
+// Bu dosya DERLENMEMELI — TypeChecker E021 üretmeli.
 // < > <= >= operatörlerinin her biri string ile bloklanır.
 
 int main() {

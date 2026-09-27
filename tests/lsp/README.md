@@ -78,12 +78,12 @@ python3 tests/lsp/lsp_test_driver.py \
 |---|---|
 | `01_initialize` | `initialize` → capabilities cevabı |
 | `02_didopen_valid` | Geçerli dosya `didOpen` → boş `publishDiagnostics` |
-| `03_didopen_error` | E003 içeren dosya `didOpen` → konumlu diagnostic |
+| `03_didopen_error` | E020 içeren dosya `didOpen` → konumlu diagnostic |
 | `04_hover` | Bir referans konumunda `hover` → tip+isim |
 | `05_definition` | Bir referans konumunda `definition` → aralık |
 | `06_documentSymbol` | Fonksiyon+lokal değişken sembol listesi |
-| `07_buffer_overlay` | Diskte E003 hatalı `overlay_broken.sqt`, `didOpen` buffer'ı düzeltilmiş → diagnostics buffer'a göre boş (Faz 1) |
-| `08_didchange_overlay` | `didOpen` geçerli, `didChange` E003 hatası ekliyor → diagnostics güncellenip hata gelir (Faz 1) |
+| `07_buffer_overlay` | Diskte E020 hatalı `overlay_broken.sqt`, `didOpen` buffer'ı düzeltilmiş → diagnostics buffer'a göre boş (Faz 1) |
+| `08_didchange_overlay` | `didOpen` geçerli, `didChange` E020 hatası ekliyor → diagnostics güncellenip hata gelir (Faz 1) |
 | `09_syntax_error_recovery` | `broken()` içinde sözdizimi hatası (`)`) → konumlu E901 diagnostic; hatanın DIŞINDAKİ `main()` fonksiyonunda hover/definition hâlâ doğru çalışır (Faz 2: panic-mode recovery) |
 | `10_turkish_encoding` | Çok baytlı UTF-8 (Türkçe) karakter içeren satırlarda hover/definition sorgu konumu ve dönen aralık UTF-16↔byte dönüşümüyle doğru hesaplanır (Faz 3, kök neden #4 — `src/lsp/position.hpp`) |
 | `11_scoped_definition` | İki ayrı fonksiyonda aynı adlı yerel değişken (`x`) — her fonksiyondaki referans KENDİ fonksiyonunun tanımına gider, karışmaz (Faz 3, kök neden #3 — token+offset tabanlı `findSymbolAt`) |

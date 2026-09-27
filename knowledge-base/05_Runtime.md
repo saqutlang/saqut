@@ -441,12 +441,21 @@ messages. VM runtime errors use the separate language Error/exception path.
 
 ### Catalog and Severity
 
-`diagnosticCatalog()` defines canonical metadata for a subset of E/W codes.
-Unknown codes infer severity by prefix (`E` error, `W` warning, otherwise note).
+Updated #295 (2026-09-27): `src/diagnostic/diagnostic.hpp` holds the complete
+registry — `diagnosticCatalog()` (every compile-time code: level, title,
+explanation) and `runtimeErrorCatalog()` (every runtime `Error.code`).
+`docs/compiler-errors.md` is generated from it (`gen_diagnostic_docs`; CTest
+`diagnostic_docs_fresh` fails on a stale doc). CTest `diagnostic_codes`
+checks that every code literal in `src/` is registered and every registered
+code is produced. Call sites still pass string codes; the test, not the
+compiler, catches a typo.
 
-Active producers use uncatalogued codes such as module/import/capability codes
-and `W005`. Therefore the catalog is not a complete registry. Adding a code only
-at a call site works mechanically but weakens documentation/tool consistency.
+E003 now means only assignment/argument/return type mismatch; the former
+E003 uses were split into E020 (literal range/context), E021 (operator
+types), E022 (nullable without null check), E023 (invalid `as`), E024
+(switch/case), E025 (not callable), E026 (method receiver), E027
+(assignable location). ModuleLoader reports E_MODULE_NOT_FOUND/E_MODULE_PARSE
+at the import's location.
 
 LSP conversion maps errors to severity 1 and every non-error level to severity
 2. Note and Hint are therefore not preserved as distinct LSP severities.

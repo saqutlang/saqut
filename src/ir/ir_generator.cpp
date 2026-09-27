@@ -823,7 +823,7 @@ int IRGenerator::generateExpression(ASTNode* node) {
                     // #219 A2: burası korumasızdı — int64 aralığı dışı literal
                     // yakalanmamış std::out_of_range ile derleyiciyi çökertiyordu
                     // (kullanıcı tanı değil "terminate called" görüyordu).
-                    // Aralık denetimi artık type_checker'da (E003); buraya sadece
+                    // Aralık denetimi artık type_checker'da (E020); buraya sadece
                     // geçerli literal gelir. Tek istisna int64'ün EN KÜÇÜK değeri:
                     // `-9223372036854775808` unary '-' + `9223372036854775808`
                     // olarak parse edilir ve pozitif hali stoll'da taşar — bu
@@ -847,7 +847,7 @@ int IRGenerator::generateExpression(ASTNode* node) {
                 else if (lit->parserToken.token) {
                     // #219 A1: eskiden aralık dışı literal burada sessizce 0
                     // oluyordu (`int x = 99999999999999999999;` → 0, tanı yok).
-                    // Aralık denetimi artık type_checker'da (E003); bu catch
+                    // Aralık denetimi artık type_checker'da (E020); bu catch
                     // ulaşılamaz bir backstop. `-2147483648` için literal
                     // 2147483648'dir ve int'e sığmaz — static_cast onu
                     // INT32_MIN'e çevirir, unary '-' geri çevirir (iki tümleyen).
@@ -1163,7 +1163,7 @@ int IRGenerator::generateExpression(ASTNode* node) {
             return generateBinaryArithmetic(Opcode::MOD, bin->Left, bin->Right, L, C, bin);
         // #237: ** üs alma. generateBinaryArithmetic tip dağıtımını yapar
         // (POW/LPOW/FPOW/F32POW); decimal üs desteklenmez, tip denetleyici
-        // E003 ile reddeder.
+        // E021 ile reddeder.
         case TokenType::STAR_STAR:
             return generateBinaryArithmetic(Opcode::POW, bin->Left, bin->Right, L, C, bin);
         // Karşılaştırma operatörleri
@@ -1875,7 +1875,7 @@ int IRGenerator::generateIncDec(ASTNode* operand, bool isIncrement, bool isPrefi
                                 const Type& resultType, const SourceLocation& loc) {
     LValue lv = resolveLValue(operand);
     if (lv.kind == LValue::Kind::Invalid) {
-        // Tip denetleyici bunu E003 ile bildirmiş olmalı; yine de sessiz
+        // Tip denetleyici bunu E027 ile bildirmiş olmalı; yine de sessiz
         // yanlış sonuç üretmemek için değeri olduğu gibi geri ver.
         return generateExpression(operand);
     }

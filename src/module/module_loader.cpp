@@ -53,7 +53,8 @@ void ModuleLoader::loadUnit(const std::string& filePath, ModuleGraph& graph,
     if (!haveSource) {
         std::ifstream file(filePath, std::ios::in | std::ios::binary);
         if (!file.is_open()) {
-            diag_.report("E_MODULE_NOT_FOUND", SourceLocation{},
+            // Konum: dosyayı isteyen import bildirimi (giriş dosyasında yok).
+            diag_.report("E_MODULE_NOT_FOUND", importLoc,
                 "cannot open module '" + filePath + "': file not found");
             return;
         }
@@ -82,7 +83,7 @@ void ModuleLoader::loadUnit(const std::string& filePath, ModuleGraph& graph,
         ast = parser.parse(tokens);
     }
     if (!ast) {
-        diag_.report("E_MODULE_PARSE", SourceLocation{},
+        diag_.report("E_MODULE_PARSE", importLoc,
             "failed to parse module '" + filePath + "'");
         for (auto* t : tokens) delete t;
         return;

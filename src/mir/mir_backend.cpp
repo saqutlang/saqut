@@ -1402,7 +1402,7 @@ bool wholeProgramSupported(IRProgram& program, UnsupportedReason& outReason) {
                 }
             }
             // String operandlı SIRALAMA (</<=/>/>=) JIT'te desteklenmez —
-            // zaten frontend'de reddedilir (E003: "for string use only == and
+            // zaten frontend'de reddedilir (E021: "for string use only == and
             // !="), bu yalnızca savunmacı bir kalkan. Eşitlik (==/!=) İÇERİK
             // karşılaştırmasıdır (ADR-023 istisnası) ve codegen'de rt_jit_string_eq
             // runtime call'a çevrilir (native MIR_EQ pointer eşitliği YANLIŞ olurdu).

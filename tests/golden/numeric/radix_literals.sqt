@@ -1,7 +1,7 @@
 // #199: 0x/0b/öncü-sıfır-oktal literal'ler doğru değere çözülmeli
 // (eski semptom: sessizce 0 ya da decimal okunuyordu). Karışık önek
 // büyük/küçük harf, negatif önekli literal ve int32 sınırı dahil.
-// 0xFFFFFFFF int'te E003 ile reddedilir (ADR-040) — ayrı compile_error
+// 0xFFFFFFFF int'te E020 ile reddedilir (ADR-040) — ayrı compile_error
 // fixture'larında (hex_literal_overflow, literal_range_int_overflow).
 
 int main() {

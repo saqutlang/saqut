@@ -140,6 +140,26 @@ add_test(
             "${SAQUT_BINARY}"
 )
 
+# #295: tanı/hata kodlarının tek kaydı src/diagnostic/diagnostic.hpp.
+# gen_diagnostic_docs belgeyi tablodan üretir; iki test: belge güncel mi,
+# kaynaktaki her kod kayıtlı ve kayıttaki her kod kullanılıyor mu.
+add_executable(gen_diagnostic_docs tests/gen_diagnostic_docs.cpp)
+target_include_directories(gen_diagnostic_docs PRIVATE src)
+add_test(
+    NAME diagnostic_docs_fresh
+    COMMAND gen_diagnostic_docs --check "${CMAKE_SOURCE_DIR}/docs/compiler-errors.md"
+)
+add_test(
+    NAME diagnostic_codes
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/general/diagnostic_codes_test.sh"
+            "$<TARGET_FILE:gen_diagnostic_docs>" "${CMAKE_SOURCE_DIR}"
+)
+# E003'ten ayrılan her kod (E020–E027) ve modül tanısı konumu için negatif örnek.
+add_test(
+    NAME diagnostic_split
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/general/diagnostic_split_test.sh" "${SAQUT_BINARY}"
+)
+
 # #296: token türü tokenizer'da belirlenir; sözcüksel tanılar (E906/E907)
 # tokenizer'dan; keyword listesi tek tablo (tokenizer/token_kind.hpp).
 add_test(
