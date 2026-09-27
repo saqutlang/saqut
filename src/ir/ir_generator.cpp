@@ -1242,12 +1242,13 @@ int IRGenerator::generateExpression(ASTNode* node) {
             return result;
         }
 
-        default: {
-            // Bilinmeyen operatör — boş slot döndür
-            int slot = freshSlot();
-            emitLoadConst(slot, 0);
-            return slot;
-        }
+        default:
+            // Parser (IsBinaryOperator) ve TypeChecker bilinmeyen operatörü
+            // reddeder; buraya gelmek derleyici hatasıdır. Eskiden sessizce
+            // 0 üretiliyordu (#299).
+            throw std::logic_error("internal compiler error: IRGenerator has no lowering for "
+                                   "binary operator token " +
+                                   std::to_string(static_cast<int>(bin->Operator)));
         }
     }
 

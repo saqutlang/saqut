@@ -21,10 +21,11 @@ başına girdi.
 
 | Issue | Konu | Dosya | Durum |
 |---|---|---|---|
+| #299 | `?:` ve diğer ikili olmayan token'lar sessizce 0 | [299-kosul-operatoru.md](299-kosul-operatoru.md) | uygulandı |
 | #298 | Yanlış / süreç anlatan yorumlar + çöp dosya | [298-yanlis-yorumlar.md](298-yanlis-yorumlar.md) | uygulandı, `117bbe1`, issue kapandı |
 | #297 | IR slot tipleri üretimde kaydedilmiyor | [297-slot-tipleri.md](297-slot-tipleri.md) | uygulandı, `9653647`, issue kapandı |
 | #296 | Token modeli: string tür + parser'da yeniden sınıflandırma | [296-token-modeli.md](296-token-modeli.md) | uygulandı, `eb9937e`, issue kapandı |
-| #295 | Tanı kodlarının merkezi kaydı yok | [295-tani-kodlari.md](295-tani-kodlari.md) | uygulandı |
+| #295 | Tanı kodlarının merkezi kaydı yok | [295-tani-kodlari.md](295-tani-kodlari.md) | uygulandı, `835f42e`, issue kapandı |
 | #294 | Derleme hattı 10 yerde elle kuruluyor | — | bekliyor |
 | #293 | Dev fonksiyonlar (checkExpr, generateExpression) | — | bekliyor |
 | #292 | AST yürüyücüleri, ortak çocuk gezme yok | — | bekliyor |

@@ -1240,6 +1240,28 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             break;
         }
 
+        // Buraya yalnız aritmetik/bitsel operatörler ve bitsel bileşik
+        // atamalar (&= |= ^= <<= >>=) gelmeli; parser başka token'dan
+        // BinaryExpression kurmaz (IsBinaryOperator, #299). Tanınmayan
+        // operatör sessizce aritmetik sayılmaz.
+        {
+            const bool bitwiseCompound =
+                bin->Operator == TokenType::AMPERSAND_EQUAL ||
+                bin->Operator == TokenType::PIPE_EQUAL ||
+                bin->Operator == TokenType::CARET_EQUAL ||
+                bin->Operator == TokenType::LSHIFT_EQUAL ||
+                bin->Operator == TokenType::RSHIFT_EQUAL;
+            if (!isIntArithOp && !bitwiseCompound) {
+                auto it = OPERATOR_MAP_REV.find(bin->Operator);
+                diag_.report("E021", bin->loc,
+                             "operator '" +
+                                 std::string(it != OPERATOR_MAP_REV.end() ? it->second : "?") +
+                                 "' is not a binary operator");
+                result = Type::error();
+                break;
+            }
+        }
+
         // Arithmetic / bitwise: +, -, *, /, %, &, |, ^, <<, >>
         // ADR-010/#114: bir operand literal, diğeri tipli bir ifadeyse literal
         // diğer operandın tipine göre YENİDEN tiplenir (bağlama-göre tipleme

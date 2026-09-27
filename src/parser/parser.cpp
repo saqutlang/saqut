@@ -862,6 +862,33 @@ ASTNode* Parser::parseLeftDenotation(ASTNode* left) {
         return ma;
     }
 
+    // Buraya gelen token BinaryExpression olur. Önceliği olduğu halde ikili
+    // anlamı olmayan token'lar (`?`, `:`, `!`, `~`, `,`) reddedilir: eskiden
+    // `int a = 1 ? 2 : 3;` hatasız derlenip 0 veriyordu (#299).
+    if (!IsBinaryOperator(ct.type)) {
+        const SourceLocation loc = ct.token ? ct.token->loc : lastLoc_;
+        const std::string tok = ct.token ? ct.token->token : "?";
+        reportError(loc, "E901",
+                    ct.type == TokenType::TERNARY || ct.type == TokenType::COLON
+                        ? "unexpected '" + tok + "' — conditional expressions (a ? b : c) are "
+                          "not supported; use if/else"
+                        : "unexpected '" + tok + "' — not a binary operator");
+        // Sorunlu token'ı tüket (ilerleme garantisi: Pratt döngüsü aynı token'a
+        // dönmesin), sonra ifadenin geri kalanını atla; kapsayan yapının
+        // sınırlayıcısı (`;` `)` `]` `}` `,`) TÜKETİLMEZ — o yapı kendi
+        // kuralıyla kapanır.
+        nextToken();
+        while (!currentToken().is({TokenType::SEMICOLON, TokenType::RPAREN, TokenType::RBRACKET,
+                                   TokenType::RBRACE, TokenType::COMMA, TokenType::SVR_VOID}))
+            nextToken();
+        delete left;
+        ErrorNode* err = new ErrorNode();
+        err->loc     = loc;
+        err->code    = "E901";
+        err->message = "invalid operator";
+        return err;
+    }
+
     uint16_t prec = ct.getPowerOperator();
     nextToken();
 

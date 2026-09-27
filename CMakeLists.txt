@@ -154,6 +154,11 @@ add_test(
     COMMAND bash "${CMAKE_SOURCE_DIR}/tests/general/diagnostic_codes_test.sh"
             "$<TARGET_FILE:gen_diagnostic_docs>" "${CMAKE_SOURCE_DIR}"
 )
+# #299: `?`, `:`, `!`, `~` infix konumda E901; eskiden sessizce 0 üretiliyordu.
+add_test(
+    NAME non_binary_operator
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/general/non_binary_operator_test.sh" "${SAQUT_BINARY}"
+)
 # E003'ten ayrılan her kod (E020–E027) ve modül tanısı konumu için negatif örnek.
 add_test(
     NAME diagnostic_split

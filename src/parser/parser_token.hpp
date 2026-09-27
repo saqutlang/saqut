@@ -186,6 +186,41 @@ inline bool RightAssociative(TokenType type) {
 }
 
 // ============================================================================
+// IsBinaryOperator — BinaryExpression kurulabilecek infix operatörler
+// ============================================================================
+//
+// Pratt döngüsü önceliği sıfırdan büyük her token'ı parseLeftDenotation'a
+// verir. Özel dalı olmayanlardan (çağrı, indeks, üye, `as`, postfix) yalnız
+// bu listedekiler BinaryExpression olur; tip denetleyici ve IR yalnız bunları
+// tanır. `?` (nullable soneki), `:` (case/etiket), `!`/`~` (yalnız önek) ve
+// `,` önceliği olduğu halde ikili operatör DEĞİLDİR (#299).
+//
+// YENİ İKİLİ OPERATÖR: TokenPrecedence'a seviye + buraya satır + TypeChecker
+// ve IRGenerator'da işleyişi.
+//
+inline bool IsBinaryOperator(TokenType type) {
+    switch (type) {
+        case TokenType::PLUS:  case TokenType::MINUS: case TokenType::STAR:
+        case TokenType::SLASH: case TokenType::PERCENT: case TokenType::STAR_STAR:
+        case TokenType::AMPERSAND: case TokenType::PIPE: case TokenType::CARET:
+        case TokenType::LSHIFT: case TokenType::RSHIFT:
+        case TokenType::LESS: case TokenType::LESS_EQUAL:
+        case TokenType::GREATER: case TokenType::GREATER_EQUAL:
+        case TokenType::EQUAL_EQUAL: case TokenType::BANG_EQUAL:
+        case TokenType::AMPERSAND_AMPERSAND: case TokenType::PIPE_PIPE:
+        case TokenType::EQUAL:
+        case TokenType::PLUS_EQUAL: case TokenType::MINUS_EQUAL:
+        case TokenType::STAR_EQUAL: case TokenType::SLASH_EQUAL:
+        case TokenType::PERCENT_EQUAL: case TokenType::AMPERSAND_EQUAL:
+        case TokenType::PIPE_EQUAL: case TokenType::CARET_EQUAL:
+        case TokenType::LSHIFT_EQUAL: case TokenType::RSHIFT_EQUAL:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// ============================================================================
 // ParserToken — Parser'ın okuduğu token
 // ============================================================================
 //
