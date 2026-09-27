@@ -35,7 +35,7 @@ Kodlar kararlıdır: `saqut check` JSONL çıktısı, LSP ve `Error.code` bu kod
 | E024 | hata | switch / case type mismatch | switch konusu desteklenmeyen tipte, `case` değeri konunun tipine uymuyor ya da `case null` nullable olmayan bir konuda kullanıldı. |
 | E025 | hata | Value is not callable | Fonksiyon olmayan bir değer çağrıldı. |
 | E026 | hata | Invalid method receiver | Metot bu alıcı tipinde tanımlı değil (ör. `toString` yalnız `byte[]`'da) ya da `array::`/`struct::` ad alanına yanlış tipte ilk argüman verildi. |
-| E027 | hata | Assignable location required | `++`/`--` yalnız değişken, struct alanı ya da dizi elemanına uygulanabilir. |
+| E027 | hata | Assignable location required | Atama (`=`, `+=`, `&=`, …) ve `++`/`--` yalnız değişken, struct alanı ya da dizi elemanına uygulanabilir. |
 | E_MODULE_NOT_FOUND | hata | Imported module file not found | `import ... from "yol.sqt"` dosyası bulunamadı. Yol, import eden dosyanın dizinine göre çözülür. |
 | E_MODULE_PARSE | hata | Imported module could not be parsed | İçe aktarılan dosyadan AST kurulamadı. |
 | E_MODULE_CYCLE | hata | Circular module dependency | Modüller birbirini döngüsel olarak içe aktarıyor; mesaj zinciri gösterir. |

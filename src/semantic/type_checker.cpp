@@ -952,6 +952,32 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
     case ASTKind::BinaryExpression: {
         auto* bin = (BinaryExpressionNode*) node;
 
+        // #303: her atama operatörünün hedefi yazılabilir bir konum olmalı
+        // (`++`/`--` ile aynı kural, E027). Eskiden `5 = 3;` hatasız derleniyordu.
+        if (bin->Left && (bin->Operator == TokenType::EQUAL ||
+                          bin->Operator == TokenType::PLUS_EQUAL ||
+                          bin->Operator == TokenType::MINUS_EQUAL ||
+                          bin->Operator == TokenType::STAR_EQUAL ||
+                          bin->Operator == TokenType::SLASH_EQUAL ||
+                          bin->Operator == TokenType::PERCENT_EQUAL ||
+                          bin->Operator == TokenType::AMPERSAND_EQUAL ||
+                          bin->Operator == TokenType::PIPE_EQUAL ||
+                          bin->Operator == TokenType::CARET_EQUAL ||
+                          bin->Operator == TokenType::LSHIFT_EQUAL ||
+                          bin->Operator == TokenType::RSHIFT_EQUAL)) {
+            const bool isLValue = bin->Left->kind == ASTKind::Identifier ||
+                                  bin->Left->kind == ASTKind::MemberAccess ||
+                                  bin->Left->kind == ASTKind::IndexExpression;
+            if (!isLValue) {
+                diag_.report("E027", bin->loc,
+                             "assignment requires a writable location (variable, field or "
+                             "array element)",
+                             "assign to a variable, a struct field or an array element");
+                result = Type::error();
+                break;
+            }
+        }
+
         // Atama operatörleri
         if (bin->Operator == TokenType::EQUAL || bin->Operator == TokenType::PLUS_EQUAL ||
             bin->Operator == TokenType::MINUS_EQUAL || bin->Operator == TokenType::STAR_EQUAL ||

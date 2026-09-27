@@ -165,7 +165,7 @@ inline const std::vector<DiagInfo>& diagnosticCatalog() {
         {"E026", DiagLevel::Error,   "Invalid method receiver",
          "Metot bu alıcı tipinde tanımlı değil (ör. `toString` yalnız `byte[]`'da) ya da `array::`/`struct::` ad alanına yanlış tipte ilk argüman verildi."},
         {"E027", DiagLevel::Error,   "Assignable location required",
-         "`++`/`--` yalnız değişken, struct alanı ya da dizi elemanına uygulanabilir."},
+         "Atama (`=`, `+=`, `&=`, …) ve `++`/`--` yalnız değişken, struct alanı ya da dizi elemanına uygulanabilir."},
 
         // ── Modül ve import ─────────────────────────────────────────────────
         {"E_MODULE_NOT_FOUND", DiagLevel::Error, "Imported module file not found",

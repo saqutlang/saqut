@@ -21,7 +21,8 @@ başına girdi.
 
 | Issue | Konu | Dosya | Durum |
 |---|---|---|---|
-| #299 | `?:` ve diğer ikili olmayan token'lar sessizce 0 | [299-kosul-operatoru.md](299-kosul-operatoru.md) | uygulandı |
+| #303 | Atama hedefi denetlenmiyor | [303-atama-hedefi.md](303-atama-hedefi.md) | kısmi (E027 eklendi; bitsel bileşik atamaların atama dalına taşınması açık) |
+| #299 | `?:` ve diğer ikili olmayan token'lar sessizce 0 | [299-kosul-operatoru.md](299-kosul-operatoru.md) | uygulandı, `8ae879d`, issue kapandı |
 | #298 | Yanlış / süreç anlatan yorumlar + çöp dosya | [298-yanlis-yorumlar.md](298-yanlis-yorumlar.md) | uygulandı, `117bbe1`, issue kapandı |
 | #297 | IR slot tipleri üretimde kaydedilmiyor | [297-slot-tipleri.md](297-slot-tipleri.md) | uygulandı, `9653647`, issue kapandı |
 | #296 | Token modeli: string tür + parser'da yeniden sınıflandırma | [296-token-modeli.md](296-token-modeli.md) | uygulandı, `eb9937e`, issue kapandı |

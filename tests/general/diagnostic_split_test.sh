@@ -38,6 +38,9 @@ expect E024 '    switch (1) { case "a": break; }'   # case tipi
 expect E025 '    int g = 3; g();'                    # çağrılamaz
 expect E026 '    int[] a = [1]; string s = a.toString();'  # yanlış alıcı
 expect E027 '    f()++;'                             # atanabilir konum
+expect E027 '    5 = 3;'                             # #303: atama hedefi
+expect E027 '    5 += 3;'
+expect E027 '    5 &= 3;'
 
 # Modül tanısı konumu: import edilen dosya yok → import satırı.
 printf 'import {x} from "yok.sqt";\nint main() { return 0; }\n' >"$dir/m.sqt"
