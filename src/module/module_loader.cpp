@@ -62,8 +62,10 @@ void ModuleLoader::loadUnit(const std::string& filePath, ModuleGraph& graph,
         source = buf.str();
     }
 
-    // Tokenize + parse
-    Tokenizer tokenizer;
+    // Tokenize + parse. Sözcüksel (E906/E907) ve sözdizimi (E9xx) hataları aynı
+    // DiagnosticEngine'e konumlu tanı olarak gider; parse yine de devam eder
+    // (panic-mode recovery, bkz. Parser::synchronizeAndMakeError).
+    Tokenizer tokenizer(&diag_);
     std::vector<Token*> tokens;
     {
         Profiling::StageTimer::ScopedStage _prof(profiler_, "token");
@@ -73,9 +75,6 @@ void ModuleLoader::loadUnit(const std::string& filePath, ModuleGraph& graph,
     // (çok-modüllü derlemede count() toplar). profiler_ nullptr ise no-op.
     if (profiler_) profiler_->count("token", static_cast<long long>(tokens.size()), "token");
 
-    // Faz 2: diag_ enjekte edilir — sözdizimi hataları artık konumlu tanı
-    // (E9xx) olarak DiagnosticEngine'e gider, parse yine de devam eder
-    // (panic-mode recovery, bkz. Parser::synchronizeAndMakeError).
     Parser parser(&diag_);
     ASTNode* ast = nullptr;
     {

@@ -463,7 +463,7 @@ Token* LspHandler::identifierTokenAt(DocumentState& state, int line, int charact
     if (it == toks.begin()) return nullptr;
     Token* tok = *std::prev(it);
     if (offset < tok->start || offset >= tok->end) return nullptr;
-    if (tok->gettype() != "identifier") return nullptr;
+    if (tok->category != TokenCategory::Identifier) return nullptr;
     return tok;
 }
 
@@ -557,7 +557,7 @@ nlohmann::json LspHandler::handleHover(const nlohmann::json& id,
                 // Desen: ... ident . ident . ident — zincirin en soluna yürü.
                 int root = idx;
                 while (root >= 2 && toks[root - 1]->token == "." &&
-                       toks[root - 2]->gettype() == "identifier")
+                       toks[root - 2]->category == TokenCategory::Identifier)
                     root -= 2;
                 if (root != idx) {
                     auto found = state->symbolByOffset.find(toks[root]->start);
@@ -945,7 +945,7 @@ nlohmann::json LspHandler::handleRename(const nlohmann::json& id,
         const auto& toks = state->tokens;
         for (size_t ti = 0; ti < toks.size(); ++ti) {
             Token* t = toks[ti];
-            if (t->gettype() != "identifier" || t->token != sym->name) continue;
+            if (t->category != TokenCategory::Identifier || t->token != sym->name) continue;
             if (ti > 0 && toks[ti - 1]->token == ".") continue;
             // definitionLoc bildirim başını (tip token'ını) gösterir: `P p;`
             // içindeki `P`, `p` değişkenine bağlı görünür. Adı farklı bir
@@ -1118,7 +1118,7 @@ static CallCtx findCallContext(DocumentState& state, int byteOffset) {
         if (s == "(") {
             if (depth > 0) { depth--; continue; }
             // Eşleşmemiş '(' — solundaki token callee olmalı
-            if (i + 1 >= left.size() || left[i + 1]->gettype() != "identifier")
+            if (i + 1 >= left.size() || left[i + 1]->category != TokenCategory::Identifier)
                 return ctx; // gruplama pareni: (a + b
             ctx.callee      = left[i + 1]->token;
             ctx.activeParam = commas;
@@ -1127,13 +1127,13 @@ static CallCtx findCallContext(DocumentState& state, int byteOffset) {
             // Sol taraf değişken (identifier) ya da tip adı olabilir; tip
             // adları (string::upper, struct::toJson) KEYWORD token'dır.
             if (i + 3 < left.size() && left[i + 2]->token == "::" &&
-                (left[i + 3]->gettype() == "identifier" ||
-                 left[i + 3]->gettype() == "keyword"))
+                (left[i + 3]->category == TokenCategory::Identifier ||
+                 left[i + 3]->category == TokenCategory::Keyword))
                 ctx.scopeTarget = left[i + 3]->token;
             // "arr.push(" deseni: UFCS nokta çağrısı (ADR-033) — receiver
             // tek tanımlayıcıysa yakala (zincirli receiver şimdilik yok).
             else if (i + 3 < left.size() && left[i + 2]->token == "." &&
-                     left[i + 3]->gettype() == "identifier")
+                     left[i + 3]->category == TokenCategory::Identifier)
                 ctx.dotReceiver = left[i + 3]->token;
             return ctx;
         }
@@ -1339,29 +1339,29 @@ nlohmann::json LspHandler::handleSemanticTokens(const nlohmann::json& id,
     const auto& starts = state->lineStarts;
     for (size_t ti = 0; ti < toks.size(); ++ti) {
         Token* tok = toks[ti];
-        const std::string& kind = tok->gettype();
+        const TokenCategory kind = tok->category;
         int type = -1;
         int mods = 0;
 
-        if (kind == "keyword") {
+        if (kind == TokenCategory::Keyword) {
             // Pool/List/Thread kütüphane tipleridir (TextMate'te de
             // storage.type); ilkel tipler anahtar kelime olarak kalır.
             type = (tok->token == "Pool" || tok->token == "List" || tok->token == "Thread")
                 ? T_TYPE : T_KEYWORD;
-        } else if (kind == "string") {
+        } else if (kind == TokenCategory::String) {
             type = T_STRING;
-        } else if (kind == "number") {
+        } else if (kind == TokenCategory::Number) {
             type = T_NUMBER;
-        } else if (kind == "identifier" && ti > 0 && toks[ti - 1]->token == ".") {
+        } else if (kind == TokenCategory::Identifier && ti > 0 && toks[ti - 1]->token == ".") {
             // Üye adı: yalnız `Renk.Kirmizi` (enum üyesi) sınıflandırılır;
             // struct alanlarını ada göre çözmek aynı adlı bir globale düşerdi.
-            if (ti >= 2 && toks[ti - 2]->gettype() == "identifier") {
+            if (ti >= 2 && toks[ti - 2]->category == TokenCategory::Identifier) {
                 Symbol* base = state->symbolTable.resolve(toks[ti - 2]->token);
                 if (base && base->kind == SymbolKind::Enum &&
                     state->symbolTable.hasEnumMember(base->name, tok->token))
                     type = T_ENUM_MEMBER;
             }
-        } else if (kind == "identifier") {
+        } else if (kind == TokenCategory::Identifier) {
             Symbol* sym = nullptr;
             auto found = state->symbolByOffset.find(tok->start);
             if (found != state->symbolByOffset.end()) {

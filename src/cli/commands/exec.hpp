@@ -51,10 +51,10 @@
 inline bool startsWithStatement(const std::string& input) {
     const std::string probeSource = "int main() {\n" + input + ";\n}\n";
 
-    Tokenizer tokenizer;
-    auto      tokens = tokenizer.scan(probeSource, "<exec-probe>");
-
     DiagnosticEngine probeDiag;  // hataları yutar, cerr'e basmaz
+    Tokenizer        tokenizer(&probeDiag);
+    auto             tokens = tokenizer.scan(probeSource, "<exec-probe>");
+
     Parser           parser(&probeDiag);
     ASTNode*         ast = parser.parse(tokens);
 
@@ -100,7 +100,8 @@ inline int cmdExec(const CliArgs& args) {
     }
     const std::string syntheticPath = "<exec>";
 
-    Tokenizer        tokenizer;
+    DiagnosticEngine diag;
+    Tokenizer        tokenizer(&diag);
     auto             tokens = tokenizer.scan(source, syntheticPath);
 
     // #134: exec, run/check ile AYNI diagnostic kapısından geçmeli. Önceki
@@ -111,7 +112,6 @@ inline int cmdExec(const CliArgs& args) {
     // AST derlenip çalıştırılıyor, yanlış stdout + exit 0 üretiyordu
     // (ADR-038 ihlali). Gerçek DiagnosticEngine verip hasErrors()'ı run.hpp
     // ile aynı şekilde kontrol ediyoruz.
-    DiagnosticEngine diag;
     Parser           parser(&diag);
     ASTNode*         ast = parser.parse(tokens);
 

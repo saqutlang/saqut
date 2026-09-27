@@ -26,26 +26,13 @@
 #include "parser/nodes/statements.hpp"
 
 // --------------------------------------------------------------------------
-// parseToken: Ham Token'ı ParserToken'a dönüştür.
+// parseToken: Token'ı ParserToken'a sar. Tür tokenizer'da belirlendi
+// (Token::kind); burada yeniden sınıflandırılmaz.
 // --------------------------------------------------------------------------
 ParserToken Parser::parseToken(Token* token) {
     ParserToken pt;
     pt.token = token;
-
-    std::string t = token->gettype();
-    if (t == "string")
-        pt.type = TokenType::STRING;
-    else if (t == "number")
-        pt.type = TokenType::NUMBER;
-    else if (t == "operator")
-        pt.type = OPERATOR_MAP.find(pt.token->token)->second;
-    else if (t == "delimiter")
-        pt.type = OPERATOR_MAP.find(pt.token->token)->second;
-    else if (t == "keyword")
-        pt.type = KEYWORD_MAP.find(pt.token->token)->second;
-    else if (t == "identifier")
-        pt.type = TokenType::IDENTIFIER;
-
+    pt.type  = token->kind;
     return pt;
 }
 
@@ -683,14 +670,7 @@ ASTNode* Parser::parseNullDenotation() {
 
     if (ct.type == TokenType::STRING) {
         nextToken();
-        if (auto* st = dynamic_cast<StringToken*>(ct.token)) {
-            if (st->unterminated)
-                reportError(st->loc, "E907", "unterminated string literal (missing closing '\"')");
-            for (char e : st->badEscapes)
-                reportError(st->loc, "E906",
-                            std::string("unknown escape sequence '\\") + e +
-                                "' in string literal (supported: \\n \\t \\r \\b \\\\ \\\")");
-        }
+        // Sözcüksel hatalar (E906/E907) tokenizer'da raporlandı.
         LiteralNode* lit = new LiteralNode();
         lit->literalType = LiteralType::STRING;
         lit->loc = ct.token ? ct.token->loc : SourceLocation{};

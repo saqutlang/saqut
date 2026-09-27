@@ -103,7 +103,7 @@ ScopeIndex ScopeIndex::build(const std::vector<Token*>& toks) {
     ScopeIndex si;
     std::vector<size_t> braceStack, parenStack;
     for (Token* t : toks) {
-        if (t->gettype() != "delimiter" && t->gettype() != "operator") continue;
+        if (t->category != TokenCategory::Delimiter && t->category != TokenCategory::Operator) continue;
         const std::string& s = t->token;
         if (s == "{") {
             braceStack.push_back(si.braces_.size());
@@ -282,7 +282,7 @@ struct RecvWalker {
         Token* t = toks()[static_cast<size_t>(j)];
 
         // ── Tanımlayıcı: kök ya da alan erişimi (a.b) ─────────────────────
-        if (t->gettype() == "identifier") {
+        if (t->category == TokenCategory::Identifier) {
             // `yap().⏎    ns[0].` — satır sonunda kalan '.' ile alt satırın
             // başındaki ad birleştirilmez: kullanıcı yarım bir ifadeyi bırakıp
             // yeni deyime geçmiştir (parser ikisini tek zincir okur). Satır
@@ -320,7 +320,7 @@ struct RecvWalker {
             int open = matchingOpen(j, "(", ")");
             if (open < 1) return fail;
             Token* callee = toks()[static_cast<size_t>(open - 1)];
-            if (callee->gettype() != "identifier") return fail;   // gruplama: (a + b).
+            if (callee->category != TokenCategory::Identifier) return fail;   // gruplama: (a + b).
             if (open >= 3 && toks()[static_cast<size_t>(open - 2)]->token == ".") {
                 ReceiverType base = walk(open - 3);
                 if (!base.ok || !base.enumName.empty()) return fail;
@@ -344,7 +344,7 @@ struct RecvWalker {
         }
 
         // ── Literal alıcı: "abc". ─────────────────────────────────────────
-        if (t->gettype() == "string") return fromType(Type::String());
+        if (t->category == TokenCategory::String) return fromType(Type::String());
         return fail;
     }
 };

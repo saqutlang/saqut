@@ -14,7 +14,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-#include "parser/token.hpp"
+#include "parser/parser_token.hpp"
 #include "parser/ast.hpp"
 #include "tools.hpp"
 #include "diagnostic/diagnostic_engine.hpp"

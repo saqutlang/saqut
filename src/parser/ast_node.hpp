@@ -8,7 +8,7 @@
 //
 // BAĞIMLILIKLAR:
 //   - core/location.hpp:   Kaynak kod konum bilgisi (SourceLocation)
-//   - parser/token.hpp:    Token tipleri (TokenType, ParserToken)
+//   - parser/parser_token.hpp: ParserToken (TokenType: tokenizer/token_kind.hpp)
 //   - tools.hpp:           Yardımcı fonksiyonlar (jsonIndent vb.)
 //
 // MİMARİ KARARLAR:
@@ -32,7 +32,7 @@
 #include <vector>
 #include "core/location.hpp"
 #include "core/type.hpp"
-#include "parser/token.hpp"
+#include "parser/parser_token.hpp"
 #include "tools.hpp"
 
 // ============================================================================

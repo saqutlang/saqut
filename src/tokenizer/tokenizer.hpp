@@ -3,14 +3,19 @@
 // ============================================================================
 //
 // DİZİN:   src/tokenizer/tokenizer.hpp
-// KATMAN:  Katman 2 — Lexer'dan gelen karakter akışını token dizisine dönüştürür
-// BAĞIMLI: lexer/lexer.hpp, tokenizer/token.hpp
+// KATMAN:  Tokenizer — Lexer'ın karakter akışını token dizisine dönüştürür
+// BAĞIMLI: lexer/lexer.hpp, tokenizer/token.hpp, diagnostic/diagnostic_engine.hpp
 //
-// AMAÇ:
-//   Kaynak koddaki karakterleri tanıyarak Parser'ın tüketeceği token dizisini
-//   üretir. Operatör, delimiter ve keyword tabloları burada tanımlanır.
-//   Lexer'ı composition (hmx) olarak barındırır; karakter düzeyindeki tüm
-//   işlemler Lexer üzerinden yapılır.
+// Her token'ın hem kaba sınıfını (category) hem kesin türünü (kind) yazar;
+// keyword ve operatör türleri tokenizer/token_kind.hpp tablolarından gelir.
+// Hangi karakter dizisinin tek operatör olduğuna tokenizer.cpp scope()'daki
+// karakter switch'i karar verir.
+//
+// Sözcüksel hatalar (E906 bilinmeyen kaçış, E907 kapanmamış string) verilen
+// DiagnosticEngine'e raporlanır. diag verilmezse (ör. `saqut tokens`) hatalar
+// raporlanmaz, token'lar yine üretilir.
+//
+// YENİ SÖZCÜKSEL HATA: ilgili okuma fonksiyonunda report(...) çağrısı.
 //
 // ============================================================================
 
@@ -19,59 +24,27 @@
 
 #include <string>
 #include <vector>
-#include <string_view>
 #include "lexer/lexer.hpp"
 #include "tokenizer/token.hpp"
 
-// Operatör tablosu. Çok karakterliler (==, !=, ++, +=, vb.) önce gelir.
-inline constexpr std::string_view operators[] = {
-    "==", "!=", "<=", ">=", "&&", "||",
-    "++", "--", "<<", ">>",
-    "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
-    "+",  "-",  "*",  "/",  "%",  "<",  ">",
-    "^",  "!",  "~",  "&",  "|",
-    "="
-};
-
-// Delimiter tablosu. Çok karakterliler (->, ::) önce gelir.
-inline constexpr std::string_view delimiters[] = {
-    "->", "::",
-    "[",  "]",  "(",  ")",  "{",  "}",
-    ";",  ",",  ":",
-    "."
-};
-
-// Keyword tablosu.
-inline constexpr std::string_view keywords[] = {
-    "if",       "else",     "for",      "while",    "do",
-    "as",
-    "switch",   "case",     "default",  "break",    "continue",
-    "return",   "try",      "catch",    "finally",  "throw",
-    "throws",   "assert",
-    "void",     "int",      "float",    "double",   "char",
-    "string",   "bool",     "decimal",  "byte",
-    "true",     "false",    "null",
-    "class",    "struct",   "interface","enum",     "extends",  "implements",
-    "new",      "public",   "private",  "protected",
-    "static",   "final",    "abstract",
-    "import",   "package",
-    "const",    "extern",   "ffi",      "typedef",  "sizeof",
-    "auto",     "constexpr","noexcept",
-    "native",   "synchronized", "volatile", "transient"
-};
+class DiagnosticEngine;
 
 class Tokenizer {
 public:
-    Lexer hmx;
+    explicit Tokenizer(DiagnosticEngine* diag = nullptr) : diag_(diag) {}
 
-    std::vector<Token*> scan(std::string input, std::string filePath = "");
+    TokenList scan(std::string input, std::string filePath = "");
 
 private:
+    Lexer             lexer;
+    DiagnosticEngine* diag_ = nullptr;
+
     Token*           scope();
     IdentifierToken* readIdentifier();
     StringToken*     readString();
     void skipOneLineComment();
     void skipMultiLineComment();
+    void report(const SourceLocation& loc, const char* code, const std::string& message);
 };
 
 #endif // SAQUT_TOKENIZER

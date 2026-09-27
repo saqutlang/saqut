@@ -140,6 +140,14 @@ add_test(
             "${SAQUT_BINARY}"
 )
 
+# #296: token türü tokenizer'da belirlenir; sözcüksel tanılar (E906/E907)
+# tokenizer'dan; keyword listesi tek tablo (tokenizer/token_kind.hpp).
+add_test(
+    NAME token_model
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/general/token_model_test.sh"
+            "${SAQUT_BINARY}"
+)
+
 # #141: saqut ir yalnız gerçek TTY'de renkli; redirect/pipe'ta ANSI CSI yok.
 add_test(
     NAME ir_tty_color

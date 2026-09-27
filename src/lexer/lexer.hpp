@@ -69,7 +69,8 @@ public:
     std::string getPositionRange(); // Pozisyon aralığındaki metni döndür
 
     // --- Desen Eşleme ---
-    bool include(std::string_view word, bool accept = true);
+    // `word` mevcut konumda başlıyorsa true; consume true ise üstünden geçer.
+    bool tryConsume(std::string_view word, bool consume = true);
 
     // --- Konum Okuma/Yazma ---
     int  getOffset();        // Mevcut offset'i döndür

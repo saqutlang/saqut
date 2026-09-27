@@ -38,13 +38,13 @@ inline int cmdSymbols(const CliArgs& args) {
         return saqut::exit_code::kUsageError;
     }
 
-    Tokenizer tokenizer;
-    auto tokens = tokenizer.scan(source, filePath);
-
     // RG-7 (#157): #134/ast ile aynı sınıf düzeltme — Parser'a gerçek
     // DiagnosticEngine verilmezse syntax hatası panic-mode kurtarma ile
-    // yutulur, `!ast` hiç true olmaz.
+    // yutulur, `!ast` hiç true olmaz. Tokenizer da aynı motora raporlar.
     DiagnosticEngine diag;
+    Tokenizer        tokenizer(&diag);
+    auto tokens = tokenizer.scan(source, filePath);
+
     Parser           parser(&diag);
     ASTNode*         ast = parser.parse(tokens);
 

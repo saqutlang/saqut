@@ -285,8 +285,8 @@ struct BenchProfile {
 };
 
 // ── Token istatistiklerini topla ─────────────────────────────────────────────
-// Token::gettype() → "keyword" / "identifier" / "number" / "string" /
-//                     "operator" / "delimiter"
+// Token::category'ye göre sayar (keyword / identifier / number / string /
+// operator / delimiter).
 #include "tokenizer/token.hpp"
 
 inline void collectTokenStats(TokenStats& out,
@@ -295,14 +295,15 @@ inline void collectTokenStats(TokenStats& out,
     for (auto& toks : allTokens) {
         out.total += toks.size();
         for (auto* t : toks) {
-            const std::string& ty = const_cast<Token*>(t)->gettype();
-            if      (ty == "keyword")    ++out.keywords;
-            else if (ty == "identifier") ++out.identifiers;
-            else if (ty == "number")     ++out.numbers;
-            else if (ty == "string")     ++out.strings;
-            else if (ty == "operator")   ++out.operators_;
-            else if (ty == "delimiter")  ++out.delimiters;
-            else                         ++out.other;
+            switch (t->category) {
+                case TokenCategory::Keyword:    ++out.keywords;    break;
+                case TokenCategory::Identifier: ++out.identifiers; break;
+                case TokenCategory::Number:     ++out.numbers;     break;
+                case TokenCategory::String:     ++out.strings;     break;
+                case TokenCategory::Operator:   ++out.operators_;  break;
+                case TokenCategory::Delimiter:  ++out.delimiters;  break;
+                case TokenCategory::End:        ++out.other;       break;
+            }
         }
     }
 }

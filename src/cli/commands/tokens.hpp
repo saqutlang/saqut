@@ -34,7 +34,7 @@ inline int cmdTokens(const CliArgs& args) {
 
     std::cout << "Tokens (" << tokens.size() << "):\n";
     for (auto* t : tokens) {
-        std::cout << "  [" << t->gettype() << "] \"" << t->token << "\"  "
+        std::cout << "  [" << tokenCategoryName(t->category) << "] \"" << t->token << "\"  "
                   << t->loc.toString() << "  byteOffset=" << t->start
                   << " byteLength=" << (t->end - t->start) << "\n";
     }

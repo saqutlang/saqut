@@ -305,7 +305,7 @@ audit syntax evolution and public examples, but public docs do not define the
 grammar.
 
 Evidence: `src/cli/args.hpp`, `src/cli/cli.hpp`,
-`src/tokenizer/tokenizer.cpp`, `src/parser/token.hpp`,
+`src/tokenizer/tokenizer.cpp`, `src/tokenizer/token_kind.hpp`,
 `src/lsp/lsp_handler.cpp`, and `editor/vscode/`. Static review: 2026-07-25.
 
 See [10_Syntax.md](02_Language.md#kb-10-syntax), [11_Lexer.md](03_Frontend.md#kb-11-lexer),

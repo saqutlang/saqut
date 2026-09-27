@@ -1,108 +1,48 @@
 // ============================================================================
-// saQut Compiler — Parser Token Tipleri, Operatör Öncelik Tablosu ve ParserToken
+// saQut Compiler — Token Türleri ve Keyword / Operatör Tabloları
 // ============================================================================
 //
-// DİZİN:   src/parser/token.hpp
-// KATMAN:  Katman 3 — Tokenizer ile Parser Arasında Köprü
-// AMAÇ:    Tokenizer'ın ham token'larını anlamsal tiplere dönüştürmek,
-//          operatör öncelik ve birleşme kurallarını merkezi olarak tanımlamak
+// DİZİN:   src/tokenizer/token_kind.hpp
+// KATMAN:  Tokenizer — her token'ın türünün (TokenType) TEK tanımı
+// BAĞIMLI: yalnız standart kütüphane
 //
-// BAĞIMLILIKLAR:
-//   - tokenizer/tokenizer.hpp: Token sınıf hiyerarşisi (Token, NumberToken, vs.)
-//   - KULLANAN: parser/ast.hpp, parser/parser.hpp
+// İÇERİK:
+//   1. TokenType enum: bütün token türleri (değer, keyword, operatör, delimiter)
+//   2. KEYWORD_MAP:      metin → TokenType. Tokenizer bir adı keyword sayıp
+//                        saymamaya BU tabloya bakarak karar verir; parser aynı
+//                        türü token'dan okur. Tek keyword listesi budur.
+//   3. OPERATOR_MAP:     operatör/delimiter metni → TokenType
+//   4. OPERATOR_MAP_REV: TokenType → operatör metni (AST dökümü, tanılar)
 //
-// BU DOSYANIN İÇERDİKLERİ:
-//   1. TokenType enum (uint16_t): 100+ token tipi (keyword'ler, operatörler, delimiter'lar)
-//   2. KEYWORD_MAP:        string → TokenType  (keyword çözümleme)
-//   3. OPERATOR_MAP:       string → TokenType  (operatör çözümleme)
-//   4. OPERATOR_MAP_REV:   TokenType → string  (log çıktısı için ters harita)
-//   5. OPERATOR_MAP_STRREV: TokenType → string (enum ismi, debug için)
-//   6. TokenPrecedence():  Öncelik tablosu (18 seviye, Pratt parser'ın kalbi)
-//   7. RightAssociative(): Sağ birleşme kontrolü (atama, üs)
-//   8. ParserToken:        Parser'ın kullandığı token yapısı (Token* + TokenType)
+// Tokenizer her token'ın `kind` alanını bu tablolardan doldurur; parser
+// yeniden sınıflandırmaz. Öncelik tablosu parser'a aittir:
+// parser/parser_token.hpp.
 //
-// TASARIM KARARLARI (ADR-002):
-//   Neden TokenType enum'ı burada tanımlı, Tokenizer'da değil?
-//   -> Tokenizer sadece ham token'lar üretir. Anlamsal tipler Parser'ın işidir.
-//   -> Tokenizer'ın Tokenizer'ın ham yapısını değiştirmeden yeni diller eklenebilir.
-//
-//   Neden uint16_t tabanlı enum?
-//   -> 65K token tipi fazlasıyla yeterli. 2 byte = bellek tasarrufu.
-//   -> Her AST düğümünde TokenType saklanabilir (opsiyonel).
-//
-//   Neden dört ayrı map?
-//   -> unordered_map tek yönlüdür. Her yön için ayrı map gerekir.
-//   -> OPERATOR_MAP_REV: log çıktısında "+" göstermek için.
-//   -> OPERATOR_MAP_STRREV: enum ismini string olarak (debug, AST dump).
-//
-//   Neden bu kadar çok keyword?
-//   -> saQut hem C/C++ hem Java hem de kendi sözdizimini destekler.
-//   -> Tüm keyword'ler tek enum'da toplanmıştır.
+// YENİ KEYWORD: TokenType'a bir değer (ya da var olanı yeniden kullan) +
+// KEYWORD_MAP'e bir satır. Tokenizer ve parser başka bir yere dokunmadan tanır.
 //
 // ============================================================================
 
-#ifndef SAQUT_PARSER_TOKEN
-#define SAQUT_PARSER_TOKEN
+#ifndef SAQUT_TOKENIZER_TOKEN_KIND
+#define SAQUT_TOKENIZER_TOKEN_KIND
 
 #include <cstdint>
-#include <initializer_list>
 #include <string_view>
 #include <unordered_map>
-#include <vector>
-#include "tokenizer/tokenizer.hpp"
 
 // ============================================================================
-// TokenList — Token Vektörü Tip Kısaltması
+// TokenType — Token Türleri (Enum)
 // ============================================================================
-//
-// Tokenizer::scan() tarafından üretilen, Parser::parse() tarafından tüketilen
-// token listesi. Ham pointer'lar içerir — bellek yönetimi çağırana aittir.
-//
-// TODO: std::vector<std::unique_ptr<Token>> ile otomatik bellek yönetimi
-//
-typedef std::vector<Token*> TokenList;
-
-// ============================================================================
-// TokenType — Anlamsal Token Tipleri (Enum)
-// ============================================================================
-//
-// Tokenizer'ın ürettiği string tipli token'ları ("number", "operator", ...)
-// Parser'ın anlayacağı anlamsal tiplere dönüştürür.
 //
 // KATEGORİLER:
-//   1. Değerler: IDENTIFIER, NUMBER, STRING, SVR_VOID (geçersiz/EOF)
-//   2. Keyword'ler: KW_IF ... KW_NOEXCEPT (alfabetik sıralı)
-//   3. Operatörler: Öncelik sırasına göre gruplanmış
-//      - Seviye 1:   DOT, ARROW, LBRACKET, RBRACKET, LPAREN, RPAREN
-//      - Seviye 2:   PLUS_PLUS, MINUS_MINUS (postfix)
-//      - Seviye 3:   PLUS, MINUS, BANG, TILDE (unary prefix)
-//      - Seviye 4:   STAR_STAR (üs; ^ artık XOR, Level 8)
-//      - Seviye 5:   STAR, SLASH, PERCENT (çarpma/bölme)
-//      - Seviye 6-16: devamı...
-//   4. Diğer: LBRACE, RBRACE, SEMICOLON, COMMA, COLON_COLON
-//   5. Özel: END_OF_FILE, UNKNOWN, COMMENT, PREPROCESSOR
+//   1. Değerler:      IDENTIFIER, NUMBER, STRING, SVR_VOID (geçersiz/EOF)
+//   2. Keyword'ler:   KW_* (KEYWORD_MAP'teki metinler)
+//   3. Operatörler ve delimiter'lar (OPERATOR_MAP'teki metinler)
+//   4. Özel:          END_OF_FILE, UNKNOWN, COMMENT, PREPROCESSOR
 //
-// NEDEN uint16_t? Bellek optimizasyonu. Her AST düğümü bir TokenType taşır.
-// Binlerce düğümde 2 byte vs 4 byte fark eder.
+// Enum'da değer olması o kelimenin/operatörün dilde desteklendiği anlamına
+// gelmez (ör. KW_CLASS ayrılmış kelimedir, parser'da dalı yoktur).
 //
-/* ================================================================
- * TokenType — Anlamsal Token Tipleri
- * ================================================================
- *
- * Tokenizer'ın ürettiği ham token'ları (string tipli) Parser'ın
- * anlayacağı anlamsal tiplere dönüştürür.
- *
- * uint16_t tabanlı — 65K token tipi yeterli.
- * Bellek: AST düğümlerinde taşınabilir (2 byte).
- *
- * KATEGORİLER (öncelik sırasına göre):
- *   1. Değerler:        IDENTIFIER, NUMBER, STRING, SVR_VOID
- *   2. Keyword'ler:     KW_IF ... KW_NOEXCEPT (C/C++/Java ortak)
- *   3. Operatörler:     DOT(18) ... COMMA(1) (Pratt öncelik seviyesi)
- *   4. Delimiter'lar:   LBRACE, RBRACE, SEMICOLON, vb.
- *   5. Özel:            END_OF_FILE, UNKNOWN, COMMENT, PREPROCESSOR
- *
- * ================================================================ */
 enum class TokenType : uint16_t {
     /* ====== Değerler ve Tanımlayıcılar ====== */
     IDENTIFIER,      // Değişken/fonksiyon/sınıf ismi.
@@ -115,7 +55,9 @@ enum class TokenType : uint16_t {
                      //   Tokenizer'da StringToken olarak üretilir.
                      //   Kaçış dizileri (\n, \t, \") tokenizer'da çözülür.
     SVR_VOID,        // Geçersiz/EOF sinyali.
-                     //   Parser içinde kullanılır. Tokenizer ÜRETMEZ.
+                     //   Tokenizer yalnız OPERATOR_MAP'te olmayan bir
+                     //   operatör metninde üretir (derleyici hatası; parser
+                     //   "beklenmeyen token" raporlar).
                      //   currentToken() geçersiz indeks gösterdiğinde döner.
 
     /* ====== Kontrol Akışı Keyword'leri ====== */
@@ -404,21 +346,15 @@ enum class TokenType : uint16_t {
 };
 
 // ============================================================================
-// KEYWORD_MAP — Keyword String → TokenType Dönüşüm Haritası
+// KEYWORD_MAP — keyword listesinin TEK kaynağı: metin → TokenType
 // ============================================================================
 //
-// AMAÇ: Tokenizer'ın ürettiği KeywordToken'ların token değerini (örn: "if")
-//       Parser'ın anlayacağı TokenType'a (KW_IF) dönüştürür.
+// Tokenizer okuduğu adı burada bulursa keyword token'ı üretir ve türünü
+// buradan yazar. Burada olmayan her ad identifier'dır. Bir kelime keyword
+// olunca değişken/modül adı olarak kullanılamaz (`src/internal/*.sqt` dahil).
 //
-// ANAHTAR: std::string_view — keyword string'i (kopyalanmaz, salt okunur)
-// DEĞER:   TokenType — Parser'ın anlayacağı anlamsal tip
-//
-// SENKRONİZASYON UYARISI (#287):
-//   Tokenizer bir adı keyword sayarken src/tokenizer/tokenizer.cpp `KW_MAP`
-//   tablosuna bakar; bu harita yalnız keyword'ün TokenType'ını verir. İki
-//   tablo elle senkron tutulur: KW_MAP'e eklenip buraya eklenmeyen kelime
-//   parser'da tanımsız davranıştır. (`tokenizer.hpp` `keywords[]` hiçbir yerde
-//   okunmaz.)
+// `date`, `longint` keyword DEĞİLDİR: tip adı olarak identifier yolundan
+// çözülürler (`import {now} from date;` gibi kullanımlar bu yüzden geçerli).
 //
 inline const std::unordered_map<std::string_view, TokenType> KEYWORD_MAP = {
     // --- Tip dönüşümü (ADR-026) ---
@@ -464,7 +400,6 @@ inline const std::unordered_map<std::string_view, TokenType> KEYWORD_MAP = {
     {"string",      TokenType::KW_STRING_TYPE},
     {"decimal",     TokenType::KW_DECIMAL},
     {"byte",        TokenType::KW_BYTE},
-    {"date",        TokenType::KW_DATE},
 
     // --- Literals ---
     {"true",        TokenType::KW_TRUE},
@@ -513,27 +448,10 @@ inline const std::unordered_map<std::string_view, TokenType> KEYWORD_MAP = {
 // OPERATOR_MAP — Operatör/Delimiter String → TokenType Dönüşüm Haritası
 // ============================================================================
 //
-// AMAÇ: Tokenizer'ın ürettiği OperatorToken ve DelimiterToken'ları TokenType'a
-//       dönüştürür. Her iki token tipi de aynı haritayı kullanır çünkü
-//       Parser seviyesinde delimiter'lar da operatör gibi işlenir.
-//
-// ANAHTAR: std::string_view — operatör/delimiter string'i (örn: "+", "->", "{")
-// DEĞER:   TokenType — Parser'ın anlayacağı anlamsal tip
-//
-// VERİ YAPISI: std::unordered_map<string_view, TokenType>
-//   - O(1) ortalama arama
-//   - const: derleme zamanı sabiti
-//   - Boyut: ~40 girdi
-//
-// NEDEN İKİ AYRI HARİTA DEĞİL (operator + delimiter)?
-//   - Parser seviyesinde fark yok: {, }, ; hepsi operatör gibi işlenir.
-//   - Tek harita = tek arama = daha basit kod.
-//
-// SIRALAMA UYARISI:
-//   Bu haritada sıralama önemli DEĞİL (unordered_map).
-//   ANCAK Tokenizer'daki operators[] ve delimiters[] dizilerindeki
-//   sıralama ÖNEMLİDİR — çok karakterliler önce gelmelidir!
-//   Örn: "->" önce, "-" sonra kontrol edilmelidir.
+// Tokenizer operatör ve delimiter token'larının türünü bu tablodan yazar
+// (ikisi parser için aynı şekilde işlenir). Hangi karakter dizisinin tek
+// operatör olarak okunacağına (">>=" mi, ">>" + "=" mi) tokenizer.cpp
+// scope()'daki karakter switch'i karar verir; yeni operatör iki yere de girer.
 //
 inline const std::unordered_map<std::string_view, TokenType> OPERATOR_MAP = {
     // --- 2 karakterli ---
@@ -659,366 +577,4 @@ inline const std::unordered_map<TokenType, std::string_view> OPERATOR_MAP_REV = 
     {TokenType::TERNARY,            "?"},
 };
 
-// ============================================================================
-// OPERATOR_MAP_STRREV — TokenType → Enum İsmi (Debug/Log İçin)
-// ============================================================================
-//
-// AMAÇ: AST log çıktısında operatörün enum ismini (string olarak) gösterir.
-//       OPERATOR_MAP_REV'den farkı: sembol yerine enum adı döndürür.
-//
-// KULLANIM:
-//   AST dump/debug çıktısı: TokenPrecedence(PLUS) yerine "PLUS(13)" gösterimi.
-//
-// ANAHTAR: TokenType — enum değeri (örn: TokenType::PLUS)
-// DEĞER:   std::string_view — enum ismi (örn: "PLUS")
-//
-// ÖRN: TokenType::PLUS       → "PLUS"
-//      TokenType::PLUS_EQUAL → "PLUS_EQUAL"
-//
-// NOT: İki harita da (REV ve STRREV) aynı anahtarları içerir ama farklı değerler.
-//      REV: "+" (operatör sembolü)
-//      STRREV: "PLUS" (enum ismi)
-//
-inline const std::unordered_map<TokenType, std::string_view> OPERATOR_MAP_STRREV = {
-    {TokenType::ARROW,              "ARROW"},
-    {TokenType::COLON_COLON,        "COLON_COLON"},
-    {TokenType::EQUAL_EQUAL,        "EQUAL_EQUAL"},
-    {TokenType::BANG_EQUAL,         "BANG_EQUAL"},
-    {TokenType::LESS_EQUAL,         "LESS_EQUAL"},
-    {TokenType::GREATER_EQUAL,      "GREATER_EQUAL"},
-    {TokenType::AMPERSAND_AMPERSAND,"AMPERSAND_AMPERSAND"},
-    {TokenType::PIPE_PIPE,          "PIPE_PIPE"},
-    {TokenType::PLUS_PLUS,          "PLUS_PLUS"},
-    {TokenType::MINUS_MINUS,        "MINUS_MINUS"},
-    {TokenType::LSHIFT,             "LSHIFT"},
-    {TokenType::RSHIFT,             "RSHIFT"},
-    {TokenType::STAR_STAR,          "STAR_STAR"},
-    {TokenType::PLUS_EQUAL,         "PLUS_EQUAL"},
-    {TokenType::MINUS_EQUAL,        "MINUS_EQUAL"},
-    {TokenType::STAR_EQUAL,         "STAR_EQUAL"},
-    {TokenType::SLASH_EQUAL,        "SLASH_EQUAL"},
-    {TokenType::PERCENT_EQUAL,      "PERCENT_EQUAL"},
-    {TokenType::AMPERSAND_EQUAL,    "AMPERSAND_EQUAL"},
-    {TokenType::PIPE_EQUAL,         "PIPE_EQUAL"},
-    {TokenType::CARET_EQUAL,        "CARET_EQUAL"},
-    {TokenType::LSHIFT_EQUAL,       "LSHIFT_EQUAL"},
-    {TokenType::RSHIFT_EQUAL,       "RSHIFT_EQUAL"},
-    {TokenType::PLUS,               "PLUS"},
-    {TokenType::MINUS,              "MINUS"},
-    {TokenType::STAR,               "STAR"},
-    {TokenType::SLASH,              "SLASH"},
-    {TokenType::PERCENT,            "PERCENT"},
-    {TokenType::LESS,               "LESS"},
-    {TokenType::GREATER,            "GREATER"},
-    {TokenType::CARET,              "CARET"},
-    {TokenType::BANG,               "BANG"},
-    {TokenType::TILDE,              "TILDE"},
-    {TokenType::AMPERSAND,          "AMPERSAND"},
-    {TokenType::PIPE,               "PIPE"},
-    {TokenType::EQUAL,              "EQUAL"},
-    {TokenType::LBRACKET,           "LBRACKET"},
-    {TokenType::RBRACKET,           "RBRACKET"},
-    {TokenType::LPAREN,             "LPAREN"},
-    {TokenType::RPAREN,             "RPAREN"},
-    {TokenType::LBRACE,             "LBRACE"},
-    {TokenType::RBRACE,             "RBRACE"},
-    {TokenType::SEMICOLON,          "SEMICOLON"},
-    {TokenType::COMMA,              "COMMA"},
-    {TokenType::COLON,              "COLON"},
-    {TokenType::DOT,                "DOT"},
-    {TokenType::TERNARY,            "TERNARY"},
-};
-
-// ============================================================================
-// TokenPrecedence — Operatör Öncelik Tablosu (Pratt Parser'ın Kalbi)
-// ============================================================================
-//
-// AMAÇ: Her TokenType için bir öncelik seviyesi döndürür.
-//       Yüksek sayı = daha sıkı bağlanma (önce işlenir).
-//
-// PARAMETRE: type — sorgulanan token tipi
-// DÖNÜŞ:     uint16_t — öncelik seviyesi (0-18)
-// KARMAŞIKLIK: O(1) — switch/case (derleyici jump table üretir)
-//
-// KULLANIM:
-//   uint16_t prec = TokenPrecedence(current.type);
-//   if (prec >= minPrec) { parseLeftDenotation(left); }
-//
-// ÖNCELİK SEVİYELERİ (yüksekten düşüğe):
-//   18: Üye erişimi       . -> [ ] ( )     — En yüksek
-//   17: Postfix           ++ --
-//   16: Unary prefix      ! ~ + -
-//   15: Üs alma           ** ^             — Sağ birleşmeli
-//   14: Çarpma/Bölme      * / %
-//   13: Toplama/Çıkarma   + -
-//   12: Bitsel kaydırma   << >>
-//   11: İlişkisel         < <= > >=
-//   10: Eşitlik           == !=
-//    9: Bitsel VE         &
-//    8: Bitsel XOR        ^ (Level 8; üs yalnız ** , #230)
-//    7: Bitsel VEYA       |
-//    6: Mantıksal VE      &&
-//    5: Mantıksal VEYA    ||
-//    4: `?`               ? (ternary YOK — nullable tip işareti)
-//    3: `:`               : (ternary else YOK — etiket)
-//    2: Atama             = += -= vb.      — Sağ birleşmeli
-//    1: Virgül            ,
-//    0: Önceliksiz        (değerler, EOF, bilinmeyen)
-//
-// KARAR (#230, ürün sahibi): ^ (CARET) bitsel XOR'tur ve Level 8'dedir;
-// üs alma yalnız ** (STAR_STAR, Level 15) ile yapılır. C/C++/Python ile
-// hizalıdır: & (9) ile | (7) arasına düşer, unary '-'den (13) gevşektir.
-// Geçmişte CARET, STAR_STAR ile birlikte "üs" diye Level 15'e konmuştu; IR
-// yine de BXOR üretiyordu. Bu uyumsuzluk, unary '-'nin CARET'ten gevşek
-// bağlanıp `-a ^ b`'yi `-(a ^ b)` diye parse etmesine yol açtı (bug #230).
-// Seviye 8'e inince `-a ^ b` doğru şekilde `(-a) ^ b` olur.
-//
-inline uint16_t TokenPrecedence(TokenType type) {
-    switch (type) {
-        // Level 18: Member access / call
-        case TokenType::DOT:
-        case TokenType::ARROW:
-        case TokenType::LBRACKET:
-        case TokenType::LPAREN:
-            return 18;
-
-        // Level 17: Postfix
-        case TokenType::PLUS_PLUS:
-        case TokenType::MINUS_MINUS:
-            return 17;
-
-        // Level 16: Unary prefix — sadece her zaman prefix olanlar
-        case TokenType::BANG:      // !
-        case TokenType::TILDE:     // ~
-            return 16;
-
-        // Level 15: Exponentiation
-        case TokenType::STAR_STAR: // ** (tek üs operatörü; ^ XOR'dur, #230)
-            return 15;
-
-        // Level 14: Multiplicative
-        case TokenType::STAR:      // *
-        case TokenType::SLASH:     // /
-        case TokenType::PERCENT:   // %
-            return 14;
-
-        // Level 13: Additive — PLUS ve MINUS hem unary hem binary
-        case TokenType::PLUS:      // +
-        case TokenType::MINUS:     // -
-            return 13;
-
-        // Level 12: Bit shift + as cast (sola-bağlı, aritmetikten gevşek)
-        case TokenType::LSHIFT:    // <<
-        case TokenType::RSHIFT:    // >>
-        case TokenType::KW_AS:     // as (ADR-026)
-            return 12;
-
-        // Level 11: Relational
-        case TokenType::LESS:      // <
-        case TokenType::LESS_EQUAL:// <=
-        case TokenType::GREATER:   // >
-        case TokenType::GREATER_EQUAL: // >=
-            return 11;
-
-        // Level 10: Equality
-        case TokenType::EQUAL_EQUAL:   // ==
-        case TokenType::BANG_EQUAL:    // !=
-            return 10;
-
-        // Level 9: Bitwise AND
-        case TokenType::AMPERSAND: // &
-            return 9;
-
-        // Level 8: Bitwise XOR
-        case TokenType::CARET:     // ^ bitsel XOR (#230; C/Python ile hizalı)
-            return 8;
-        // Level 7: Bitwise OR
-        case TokenType::PIPE:      // |
-            return 7;
-
-        // Level 6: Logical AND
-        case TokenType::AMPERSAND_AMPERSAND: // &&
-            return 6;
-
-        // Level 5: Logical OR
-        case TokenType::PIPE_PIPE: // ||
-            return 5;
-
-        // Level 4: Ternary
-        case TokenType::TERNARY:  // ?
-            return 4;
-        case TokenType::COLON:     // : (ternary için)
-            return 3;             // ternary'den düşük, atamadan yüksek
-
-        // Level 2: Assignment
-        case TokenType::EQUAL:     // =
-        case TokenType::PLUS_EQUAL:// +=
-        case TokenType::MINUS_EQUAL:// -=
-        case TokenType::STAR_EQUAL:// *=
-        case TokenType::SLASH_EQUAL:// /=
-        case TokenType::PERCENT_EQUAL:// %=
-        case TokenType::AMPERSAND_EQUAL:// &=
-        case TokenType::PIPE_EQUAL:// |=
-        case TokenType::CARET_EQUAL:// ^=
-        case TokenType::LSHIFT_EQUAL:// <<=
-        case TokenType::RSHIFT_EQUAL:// >>=
-            return 2;
-
-        // Level 1: Comma
-        case TokenType::COMMA:     // ,
-            return 1;
-
-        default:
-            return 0;  // Önceliksiz: değerler, EOF, bilinmeyen
-    }
-}
-
-// ============================================================================
-// RightAssociative — Sağdan Sola Birleşme (Associativity) Kontrolü
-// ============================================================================
-//
-// AMAÇ: Bir operatörün sağdan sola mı, yoksa soldan sağa mı birleştiğini
-//       belirler. Pratt parser'da doğru ağaç yapısını oluşturmak için kritik.
-//
-// PARAMETRE: type — sorgulanan operatör tipi
-// DÖNÜŞ:     bool — true: sağ birleşmeli, false: sol birleşmeli
-// KARMAŞIKLIK: O(1) — switch/case
-//
-// Sağ birleşmeli operatörler (a OP b OP c = a OP (b OP c)):
-//   - STAR_STAR (üs alma): 2 ** 3 ** 2 = 2 ** (3 ** 2) = 2^9 = 512
-//     (matematiksel kural: üs sağdan sola birleşir)
-//   - EQUAL (atama): a = b = 5 → a = (b = 5)
-//     (önce b = 5 çalışır, sonra a = b)
-//   - +=, -=, *=, vb. (birleşik atama): a += b += 5 → a += (b += 5)
-//   - TERNARY (üçlü koşul): a ? b : c ? d : e → a ? b : (c ? d : e)
-//     (iç içe ternary'lerde sağdan sola)
-//
-// Sol birleşmeli operatörler (a OP b OP c = (a OP b) OP c):
-//   - Tüm diğerleri: +, -, *, /, ^ (XOR), ==, &&, ||, vb.
-//     (a + b + c = (a + b) + c, yani önce a+b, sonuç + c)
-//
-// NOT (#230): CARET artık sağ birleşimli üs değil, bitsel XOR'dur — sol
-// birleşimlidir. Üs birleşim yönü yalnız STAR_STAR'a aittir.
-//
-inline bool RightAssociative(TokenType type) {
-    switch (type) {
-        case TokenType::STAR_STAR:  // ** (üs)
-        case TokenType::EQUAL:      // =
-        case TokenType::PLUS_EQUAL: // +=
-        case TokenType::MINUS_EQUAL:// -=
-        case TokenType::STAR_EQUAL: // *=
-        case TokenType::SLASH_EQUAL:// /=
-        case TokenType::PERCENT_EQUAL:// %=
-        case TokenType::AMPERSAND_EQUAL:// &=
-        case TokenType::PIPE_EQUAL: // |=
-        case TokenType::CARET_EQUAL:// ^=
-        case TokenType::LSHIFT_EQUAL:// <<=
-        case TokenType::RSHIFT_EQUAL:// >>=
-        case TokenType::TERNARY:   // ? (ternary)
-            return true;
-        default:
-            return false;
-    }
-}
-
-// ============================================================================
-// ParserToken — Parser'ın Kullandığı Token Yapısı (Köprü)
-// ============================================================================
-//
-// AMAÇ: Tokenizer'ın ürettiği ham Token ile Parser'ın ihtiyaç duyduğu
-//       anlamsal tipi (TokenType) bir arada tutar. İki katman arasında
-//       köprü görevi görür.
-//
-// ALANLAR:
-//
-//   token (Token*):
-//     Tokenizer'dan gelen orijinal token'a pointer.
-//     Neden pointer, neden değer (Token token) değil?
-//
-//     Çünkü Token polimorfik bir sınıf hiyerarşisidir:
-//       Token (base)
-//         +-- NumberToken   (isFloat, numberValue alanları)
-//         +-- StringToken   (context alanı)
-//         +-- IdentifierToken
-//         +-- OperatorToken
-//         +-- DelimiterToken
-//         +-- KeywordToken
-//
-//     Değer kopyası (Token token) OBJECT SLICING'e neden olur:
-//     NumberToken → Token'a kopyalanırken isFloat, numberValue KAYBOLUR.
-//
-//     BUG FIX (commit 40579ca):
-//       Eskiden "Token token" (değer) olarak tanımlanmıştı.
-//       NumberToken.isFloat her zaman false dönüyordu çünkü slicing oluyordu.
-//       "Token* token" (pointer) olarak değiştirildi.
-//
-//   type (TokenType):
-//     Token'ın anlamsal tipi. Örn: NUMBER, PLUS, KW_IF.
-//     Tokeni parselerken parseToken() tarafından atanır.
-//
-// METOTLAR:
-//   is(TokenType):                Tek tip kontrolü (O(1))
-//   is(initializer_list):         Çoklu tip kontrolü (O(k), k = liste boyutu)
-//   getPowerOperator():           Öncelik sorgulama (O(1), TokenPrecedence'a yönlendirir)
-//   isRightAssociative():         Birleşme yönü sorgulama (O(1))
-//
-struct ParserToken {
-    /* ====== Alanlar ====== */
-
-    // Tokenizer'dan gelen orijinal token pointer'ı.
-    //   nullptr olabilir mi? Hayır — geçerli bir token her zaman vardır.
-    //   SVR_VOID durumunda token nullptr olabilir (EOF sinyali).
-    Token*    token = nullptr;
-
-    // Token'ın anlamsal tipi.
-    //   Varsayılan: SVR_VOID (geçersiz/başlangıç değeri).
-    //   parseToken() tarafından atanır.
-    TokenType type  = TokenType::SVR_VOID;
-
-    /* ====== Kolaylık Metotları ====== */
-
-    // is() — Tek tip kontrolü
-    // PARAMETRE: t — sorgulanan token tipi
-    // DÖNÜŞ:     true — bu token t tipinde
-    // KARMAŞIKLIK: O(1)
-    // KULLANIM:   if (current.is(TokenType::SEMICOLON)) { ... }
-    bool is(TokenType t) const {
-        return type == t;
-    }
-
-    // is() — Çoklu tip kontrolü
-    // PARAMETRE: types — kontrol edilecek tipler listesi
-    // DÖNÜŞ:     true — bu token listedeki tiplerden birine aitse
-    // KARMAŞIKLIK: O(k) — k = liste boyutu
-    // KULLANIM:
-    //   if (current.is({KW_INT, KW_FLOAT, KW_VOID})) { ... }
-    //   if (current.is({TokenType::SEMICOLON, TokenType::RPAREN})) { ... }
-    bool is(std::initializer_list<TokenType> types) const {
-        for (TokenType t : types)
-            if (type == t) return true;
-        return false;
-    }
-
-    // getPowerOperator() — Operatör önceliği sorgulama (Pratt parser için)
-    // DÖNÜŞ:     uint16_t — öncelik seviyesi (0-18)
-    // KARMAŞIKLIK: O(1) — TokenPrecedence'a yönlendirir
-    // KULLANIM:
-    //   uint16_t prec = current.getPowerOperator();
-    //   while (prec >= minPrec) { ... parseLeftDenotation(left); }
-    uint16_t getPowerOperator() const {
-        return TokenPrecedence(type);
-    }
-
-    // isRightAssociative() — Birleşme yönü sorgulama
-    // DÖNÜŞ:     true — sağ birleşmeli (atama, üs, ternary)
-    //            false — sol birleşmeli (toplama, çarpma, vb.)
-    // KARMAŞIKLIK: O(1) — RightAssociative'a yönlendirir
-    // KULLANIM:
-    //   bool rightAssoc = current.isRightAssociative();
-    //   uint16_t nextPrec = rightAssoc ? prec : prec + 1;
-    bool isRightAssociative() const {
-        return RightAssociative(type);
-    }
-};
-
-#endif // SAQUT_PARSER_TOKEN
+#endif // SAQUT_TOKENIZER_TOKEN_KIND

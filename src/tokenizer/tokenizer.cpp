@@ -3,48 +3,43 @@
 // ============================================================================
 //
 // DİZİN:   src/tokenizer/tokenizer.cpp
-// KATMAN:  Katman 2 — Lexer yardımıyla kaynak kodu token'lara ayırır
-// BAĞIMLI: tokenizer/tokenizer.hpp
+// KATMAN:  Tokenizer — Lexer yardımıyla kaynak kodu token'lara ayırır
+// BAĞIMLI: tokenizer/tokenizer.hpp, tokenizer/token_kind.hpp
 //
-// AMAÇ:
-//   Lexer aracılığıyla karakterleri okuyarak anlamlı token'lar üretir:
-//   sayı, string literal, operatör, delimiter, keyword, identifier.
-//   scope() ana dispatch metodudur; scan() döngüde scope() çağırarak
-//   token listesini oluşturur.
+// scope() tek token okur (karakter switch'i → operatör/delimiter; aksi halde
+// sayı, string, ad). scan() döngüde scope() çağırır ve her token'ın kesin
+// türünü (kind) token_kind.hpp tablolarından yazar.
 //
 // ============================================================================
 
 #include "tokenizer/tokenizer.hpp"
-#include <unordered_map>
+#include "diagnostic/diagnostic_engine.hpp"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Keyword tablosu — okunan ad burada varsa keyword token'ı olur
-// ─────────────────────────────────────────────────────────────────────────────
-static const std::unordered_map<std::string_view, std::string_view> KW_MAP = {
-    {"if","if"},{"else","else"},{"for","for"},{"while","while"},{"do","do"},
-    {"as","as"},
-    {"switch","switch"},{"case","case"},{"default","default"},
-    {"break","break"},{"continue","continue"},{"return","return"},
-    {"try","try"},{"catch","catch"},{"finally","finally"},
-    {"throw","throw"},{"throws","throws"},{"assert","assert"},
-    {"void","void"},{"int","int"},{"float","float"},{"double","double"},
-    {"char","char"},{"string","string"},{"bool","bool"},{"decimal","decimal"},
-    {"byte","byte"},
-    {"true","true"},{"false","false"},{"null","null"},
-    {"class","class"},{"struct","struct"},{"interface","interface"},
-    {"enum","enum"},{"extends","extends"},{"implements","implements"},
-    {"new","new"},{"public","public"},{"private","private"},
-    {"protected","protected"},{"static","static"},{"final","final"},
-    {"abstract","abstract"},{"import","import"},{"export","export"},{"package","package"},
-    {"const","const"},{"extern","extern"},{"ffi","ffi"},{"typedef","typedef"},
-    {"sizeof","sizeof"},{"auto","auto"},{"constexpr","constexpr"},
-    {"noexcept","noexcept"},{"native","native"},
-    {"synchronized","synchronized"},{"volatile","volatile"},
-    {"transient","transient"},
-    // ADR-045: izole thread modeli
-    {"shared","shared"},{"lock","lock"},{"unlock","unlock"},{"wait","wait"},
-    {"thread","thread"},{"Pool","Pool"},{"List","List"},{"Thread","Thread"}
-};
+void Tokenizer::report(const SourceLocation& loc, const char* code, const std::string& message) {
+    if (diag_) diag_->report(code, loc, message);
+}
+
+// Token'ın kesin türü. Keyword ve operatör türleri tablodan; tabloda olmayan
+// operatör metni (scope()'a eklenip OPERATOR_MAP'e eklenmemiş) SVR_VOID olur
+// ve parser onu beklenmeyen token olarak raporlar.
+static TokenType kindOf(const Token& t) {
+    switch (t.category) {
+        case TokenCategory::Identifier: return TokenType::IDENTIFIER;
+        case TokenCategory::Number:     return TokenType::NUMBER;
+        case TokenCategory::String:     return TokenType::STRING;
+        case TokenCategory::Keyword: {
+            auto it = KEYWORD_MAP.find(t.token);
+            return it != KEYWORD_MAP.end() ? it->second : TokenType::SVR_VOID;
+        }
+        case TokenCategory::Operator:
+        case TokenCategory::Delimiter: {
+            auto it = OPERATOR_MAP.find(t.token);
+            return it != OPERATOR_MAP.end() ? it->second : TokenType::SVR_VOID;
+        }
+        case TokenCategory::End:        return TokenType::SVR_VOID;
+    }
+    return TokenType::SVR_VOID;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Yardımcı makrolar — OperatorToken ve DelimiterToken üretimi
@@ -52,10 +47,10 @@ static const std::unordered_map<std::string_view, std::string_view> KW_MAP = {
 #define MAKE_OP(str, len)                      \
     do {                                        \
         OperatorToken* _t = new OperatorToken();\
-        _t->start = hmx.getOffset();            \
-        _t->loc   = hmx.getLocation();          \
-        hmx.toChar(len);                        \
-        _t->end   = hmx.getOffset();            \
+        _t->start = lexer.getOffset();            \
+        _t->loc   = lexer.getLocation();          \
+        lexer.toChar(len);                        \
+        _t->end   = lexer.getOffset();            \
         _t->token = (str);                      \
         return _t;                              \
     } while(0)
@@ -63,10 +58,10 @@ static const std::unordered_map<std::string_view, std::string_view> KW_MAP = {
 #define MAKE_DEL(str, len)                       \
     do {                                          \
         DelimiterToken* _t = new DelimiterToken();\
-        _t->start = hmx.getOffset();              \
-        _t->loc   = hmx.getLocation();            \
-        hmx.toChar(len);                          \
-        _t->end   = hmx.getOffset();              \
+        _t->start = lexer.getOffset();              \
+        _t->loc   = lexer.getLocation();            \
+        lexer.toChar(len);                          \
+        _t->end   = lexer.getOffset();              \
         _t->token = (str);                        \
         return _t;                                \
     } while(0)
@@ -74,14 +69,21 @@ static const std::unordered_map<std::string_view, std::string_view> KW_MAP = {
 // ─────────────────────────────────────────────────────────────────────────────
 // scan
 // ─────────────────────────────────────────────────────────────────────────────
-std::vector<Token*> Tokenizer::scan(std::string input, std::string filePath) {
-    std::vector<Token*> tokens;
-    hmx.setSourceText(filePath, input);
+TokenList Tokenizer::scan(std::string input, std::string filePath) {
+    TokenList tokens;
+    lexer.setSourceText(filePath, input);
     while (true) {
         Token* token = scope();
-        if (token->token == "EOL") break;
+        // Dosya sonu işareti kategoriyle tanınır, metinle değil: eskiden
+        // `token == "EOL"` karşılaştırması `EOL` adlı bir değişkende
+        // tokenizasyonu sessizce bitiriyordu (#296).
+        if (token->category == TokenCategory::End) {
+            delete token;
+            break;
+        }
+        token->kind = kindOf(*token);
         tokens.push_back(token);
-        if (hmx.isEnd()) break;
+        if (lexer.isEnd()) break;
     }
     return tokens;
 }
@@ -90,21 +92,20 @@ std::vector<Token*> Tokenizer::scan(std::string input, std::string filePath) {
 // scope — ana dispatch; her token için TEK geçiş
 // ─────────────────────────────────────────────────────────────────────────────
 Token* Tokenizer::scope() {
-    hmx.skipWhiteSpace();
+    lexer.skipWhiteSpace();
 
-    // Yorum satırları — include() burada hâlâ gerekli (2 karakter kontrol)
-    if (hmx.include("//", true))  { skipOneLineComment();  return scope(); }
-    if (hmx.include("/*", true))  { skipMultiLineComment(); return scope(); }
+    // Yorumlar
+    if (lexer.tryConsume("//"))  { skipOneLineComment();  return scope(); }
+    if (lexer.tryConsume("/*"))  { skipMultiLineComment(); return scope(); }
 
-    if (hmx.isEnd()) {
-        Token* t = new Token();
-        t->token = "EOL";
+    if (lexer.isEnd()) {
+        Token* t = new Token(TokenCategory::End);   // dosya sonu işareti; scan() siler
         return t;
     }
 
-    if (hmx.getchar() == '"') return readString();
-    if (hmx.isNumeric())      {
-        INumber lem = hmx.readNumeric();
+    if (lexer.getchar() == '"') return readString();
+    if (lexer.isNumeric())      {
+        INumber lem = lexer.readNumeric();
         NumberToken* nt = new NumberToken();
         nt->loc        = lem.startLoc;
         nt->base       = lem.base;
@@ -116,8 +117,8 @@ Token* Tokenizer::scope() {
         return nt;
     }
 
-    char c0 = hmx.getchar();
-    char c1 = hmx.getchar(1);  // sadece 1 ek okuma, include() değil
+    char c0 = lexer.getchar();
+    char c1 = lexer.getchar(1);  // bir sonraki karakter (tüketmeden bakış)
 
     // ── Operatörler & Delimiter'lar — switch ile O(1) dispatch ───────────
     switch (c0) {
@@ -153,7 +154,7 @@ Token* Tokenizer::scope() {
         // < <= << <<=
         case '<':
             if (c1 == '<') {
-                if (hmx.getchar(2) == '=') MAKE_OP("<<=", 3);
+                if (lexer.getchar(2) == '=') MAKE_OP("<<=", 3);
                 MAKE_OP("<<", 2);
             }
             if (c1 == '=') MAKE_OP("<=", 2);
@@ -162,7 +163,7 @@ Token* Tokenizer::scope() {
         // > >= >> >>=
         case '>':
             if (c1 == '>') {
-                if (hmx.getchar(2) == '=') MAKE_OP(">>=", 3);
+                if (lexer.getchar(2) == '=') MAKE_OP(">>=", 3);
                 MAKE_OP(">>", 2);
             }
             if (c1 == '=') MAKE_OP(">=", 2);
@@ -221,8 +222,7 @@ Token* Tokenizer::scope() {
     // ── Identifier veya Keyword — önce oku, sonra hash map'te ara ────────
     IdentifierToken* id = readIdentifier();
 
-    auto it = KW_MAP.find(id->token);
-    if (it != KW_MAP.end()) {
+    if (KEYWORD_MAP.count(id->token)) {
         KeywordToken* kt = new KeywordToken();
         kt->start = id->start;
         kt->end   = id->end;
@@ -240,12 +240,12 @@ Token* Tokenizer::scope() {
 // okunamazsa (tanınmayan karakter) bir karakter atlayıp boş ad döndürür.
 // ─────────────────────────────────────────────────────────────────────────────
 IdentifierToken* Tokenizer::readIdentifier() {
-    hmx.beginPosition();
+    lexer.beginPosition();
     IdentifierToken* it = new IdentifierToken();
-    it->start = hmx.getOffset();
+    it->start = lexer.getOffset();
 
-    while (!hmx.isEnd()) {
-        char c = hmx.getchar();
+    while (!lexer.isEnd()) {
+        char c = lexer.getchar();
         bool read = false;
 
         if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
@@ -257,31 +257,33 @@ IdentifierToken* Tokenizer::readIdentifier() {
         }
 
         if (read) {
-            hmx.nextChar();
+            lexer.nextChar();
         } else {
-            if (it->token.empty()) { hmx.nextChar(); } break;
+            if (it->token.empty()) { lexer.nextChar(); } break;
         }
     }
 
-    it->end  = hmx.getOffset();
+    it->end  = lexer.getOffset();
     it->size = static_cast<int>(it->context.size());
-    it->loc  = hmx.sourceFile.offsetToLocation(it->start);
-    hmx.acceptPosition();
+    it->loc  = lexer.sourceFile.offsetToLocation(it->start);
+    lexer.acceptPosition();
     return it;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// readString — değişmedi
+// readString — "..." literalini okur; kaçışları çözülmüş metni context'e yazar.
+// Sözcüksel hatalar: E907 (kapanış '"' yok), E906 (bilinmeyen kaçış, #256).
 // ─────────────────────────────────────────────────────────────────────────────
 StringToken* Tokenizer::readString() {
-    hmx.beginPosition();
+    lexer.beginPosition();
     StringToken* st = new StringToken();
     bool started = false;
     bool ended   = false;
-    st->start = hmx.getOffset();
+    std::string badEscapes;   // tanınmayan kaçışların harfleri (`\q` → 'q')
+    st->start = lexer.getOffset();
 
-    while (!hmx.isEnd()) {
-        char c = hmx.getchar();
+    while (!lexer.isEnd()) {
+        char c = lexer.getchar();
         st->token.push_back(c);
         switch (c) {
             case '"':
@@ -289,8 +291,8 @@ StringToken* Tokenizer::readString() {
                 else          { ended   = true; }
                 break;
             case '\\': {
-                hmx.nextChar();
-                c = hmx.getchar();
+                lexer.nextChar();
+                c = lexer.getchar();
                 st->token.push_back(c);
                 // Kaçış dizisini gerçek kontrol/karakter değerine çevir
                 // (wiki/literals.md sözleşmesi: \n \t \r \b \\ \").
@@ -304,9 +306,8 @@ StringToken* Tokenizer::readString() {
                     case '"': actual = c;    break;
                     default:
                         // #256: tanınmayan kaçış eskiden sessizce harfe
-                        // dönüşüyordu (`"\x41"` → `x41`). Artık işaretlenir;
-                        // parser E906 raporlar.
-                        st->badEscapes.push_back(c);
+                        // dönüşüyordu (`"\x41"` → `x41`); E906 raporlanır.
+                        badEscapes.push_back(c);
                         actual = c;
                         break;
                 }
@@ -317,15 +318,21 @@ StringToken* Tokenizer::readString() {
                 st->context.push_back(c);
                 break;
         }
-        hmx.nextChar();
+        lexer.nextChar();
         if (ended) break;
     }
 
-    st->unterminated = !ended;
-    st->end  = hmx.getOffset();
+    st->end  = lexer.getOffset();
     st->size = static_cast<int>(st->context.size());
-    st->loc  = hmx.sourceFile.offsetToLocation(st->start);
-    hmx.acceptPosition();
+    st->loc  = lexer.sourceFile.offsetToLocation(st->start);
+    lexer.acceptPosition();
+
+    if (!ended)
+        report(st->loc, "E907", "unterminated string literal (missing closing '\"')");
+    for (char e : badEscapes)
+        report(st->loc, "E906",
+               std::string("unknown escape sequence '\\") + e +
+                   "' in string literal (supported: \\n \\t \\r \\b \\\\ \\\")");
     return st;
 }
 
@@ -333,22 +340,22 @@ StringToken* Tokenizer::readString() {
 // skipOneLineComment / skipMultiLineComment — değişmedi
 // ─────────────────────────────────────────────────────────────────────────────
 void Tokenizer::skipOneLineComment() {
-    while (!hmx.isEnd()) {
-        if (hmx.getchar() == '\n') {
-            hmx.nextChar();
-            hmx.skipWhiteSpace();
+    while (!lexer.isEnd()) {
+        if (lexer.getchar() == '\n') {
+            lexer.nextChar();
+            lexer.skipWhiteSpace();
             return;
         }
-        hmx.nextChar();
+        lexer.nextChar();
     }
 }
 
 void Tokenizer::skipMultiLineComment() {
-    while (!hmx.isEnd()) {
-        if (hmx.include("*/", true)) {
-            hmx.skipWhiteSpace();
+    while (!lexer.isEnd()) {
+        if (lexer.tryConsume("*/")) {
+            lexer.skipWhiteSpace();
             return;
         }
-        hmx.nextChar();
+        lexer.nextChar();
     }
 }
