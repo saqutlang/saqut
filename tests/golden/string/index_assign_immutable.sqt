@@ -1,0 +1,9 @@
+// string değiştirilemez: s[i] okunabilir ama yazılamaz. Tip denetleyici
+// reddetmeseydi IR string üzerinde dizi yazma komutu üretirdi.
+int main() {
+    string s = "abc";
+    s[1] = "x";
+    s[0] += "y";
+    print(s);
+    return 0;
+}

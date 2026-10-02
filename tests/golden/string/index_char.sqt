@@ -1,0 +1,62 @@
+// string[i]: i'nci karakter (0 tabanlı, UTF-8 kod noktası), tek karakterlik
+// string olarak. s.charAt(i) ile aynıdır — sınır dışı hatası da aynı (E_HOST).
+// İndeks int, byte ya da longint olabilir; her bağlam ayrı sınanır (tanım,
+// literal alıcı, ifade indeks, fonksiyon dönüşü, struct alanı, dizi elemanı,
+// birleştirme, karşılaştırma, döngü, daraltılmış nullable, çok baytlı karakter).
+struct Kutu {
+    string ad;
+}
+
+string ilk(string s) {
+    return s[0];
+}
+
+int main() {
+    string a = "Merhaba";
+    print(a[0]); print(a[1]); print(a[6]); print("\n");
+    print("Merhaba"[2]); print("\n");
+    int i = 3;
+    print(a[i]); print(a[i + 1]); print("\n");
+    byte b = 4;
+    print(a[b]); print("\n");
+    longint li = 5;
+    print(a[li]); print("\n");
+    string u = "çğüşİ€😀";
+    print(u[0]); print(u[4]); print(u[5]); print(u[6]); print("\n");
+    print(ilk("xyz")); print("\n");
+    Kutu k;
+    k.ad = "Ankara";
+    print(k.ad[1]); print("\n");
+    string[] kelimeler = ["bir", "iki"];
+    print(kelimeler[1][0]); print("\n");
+    string t = a[0] + a[1];
+    print(t); print("\n");
+    print(a[0] == "M"); print("\n");
+    string ters = "";
+    for (int j = a.length() - 1; j >= 0; j = j - 1) {
+        ters = ters + a[j];
+    }
+    print(ters); print("\n");
+    string? n = "opsiyonel";
+    if (n != null) {
+        print(n[2]); print("\n");
+    }
+    try {
+        print(a[7]);
+    } catch (Error e) {
+        print(e.code); print("|"); print(e.message); print("\n");
+    }
+    try {
+        print(a[-1]);
+    } catch (Error e) {
+        print(e.code); print("\n");
+    }
+    // 2^32 + 1: int'e kesilseydi 1 olur ve "e" dönerdi.
+    longint buyuk = 4294967297;
+    try {
+        print(a[buyuk]);
+    } catch (Error e) {
+        print(e.code); print("\n");
+    }
+    return 0;
+}
