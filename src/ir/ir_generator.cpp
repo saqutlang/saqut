@@ -1457,7 +1457,7 @@ int IRGenerator::generateExpression(ASTNode* node) {
         if (auto* objExpr = dynamic_cast<ExpressionNode*>(idx->object);
             objExpr && objExpr->resolvedType.isString()) {
             static const int charAtId =
-                dataMethodId(dataLookupMethod("string", "charAt", false, false));
+                dataMethodId(dataFindMethod(DataMethodCategory::StringVal, "charAt"));
             Instruction ins(Opcode::CALLHOST);
             ins.functionName = "__builtin_method__";
             ins.intValue = kBuiltinBase + charAtId;
