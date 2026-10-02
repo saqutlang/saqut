@@ -1,0 +1,7 @@
+// string? üzerinde [i]: alıcı null olamaz (metot çağrısıyla aynı kural).
+// Daraltılmış kullanım (if (n != null) { n[0] }) string/index_char.sqt'de.
+int main() {
+    string? n = null;
+    print(n[0]);
+    return 0;
+}

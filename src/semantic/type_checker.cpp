@@ -958,6 +958,20 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             Type leftType = checkExpr(bin->Left);
             Type rightType = checkExpr(bin->Right, leftType);
             bool isLit = bin->Right && bin->Right->kind == ASTKind::Literal;
+            // string değiştirilemez: s[i] okunur ama yazılamaz (IR'da string
+            // için eleman yazma yolu yoktur).
+            if (auto* lix = dynamic_cast<IndexExpressionNode*>(bin->Left)) {
+                auto* obj = dynamic_cast<ExpressionNode*>(lix->object);
+                if (obj && obj->resolvedType.isString()) {
+                    diag_.report("E003", bin->loc,
+                                 "cannot assign to '" + nodeHintText(bin->Left) +
+                                     "': strings are immutable",
+                                 "build a new string, e.g. `s = s.substring(0, i) + \"x\" + "
+                                 "s.substring(i + 1, s.length() - i - 1);`");
+                    result = Type::error();
+                    break;
+                }
+            }
             // ── ADR-045 ────────────────────────────────────────────────────
             if (auto* lid = dynamic_cast<IdentifierNode*>(bin->Left)) {
                 const std::string lname =
@@ -1568,25 +1582,43 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
     case ASTKind::IndexExpression: {
         auto* ie = (IndexExpressionNode*) node;
         Type objType = checkExpr(ie->object);
-        if (ie->index)
-            checkExpr(ie->index);
+        Type idxType = ie->index ? checkExpr(ie->index) : Type::error();
+        // İndeks null olmayan bir tamsayıdır: int, byte ya da longint. Önceden
+        // denetlenmiyordu: `d["x"]` string işaretçisinin bitlerini, `d[1.5]`
+        // kesilmiş değeri indeks olarak kullanıyordu.
+        if (!idxType.isError() &&
+            (idxType.nullable || !(idxType.isInt() || idxType.isByte() || idxType.isLongInt()))) {
+            diag_.report("E003", ie->index->loc,
+                "index must be int, byte or longint, got '" + idxType.toString() + "'",
+                idxType.nullable ? "check for null first: `if (i != null) { ... }`"
+                                 : "convert explicitly: `value as int`");
+        }
         // array eleman tipi
         if (objType.isArray() && objType.elementType) {
             result = *objType.elementType;
+        } else if (objType.isString()) {
+            // s[i]: i'nci karakter (0 tabanlı, UTF-8 kod noktası) tek karakterlik
+            // string olarak — s.charAt(i) ile aynı çağrıya iner (IR). Alıcı
+            // null olamaz; mesaj metot çağrısındaki alıcı kuralıyla aynı.
+            result = Type::String();
+            if (objType.nullable &&
+                !checkAssign(Type::String(), objType, false, ie->object->loc,
+                             nodeHintText(ie->object), nodeHintText(ie->object)))
+                result = Type::error();
         } else if (objType.isError()) {
             // Taban ifade zaten hatalı (ör. tanımsız değişken) — o hata
             // zaten raporlandı, burada ikinci bir tanı üretip kademelendirme
             // (cascade) yapmıyoruz.
             result = Type::error();
         } else {
-            // #135: [int] yalnız array üzerinde tanımlı. Önceden burada
-            // sessizce Type::Int() varsayılıp runtime'a bırakılıyordu —
-            // string[int] gibi indekslenemez erişimler `check` sıfır hata
-            // verip runtime'da "expected array, got different type" ile
-            // çöküyordu. Statik olarak reddet.
+            // #135: [index] yalnız array ve string üzerinde tanımlı. Önceden
+            // burada sessizce Type::Int() varsayılıp runtime'a bırakılıyordu —
+            // indekslenemez erişimler `check` sıfır hata verip runtime'da
+            // "expected array, got different type" ile çöküyordu. Statik
+            // olarak reddet.
             diag_.report("E012", ie->loc,
                 "'" + objType.toString() + "' does not support [index] access",
-                "only array types support [index] access");
+                "only array and string values support [index] access");
             result = Type::error();
         }
         break;

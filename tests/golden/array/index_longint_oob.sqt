@@ -1,0 +1,22 @@
+// longint indeks 64-bit karşılaştırılır. VM eskiden indeksi int'e kesiyordu:
+// d[4294967297] (2^32 + 1) sessizce d[1]'i okuyup yazıyordu; JIT ise doğru
+// biçimde sınır dışı hatası veriyordu (VM≢JIT). Okuma da yazma da E_OOB
+// vermeli ve d[1] değişmemeli.
+int main() {
+    int[] d = [10, 20, 30];
+    longint buyuk = 4294967297;
+    try {
+        print(d[buyuk]);
+    } catch (Error e) {
+        print(e.code); print("\n");
+    }
+    try {
+        d[buyuk] = 99;
+    } catch (Error e) {
+        print(e.code); print("\n");
+    }
+    longint iki = 2;
+    print(d[iki]); print("\n");
+    print(d[1]); print("\n");
+    return 0;
+}

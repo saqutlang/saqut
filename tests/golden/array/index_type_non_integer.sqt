@@ -1,0 +1,15 @@
+// İndeks int, byte ya da longint olmalı. Önceden denetlenmiyordu:
+// d["x"] string işaretçisinin bitlerini indeks sayıyordu (runtime'da
+// "index=-748651296"), d[1.5] sessizce 1'e kesiliyordu, d[true] 1 sayılıyordu.
+enum Renk { K, M }
+
+int main() {
+    int[] d = [1, 2, 3];
+    string s = "abc";
+    print(d["x"]);
+    print(d[1.5]);
+    print(d[true]);
+    print(d[Renk.K]);
+    print(s["x"]);
+    return 0;
+}

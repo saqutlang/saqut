@@ -165,8 +165,10 @@ int str_repeat(HostCallFrame* f) {
 int str_charAt(HostCallFrame* f) {
     if (!wantStr(f, 0, "charAt")) return 1;
     const std::string& s = hostAsString(f->args[0]);
-    int idx = (int)hostAsI64(f->args[1]);
-    if (idx < 0 || idx >= (int)utf8::codePointCount(s)) {
+    // 64-bit okunur: s[i] longint indeks de geçebilir; (int) kesme büyük bir
+    // indeksi sınır içindeki yanlış bir karaktere çevirirdi.
+    const int64_t idx = hostAsI64(f->args[1]);
+    if (idx < 0 || idx >= (int64_t)utf8::codePointCount(s)) {
         f->err.set("string::charAt — index out of bounds", "E_HOST");
         return 1;
     }
