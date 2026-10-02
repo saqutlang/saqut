@@ -119,4 +119,12 @@ inline int cmdAst(const CliArgs& args) {
     return saqut::exit_code::kSuccess;
 }
 
+inline constexpr CliCommand kAstCommand{
+    .name        = "ast",
+    .usage       = "saqut ast <file> [--json] [--dont-optimize] [-o <f>]",
+    .description = "print AST hierarchy and analysis as JSON",
+    .options     = OPT_DONT_OPTIMIZE | OPT_JSON | OPT_OUTPUT,
+    .run         = cmdAst,
+};
+
 #endif // SAQUT_CLI_AST

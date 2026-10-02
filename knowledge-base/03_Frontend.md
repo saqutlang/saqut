@@ -146,19 +146,24 @@ new character/numeric scanning behavior can require lexer changes.
 ### Token Production
 
 `Tokenizer::scan()` repeatedly calls its scanner until end of input and returns
-`std::vector<Token*>`. The caller owns those pointers until ownership is
-transferred to `ModuleGraph`.
+a `TokenList` (`std::vector<Token*>`). The caller owns those pointers until
+ownership is transferred to `ModuleGraph`.
 
-Classification uses:
+Classification (updated #296, 2026-09-27):
 
-- explicit longest-form branches for multi-character operators;
-- a keyword map for keyword versus identifier selection;
-- dedicated token classes for identifiers, keywords, operators, delimiters,
-  numeric literals, strings, and end-of-line/end markers;
-- `parser/token.hpp` to translate lexical token data into `TokenType`.
+- explicit longest-form branches (character switch in `scope()`) for
+  multi-character operators;
+- `KEYWORD_MAP` in `src/tokenizer/token_kind.hpp` — the single keyword list,
+  used by the tokenizer for keyword/identifier selection and for the token's
+  `TokenType`;
+- each token carries `category` (`TokenCategory`: identifier, keyword, number,
+  string, operator, delimiter — the `saqut tokens` label and LSP input) and
+  `kind` (`TokenType`, filled in `scan()` from `KEYWORD_MAP`/`OPERATOR_MAP`).
+  The parser reads `kind`; it no longer reclassifies. `ParserToken` and the
+  precedence table live in `src/parser/parser_token.hpp`.
 
-Whitespace and comments are skipped and are not parser tokens. An EOL sentinel
-is constructed by the scanner but is not appended to the returned token vector.
+Whitespace and comments are skipped and are not parser tokens. The end-of-input
+sentinel is recognized by `TokenCategory::End` (not by text) and deleted.
 
 The presence of a value in `TokenType` or the keyword map is not proof that the
 parser, semantic layer, IR, and backends support that language feature.
@@ -195,12 +200,13 @@ missing locations from assumptions.
 
 ### Error Handling and Limits
 
-The tokenizer has no `DiagnosticEngine` dependency. Static inspection found:
+The tokenizer takes an optional `DiagnosticEngine*` (ModuleLoader, `symbols`,
+`exec` and the FFI catalog pass one; `tokens` and `bench` do not). It reports
+E906 (unknown escape) and E907 (unterminated string). Known gaps:
 
-- an unknown character can become an empty identifier-like token after forced
-  progress;
-- unterminated strings and block comments reach EOF without an evident
-  structured lexical diagnostic;
+- an unknown character becomes an empty identifier-like token after forced
+  progress, with no lexical diagnostic;
+- unterminated block comments reach EOF without a diagnostic;
 - malformed-number behavior is handled locally rather than through the shared
   diagnostics layer.
 
@@ -210,8 +216,9 @@ Verified** until tracked tests are run.
 
 ### Change Checklist
 
-When adding lexical syntax, audit `lexer.*`, `tokenizer.*`, `parser/token.hpp`,
-parser precedence/denotation, diagnostics, formatter/highlighting consumers,
+When adding lexical syntax, audit `lexer.*`, `tokenizer.*`,
+`tokenizer/token_kind.hpp`, `parser/parser_token.hpp` precedence, parser
+denotation, diagnostics, formatter/highlighting consumers,
 and tracked tests. Keep raw text, decoded value, offsets, and parser token type
 semantically aligned.
 

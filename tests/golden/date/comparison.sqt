@@ -5,7 +5,7 @@ void main() {
     date? b = parse("2026-06-01T00:00:00Z");
     // Legal kapı: nested-if daraltması — compound `&&` yalnız sağ operandını
     // daraltır, gövdeye taşmaz (bilinen sınır, açık soru kaydı). Sıralama
-    // nullable operandla derlenemez (E003 kararı).
+    // nullable operandla derlenemez (E022).
     if (a != null) {
         if (b != null) {
             print(a < b);

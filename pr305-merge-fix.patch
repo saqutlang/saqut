@@ -1,0 +1,25 @@
+From 2afa5b416f09d0ac428392c1a7d327394e39eca7 Mon Sep 17 00:00:00 2001
+From: t <a@b>
+Date: Fri, 2 Oct 2026 20:28:13 +0000
+Subject: [PATCH] fix(ir): s[i] charAt aramasi dataFindMethod API'sine tasindi
+ (#290 x #304)
+
+---
+ src/ir/ir_generator.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/ir/ir_generator.cpp b/src/ir/ir_generator.cpp
+index fa7868c..96b430c 100644
+--- a/src/ir/ir_generator.cpp
++++ b/src/ir/ir_generator.cpp
+@@ -1457,7 +1457,7 @@ int IRGenerator::generateExpression(ASTNode* node) {
+         if (auto* objExpr = dynamic_cast<ExpressionNode*>(idx->object);
+             objExpr && objExpr->resolvedType.isString()) {
+             static const int charAtId =
+-                dataMethodId(dataLookupMethod("string", "charAt", false, false));
++                dataMethodId(dataFindMethod(DataMethodCategory::StringVal, "charAt"));
+             Instruction ins(Opcode::CALLHOST);
+             ins.functionName = "__builtin_method__";
+             ins.intValue = kBuiltinBase + charAtId;
+-- 
+2.43.0

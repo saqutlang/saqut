@@ -70,9 +70,9 @@ public:
 
 private:
     FfiCatalog() {
-        Tokenizer tokenizer;
+        DiagnosticEngine diag; // gömülü kaynak doğru varsayılır; tanılar yutulur (#288)
+        Tokenizer tokenizer(&diag);
         tokens_ = tokenizer.scan(kEmbeddedRootSqt, "<builtin:root.sqt>");
-        DiagnosticEngine diag; // gömülü kaynak doğru varsayılır; tanılar yutulur
         Parser parser(&diag);
         ast_ = parser.parse(tokens_);
         if (!ast_) return;

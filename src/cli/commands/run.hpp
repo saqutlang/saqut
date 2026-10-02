@@ -112,9 +112,9 @@ inline int cmdRun(const CliArgs& args) {
     // ── Aşama 6: Çalıştırma backend'i ────────────────────────────────────
     // #80/MIRPLAN.md: --jit istenirse KISMİ/sessiz VM'e düşme YOK —
     // kullanıcı talimatı: "JIT diyorsam baştan sona JIT derlemesi
-    // gerekiyor". Program.functions'daki HER fonksiyon Dilim 1'in
-    // desteklediği opcode kümesinde değilse, HİÇBİR ŞEY çalıştırılmadan
-    // açık bir hatayla çıkılır — VM devreye asla girmez.
+    // gerekiyor". Program.functions'daki HER fonksiyon JIT'in desteklediği
+    // opcode kümesinde değilse, HİÇBİR ŞEY çalıştırılmadan açık bir hatayla
+    // çıkılır — VM devreye asla girmez.
     //
     // #229 minor: warning'ler run modunda da GÖRÜNMELİ (stderr), ama
     // programı BLOKLAMAMALI. Hata yokken warning varsa stderr'e basılır;
@@ -184,5 +184,14 @@ inline int cmdRun(const CliArgs& args) {
 
     return exitCode;
 }
+
+inline constexpr CliCommand kRunCommand{
+    .name        = "run",
+    .usage       = "saqut run <file> [options] [-- args]",
+    .description = "run program (token → AST → IR → VM)",
+    .options     = OPT_JIT | OPT_DONT_OPTIMIZE | OPT_VERBOSE | OPT_PROFILE | OPT_GC_STATS |
+                   OPT_MAX_CALL_DEPTH | OPT_GC_THRESHOLD | OPT_PROGRAM_ARGS,
+    .run         = cmdRun,
+};
 
 #endif // SAQUT_CLI_RUN

@@ -116,7 +116,7 @@ public:
 // ADR-045: thread { gövde } — ifade; tipi Thread. Gövde hemen başlayan yeni bir
 // thread'de (kendi isolate'inde) çalışır. SymbolCollector yakalanan yerelleri
 // (çevreleyen fonksiyonun yerel/parametreleri) captures/captureTypes'a yazar;
-// IRGenerator gövdeyi 0 parametreli sentetik fonksiyona kaldırır (Faz 3-c).
+// IRGenerator gövdeyi 0 parametreli sentetik fonksiyona kaldırır (lambda lifting).
 class ThreadExprNode : public ExpressionNode {
 public:
     ASTNode*                 body = nullptr;   // BlockNode

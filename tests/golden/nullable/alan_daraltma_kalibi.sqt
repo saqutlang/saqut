@@ -4,7 +4,7 @@
 // `if (d.ic != null)` ile kullanım arasına giren bir çağrı alanı null'layabilir
 // (derleyicinin göremediği bir alias üzerinden). Yerel değişkende bu risk yok.
 //
-// Bu fixture, E003 hata mesajının hint'inde ÖNERİLEN kalıbın gerçekten
+// Bu fixture, E022 hata mesajının hint'inde ÖNERİLEN kalıbın gerçekten
 // çalıştığını doğrular. Hint yanlış bir yol gösterirse kullanıcı çalışmayan
 // koda yönlendirilmiş olur — eski hint tam bunu yapıyordu ("if (variable
 // != null)" diyordu, ama o kalıp alan erişiminde derlenmez).

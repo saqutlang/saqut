@@ -1,5 +1,5 @@
 // Karar: sıralama karşılaştırması (<, >, <=, >=) nullable operandla
-// derlenemez (E003) — null'un payload'ı (0) karşılaştırmaya katılır,
+// derlenemez (E022) — null'un payload'ı (0) karşılaştırmaya katılır,
 // `null < 26` → true (ölçüldü, VM≡JIT). Eşitlik (==/!=) kapının kendisi
 // olduğundan dokunulmadı; legal kapı nested/guard daraltmasıdır.
 int main() {

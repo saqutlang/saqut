@@ -18,16 +18,21 @@
 //   sözleşmesi vardı — bir metodu tabloda yukarı taşımak sessizce yanlış
 //   gövdeyi çağırırdı. Artık ayrılamazlar.
 //
-// YENİ VERİ TİPİ EKLEMEK:
+// YENİ METOT EKLEMEK: ilgili modülün tablosunun sonuna bir satır.
+//
+// METODU OLAN YENİ BİR ALICI TİPİ EKLEMEK:
 //   1. src/data/<tip>.{hpp,cpp} yaz, data<Tip>Methods() sağla
-//   2. dataAllMethods() içine bir satır ekle
-//   Başka hiçbir dosyaya dokunulmaz.
+//   2. DataMethodCategory'ye bir değer, dataReceiverCategory()'ye bir dal
+//   3. dataAllMethods() içine bir satır ekle
+//   DataMethodCategory üzerindeki switch'ler (TypeChecker) eksik dalı
+//   derleyici uyarısıyla (-Wswitch) gösterir.
 //
 // ============================================================================
 
 #ifndef SAQUT_DATA_REGISTRY
 #define SAQUT_DATA_REGISTRY
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -35,20 +40,28 @@
 
 // Tüm veri tiplerinin metodları, tek düz liste. İndeks = runtime id.
 //
-// Sıra, modüllerin dataAllMethods() içindeki sırasıdır ve KARARLIDIR: id'ler
-// IR'ye gömülür (CALLHOST::intValue), dolayısıyla mevcut bir kaydın indeksi
-// kayarsa eski IR yanlış metoda gider. Yeni kayıtlar SONA eklenir.
+// Sıra, modüllerin dataAllMethods() içindeki sırasıdır. id'ler IR'ye gömülür
+// (CALLHOST::intValue); ADR-044 gereği kararlı tutulur: yeni kayıtlar SONA
+// eklenir.
 const std::vector<DataMethod>& dataAllMethods();
 
-// Derleme zamanı arama — TypeChecker / SymbolTable / LSP kullanır.
-//
-// leftName: "int", "string", "Person", ...
-// isStruct: TypeChecker'ın hasStruct() sonucu (struct array metodları için)
-// Dönüş: nullptr = bu tip için böyle bir metod yok
-const DataMethod* dataLookupMethod(const std::string& leftName,
-                                   const std::string& methodName,
-                                   bool               isStruct,
-                                   bool               isReceiverArray);
+// ── Derleme zamanı arama — TypeChecker ve LSP aynı fonksiyonları kullanır ──
+
+// Alıcı tipinin metot kategorisi: E[] → Array, string → StringVal,
+// struct → StructVal. Metodu olmayan tipler (int, bool, date, ...) için
+// nullopt. Bir tipin hangi metot ailesine gittiği YALNIZ burada karar verilir.
+std::optional<DataMethodCategory> dataReceiverCategory(const Type& receiver);
+
+// Kategoride `methodName` adlı metot; yoksa nullptr.
+const DataMethod* dataFindMethod(DataMethodCategory category, const std::string& methodName);
+
+// Metot bu alıcıda geçerli mi? params[0] sabit bir tipse (toString → byte[])
+// alıcı o tip olmalıdır; kategori kuralıyla verilmişse her alıcı geçerlidir.
+bool dataMethodAcceptsReceiver(const DataMethod& method, const Type& receiver);
+
+// Tanı ipuçları için: kategorinin bu alıcıda geçerli metot adları,
+// tablo sırasıyla ("length, push, pop, ...").
+std::string dataMethodNames(DataMethodCategory category, const Type& receiver);
 
 // Bir metodun runtime id'si (dataAllMethods indeksi). Bulunamazsa -1.
 int dataMethodId(const DataMethod* m);

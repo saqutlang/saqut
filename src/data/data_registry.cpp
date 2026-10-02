@@ -5,8 +5,6 @@
 #include "data/data_registry.hpp"
 
 #include <cctype>
-#include <cstring>
-#include <unordered_map>
 
 #include "data/array.hpp"
 #include "data/string.hpp"
@@ -14,18 +12,9 @@
 
 // ── Birleşik tablo ───────────────────────────────────────────────────────────
 //
-// SIRA KARARLIDIR. İndeksler IR'ye gömülür (CALLHOST::intValue); mevcut bir
-// kaydın indeksi kayarsa daha önce üretilmiş IR yanlış metoda gider. Bu yüzden
-// yeni kayıtlar ilgili modülün tablosunun SONUNA, yeni modüller de bu listenin
-// SONUNA eklenir.
-//
-// Mevcut düzen (eski runtimeId sırasıyla birebir — id kayması yok):
-//   [0..11]  array   (12: length, push, pop, insert, remove, slice, reverse,
-//                     concat, contains, indexOf, clear, ...)
-//   [12..25] string  (14: length, upper, lower, trim, split, substring,
-//                     replace, repeat, charAt, indexOf, contains,
-//                     startsWith, endsWith, ...)
-//   [26..27] struct  (2: toJson, dump)
+// SIRA KARARLIDIR (ADR-044). İndeksler IR'ye gömülür (CALLHOST::intValue); bu
+// yüzden yeni kayıtlar ilgili modülün tablosunun SONUNA, yeni modüller de bu
+// listenin SONUNA eklenir. Güncel id listesi: `saqut ir` CALLHOST satırları.
 const std::vector<DataMethod>& dataAllMethods() {
     static const std::vector<DataMethod> all = [] {
         std::vector<DataMethod> v;
@@ -41,50 +30,39 @@ const std::vector<DataMethod>& dataAllMethods() {
 }
 
 // ── Derleme zamanı arama ─────────────────────────────────────────────────────
+//
+// Aramalar yalnız derleme zamanında (tip denetimi, LSP) yapılır ve tablo
+// birkaç düzine kayıttır: düz tarama yeterli. Aynı ad farklı kategorilerde
+// bulunabilir (string.length ve E[].length); kategori bu yüzden anahtarın
+// parçasıdır.
 
-namespace {
-
-// "kategori:isim" → indeks. Kategori öneki gerekli çünkü aynı ad birden fazla
-// tipte olabilir (string::length ve E::length, string::indexOf ve E::indexOf).
-const std::unordered_map<std::string, int>& byName() {
-    static const std::unordered_map<std::string, int> index = [] {
-        std::unordered_map<std::string, int> m;
-        const auto& all = dataAllMethods();
-        for (int i = 0; i < (int)all.size(); ++i) {
-            const char* prefix = "";
-            switch (all[i].category) {
-                case DataMethodCategory::Array:     prefix = "ar:"; break;
-                case DataMethodCategory::StringVal: prefix = "sv:"; break;
-                case DataMethodCategory::StructVal: prefix = "st:"; break;
-            }
-            m[std::string(prefix) + all[i].name] = i;
-        }
-        return m;
-    }();
-    return index;
+std::optional<DataMethodCategory> dataReceiverCategory(const Type& receiver) {
+    if (receiver.isArray() && receiver.elementType) return DataMethodCategory::Array;
+    if (receiver.isString()) return DataMethodCategory::StringVal;
+    if (receiver.isStruct()) return DataMethodCategory::StructVal;
+    return std::nullopt;
 }
 
-const DataMethod* lookupPrefixed(const char* prefix, const std::string& name) {
-    auto it = byName().find(std::string(prefix) + name);
-    return it != byName().end() ? &dataAllMethods()[it->second] : nullptr;
+const DataMethod* dataFindMethod(DataMethodCategory category, const std::string& methodName) {
+    for (const DataMethod& m : dataAllMethods())
+        if (m.category == category && methodName == m.name) return &m;
+    return nullptr;
 }
 
-}  // namespace
+bool dataMethodAcceptsReceiver(const DataMethod& method, const Type& receiver) {
+    const DataParamRule& rule = method.params[0];
+    if (rule.kind != DataParamKind::Fixed) return true;
+    return receiver.equalsBase(rule.fixedType);
+}
 
-const DataMethod* dataLookupMethod(const std::string& leftName,
-                                   const std::string& methodName,
-                                   bool               isStruct,
-                                   bool               isReceiverArray) {
-    if (!isReceiverArray) {
-        // 1. string değer metodları (string::upper, ...)
-        if (leftName == "string")
-            if (const DataMethod* m = lookupPrefixed("sv:", methodName)) return m;
-        // 2. struct değer metodları (S::toJson, S::dump)
-        if (isStruct)
-            if (const DataMethod* m = lookupPrefixed("st:", methodName)) return m;
+std::string dataMethodNames(DataMethodCategory category, const Type& receiver) {
+    std::string names;
+    for (const DataMethod& m : dataAllMethods()) {
+        if (m.category != category || !dataMethodAcceptsReceiver(m, receiver)) continue;
+        if (!names.empty()) names += ", ";
+        names += m.name;
     }
-    // 3. array metodları (herhangi E[] için — scalar ve struct array dahil)
-    return lookupPrefixed("ar:", methodName);
+    return names;
 }
 
 int dataMethodId(const DataMethod* m) {

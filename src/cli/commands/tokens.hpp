@@ -34,7 +34,7 @@ inline int cmdTokens(const CliArgs& args) {
 
     std::cout << "Tokens (" << tokens.size() << "):\n";
     for (auto* t : tokens) {
-        std::cout << "  [" << t->gettype() << "] \"" << t->token << "\"  "
+        std::cout << "  [" << tokenCategoryName(t->category) << "] \"" << t->token << "\"  "
                   << t->loc.toString() << "  byteOffset=" << t->start
                   << " byteLength=" << (t->end - t->start) << "\n";
     }
@@ -42,5 +42,12 @@ inline int cmdTokens(const CliArgs& args) {
     for (auto* t : tokens) delete t;
     return 0;
 }
+
+inline constexpr CliCommand kTokensCommand{
+    .name        = "tokens",
+    .usage       = "saqut tokens <file>",
+    .description = "print token list",
+    .run         = cmdTokens,
+};
 
 #endif // SAQUT_CLI_TOKENS

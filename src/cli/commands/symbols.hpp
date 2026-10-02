@@ -1,12 +1,13 @@
 // ============================================================================
-// saQut CLI — symbols komutu (sembol tablosu — Faz 2)
+// saQut CLI — symbols komutu (sembol tablosu)
 //
 // Varsayılan: insan-okur düz metin (KORUNUR).
 // #145 (SQ-100-SYMBOLS-JSONL): makine yüzeyi açıkça --jsonl ile seçilir.
 //   İlk kayıt  : {"record":"symbols.header","schemaVersion":1}
 //   Ara kayıt  : satır başına bir symbol veya diagnostic kaydı (deterministik)
 //   Son kayıt  : {"record":"symbols.end","errors":N,"warnings":M,"symbolCount":K}
-//   Eski `--json` tek-büyük-JSON preview KALDIRILDI (flag → usage error 64).
+//   Eski `--json` tek-büyük-JSON preview KALDIRILDI: symbols `--json`'ı
+//   kabul etmez, parseArgs usage error 64 verir ve geçerli seçenekleri sayar.
 //   `--compact` JSONL'de anlamsız → sessizce yutulmaz (usage error 64).
 //   Error-tolerant davranış ve nonzero exit korunur (65 = veri hatası).
 // ============================================================================
@@ -31,24 +32,19 @@ inline int cmdSymbols(const CliArgs& args) {
     std::string source   = readSource(args);
     if (source.empty()) return saqut::exit_code::kUsageError;
 
-    // #145: eski --json preview kaldırıldı — makine yüzeyi yalnız --jsonl.
-    if (args.jsonOutput) {
-        std::cerr << "error: --json is removed for symbols; use --jsonl for machine output\n";
-        return saqut::exit_code::kUsageError;
-    }
     // --compact JSONL'de anlamsız → sessizce yutulmaz.
     if (args.compact && args.jsonlOutput) {
         std::cerr << "error: --compact is meaningless with --jsonl\n";
         return saqut::exit_code::kUsageError;
     }
 
-    Tokenizer tokenizer;
-    auto tokens = tokenizer.scan(source, filePath);
-
     // RG-7 (#157): #134/ast ile aynı sınıf düzeltme — Parser'a gerçek
     // DiagnosticEngine verilmezse syntax hatası panic-mode kurtarma ile
-    // yutulur, `!ast` hiç true olmaz.
+    // yutulur, `!ast` hiç true olmaz. Tokenizer da aynı motora raporlar.
     DiagnosticEngine diag;
+    Tokenizer        tokenizer(&diag);
+    auto tokens = tokenizer.scan(source, filePath);
+
     Parser           parser(&diag);
     ASTNode*         ast = parser.parse(tokens);
 
@@ -139,5 +135,13 @@ inline int cmdSymbols(const CliArgs& args) {
     for (auto* t : tokens) delete t;
     return diag.hasErrors() ? saqut::exit_code::kDataError : saqut::exit_code::kSuccess;
 }
+
+inline constexpr CliCommand kSymbolsCommand{
+    .name        = "symbols",
+    .usage       = "saqut symbols <file> [--jsonl]",
+    .description = "print symbol table (functions, variables)",
+    .options     = OPT_JSONL | OPT_COMPACT,
+    .run         = cmdSymbols,
+};
 
 #endif // SAQUT_CLI_SYMBOLS

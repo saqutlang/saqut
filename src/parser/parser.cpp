@@ -26,26 +26,13 @@
 #include "parser/nodes/statements.hpp"
 
 // --------------------------------------------------------------------------
-// parseToken: Ham Token'ı ParserToken'a dönüştür.
+// parseToken: Token'ı ParserToken'a sar. Tür tokenizer'da belirlendi
+// (Token::kind); burada yeniden sınıflandırılmaz.
 // --------------------------------------------------------------------------
 ParserToken Parser::parseToken(Token* token) {
     ParserToken pt;
     pt.token = token;
-
-    std::string t = token->gettype();
-    if (t == "string")
-        pt.type = TokenType::STRING;
-    else if (t == "number")
-        pt.type = TokenType::NUMBER;
-    else if (t == "operator")
-        pt.type = OPERATOR_MAP.find(pt.token->token)->second;
-    else if (t == "delimiter")
-        pt.type = OPERATOR_MAP.find(pt.token->token)->second;
-    else if (t == "keyword")
-        pt.type = KEYWORD_MAP.find(pt.token->token)->second;
-    else if (t == "identifier")
-        pt.type = TokenType::IDENTIFIER;
-
+    pt.type  = token->kind;
     return pt;
 }
 
@@ -98,7 +85,7 @@ ASTNode* Parser::parse(TokenList toks) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Faz 2 — sözdizimi hata raporlama + panic-mode kurtarma
+// Sözdizimi hata raporlama + panic-mode kurtarma
 // ─────────────────────────────────────────────────────────────────────────────
 
 void Parser::reportError(const SourceLocation& loc, const std::string& code,
@@ -517,7 +504,7 @@ ASTNode* Parser::parseNullDenotation() {
     // tanınmayan herhangi bir token gibi. Buradan yükselen nullptr, çağıran
     // (genelde parseExpressionStatement) tarafından TEK bir konumlu tanıya
     // (E901) ve panic-mode kurtarmaya çevrilir; burada ikinci bir mesaj
-    // basılırsa aynı hata için çift tanı üretilirdi (Faz 2).
+    // basılırsa aynı hata için çift tanı üretilirdi.
 
     // ── ADR-045: Pool(T) / List(T) — argüman TİP adıdır ────────────────────
     if ((ct.type == TokenType::KW_POOL || ct.type == TokenType::KW_LIST) &&
@@ -683,14 +670,7 @@ ASTNode* Parser::parseNullDenotation() {
 
     if (ct.type == TokenType::STRING) {
         nextToken();
-        if (auto* st = dynamic_cast<StringToken*>(ct.token)) {
-            if (st->unterminated)
-                reportError(st->loc, "E907", "unterminated string literal (missing closing '\"')");
-            for (char e : st->badEscapes)
-                reportError(st->loc, "E906",
-                            std::string("unknown escape sequence '\\") + e +
-                                "' in string literal (supported: \\n \\t \\r \\b \\\\ \\\")");
-        }
+        // Sözcüksel hatalar (E906/E907) tokenizer'da raporlandı.
         LiteralNode* lit = new LiteralNode();
         lit->literalType = LiteralType::STRING;
         lit->loc = ct.token ? ct.token->loc : SourceLocation{};
@@ -880,6 +860,33 @@ ASTNode* Parser::parseLeftDenotation(ASTNode* left) {
         ma->arrow = arrow;
         left->parent = ma;
         return ma;
+    }
+
+    // Buraya gelen token BinaryExpression olur. Önceliği olduğu halde ikili
+    // anlamı olmayan token'lar (`?`, `:`, `!`, `~`, `,`) reddedilir: eskiden
+    // `int a = 1 ? 2 : 3;` hatasız derlenip 0 veriyordu (#299).
+    if (!IsBinaryOperator(ct.type)) {
+        const SourceLocation loc = ct.token ? ct.token->loc : lastLoc_;
+        const std::string tok = ct.token ? ct.token->token : "?";
+        reportError(loc, "E901",
+                    ct.type == TokenType::TERNARY || ct.type == TokenType::COLON
+                        ? "unexpected '" + tok + "' — conditional expressions (a ? b : c) are "
+                          "not supported; use if/else"
+                        : "unexpected '" + tok + "' — not a binary operator");
+        // Sorunlu token'ı tüket (ilerleme garantisi: Pratt döngüsü aynı token'a
+        // dönmesin), sonra ifadenin geri kalanını atla; kapsayan yapının
+        // sınırlayıcısı (`;` `)` `]` `}` `,`) TÜKETİLMEZ — o yapı kendi
+        // kuralıyla kapanır.
+        nextToken();
+        while (!currentToken().is({TokenType::SEMICOLON, TokenType::RPAREN, TokenType::RBRACKET,
+                                   TokenType::RBRACE, TokenType::COMMA, TokenType::SVR_VOID}))
+            nextToken();
+        delete left;
+        ErrorNode* err = new ErrorNode();
+        err->loc     = loc;
+        err->code    = "E901";
+        err->message = "invalid operator";
+        return err;
     }
 
     uint16_t prec = ct.getPowerOperator();
@@ -1533,7 +1540,7 @@ ASTNode* Parser::parseExpressionStatement() {
 
     ASTNode* expr = parseExpression();
     if (!expr) {
-        // Faz 2: bu noktadan önce hiçbir alt-kural bir mesaj basmadı (bkz.
+        // Bu noktadan önce hiçbir alt-kural bir mesaj basmadı (bkz.
         // parseNullDenotation) — tek konumlu tanı burada üretilir, ardından
         // panic-mode recovery ile bilinen bir sınıra kadar atlanır.
         std::string tokText = ct.token ? ct.token->token : "<eof>";
@@ -1677,7 +1684,7 @@ ASTNode* Parser::parseThrowStatement() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ADR-045 (Faz 3-a): izole thread dil yüzeyi
+// ADR-045: izole thread dil yüzeyi
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::string Parser::parseTypeName() {

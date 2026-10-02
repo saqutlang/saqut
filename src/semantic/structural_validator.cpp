@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // DİZİN:   src/semantic/structural_validator.cpp
-// KATMAN:  Faz 3 — Yapısal doğrulama
+// KATMAN:  Anlam denetimi — yapısal doğrulama
 //
 // AMAÇ:
 //   AST'yi recursive olarak gezerek break/continue/return bağlam

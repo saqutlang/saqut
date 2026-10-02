@@ -99,6 +99,17 @@ inline DataReturnRule drElemArray()   { return { DataReturnKind::ElemArray, {} }
 // thunk imzası host ABI'siyle AYNIDIR (host_abi.hpp): VM ve her backend
 // built-in metodları host fonksiyonlarıyla tamamen aynı yoldan çağırır.
 // Ayrı bir dispatch mekanizması yoktur.
+//
+// Alıcıyı yerinde değiştirme: yalnız heap nesnesi alıcılarda (array, struct)
+// mümkündür — thunk nesnenin kendisini değiştirir. Değer tipli bir alıcıyı
+// (string, sayı) değiştiren metot tanımlanamaz: thunk alıcının kopyasını alır
+// ve IR sonucu değişkene geri yazmaz. `flags` içindeki HOST_MUTATING yalnız
+// belgeleme niteliğindedir.
+//
+// Alıcı kısıtı: params[0] kategori için genel kuraldır (dpElemArray: her E[],
+// dpString: string, dpElem: struct). Metot yalnız belirli bir alıcı tipinde
+// geçerliyse params[0] o tipi sabit verir — ör. toString: dpFixed(byte[]).
+// TypeChecker ve LSP bunu dataMethodAcceptsReceiver() ile okur.
 // ----------------------------------------------------------------------------
 struct DataMethod {
     const char*                name;      // "replace", "push", "toJson"
@@ -106,7 +117,6 @@ struct DataMethod {
     // params[0] = receiver, params[1..] = diğer argümanlar
     std::vector<DataParamRule> params;
     DataReturnRule             ret;
-    bool                       mutating;  // receiver'ı yerinde değiştirir mi
     HostKind                   retKind;   // sınır temsilindeki dönüş türü
     uint8_t                    flags;     // HOST_* (heap gerekir mi, vb.)
     HostThunk                  thunk;     // GÖVDE — imzayla aynı yerde

@@ -23,12 +23,12 @@ run_test() {
     # --no-opt (no optimization)
     echo "--- $label (no-opt) ---" >> "$RESULTS"
     TIMEFORMAT='%3R real  %3U user  %3S sys'
-    { time $SAQUT run "file:$file" --dont-optimize 2>/dev/null; } 2>&1 >> "$RESULTS"
+    { time $SAQUT run "$file" --dont-optimize 2>/dev/null; } 2>&1 >> "$RESULTS"
     
     # optimizasyonlu (varsayilan)
     echo "--- $label (optimized) ---" >> "$RESULTS"
     TIMEFORMAT='%3R real  %3U user  %3S sys'
-    { time $SAQUT run "file:$file" 2>/dev/null; } 2>&1 >> "$RESULTS"
+    { time $SAQUT run "$file" 2>/dev/null; } 2>&1 >> "$RESULTS"
     
     echo "" >> "$RESULTS"
 }

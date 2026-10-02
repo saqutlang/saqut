@@ -2,7 +2,7 @@
 //
 // Bu dosya, her tipin SINIR DEĞERLERİNİN yazılabilir olduğunu kanıtlar.
 // Karşıtı: literal_range_int_overflow / literal_range_longint_overflow
-// (aralık dışı literal E003 ile reddedilir).
+// (aralık dışı literal E020 ile reddedilir).
 //
 // Kritik vakalar burada, çünkü hepsi ayrı kod yollarından geçer:
 //   - int  en büyük  : 2147483647    → doğrudan literal

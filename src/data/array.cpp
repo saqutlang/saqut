@@ -6,7 +6,7 @@
 // KATMAN:  data — array'in çalışma zamanındaki TEK sahibi
 //
 // SEMANTİK (ADR-020): array REFERANS tiplidir. push/insert/remove/reverse/clear
-//   receiver'ı YERİNDE değiştirir (mutating == true); slice/concat yeni array
+//   receiver'ı YERİNDE değiştirir (HOST_MUTATING); slice/concat yeni array
 //   üretir. Eşitlik KİMLİK karşılaştırmasıdır (ADR-023) — string'in aksine.
 //
 // PACKED ELEMANLAR (#206): bir array eleman tipine göre yedi ayrı buffer'dan
@@ -331,36 +331,38 @@ int arr_clear(HostCallFrame* f) {
 
 // ── Metod tablosu ────────────────────────────────────────────────────────────
 //
-// Sıra önemsizdir: id gövdeye tablo pozisyonundan değil kaydın kendisinden
-// bağlıdır.
+// Tablo içindeki sıra runtime id'yi belirler (dataAllMethods indeksi). id'ler
+// yalnız aynı süreçte üretilen IR'de yaşar; yine de ADR-044 gereği kararlı
+// tutulur: yeni metot tablonun SONUNA eklenir.
 const std::vector<DataMethod>& dataArrayMethods() {
     static const std::vector<DataMethod> methods = {
         {"length",   DataMethodCategory::Array, {dpElemArray()},
-         drFixed(Type::Int()), false, HostKind::Int, HOST_PURE, arr_length},
+         drFixed(Type::Int()), HostKind::Int, HOST_PURE, arr_length},
         {"push",     DataMethodCategory::Array, {dpElemArray(), dpElem()},
-         drFixed(Type::Int()), true,  HostKind::Int, HOST_MUTATING, arr_push},
+         drFixed(Type::Int()), HostKind::Int, HOST_MUTATING, arr_push},
         {"pop",      DataMethodCategory::Array, {dpElemArray()},
-         drElem(), true, HostKind::Int, HOST_MUTATING | HOST_CAN_FAIL, arr_pop},
+         drElem(), HostKind::Int, HOST_MUTATING | HOST_CAN_FAIL, arr_pop},
         {"insert",   DataMethodCategory::Array, {dpElemArray(), dpFixed(Type::Int()), dpElem()},
-         drFixed(Type::Int()), true, HostKind::Int, HOST_MUTATING | HOST_CAN_FAIL, arr_insert},
+         drFixed(Type::Int()), HostKind::Int, HOST_MUTATING | HOST_CAN_FAIL, arr_insert},
         {"remove",   DataMethodCategory::Array, {dpElemArray(), dpFixed(Type::Int())},
-         drElem(), true, HostKind::Int, HOST_MUTATING | HOST_CAN_FAIL, arr_remove},
+         drElem(), HostKind::Int, HOST_MUTATING | HOST_CAN_FAIL, arr_remove},
         // slice/concat yeni array üretir → heap
         {"slice",    DataMethodCategory::Array,
          {dpElemArray(), dpFixed(Type::Int()), dpFixed(Type::Int())},
-         drElemArray(), false, HostKind::Ref, HOST_NEEDS_HEAP, arr_slice},
+         drElemArray(), HostKind::Ref, HOST_NEEDS_HEAP, arr_slice},
         {"reverse",  DataMethodCategory::Array, {dpElemArray()},
-         drElemArray(), true, HostKind::Ref, HOST_MUTATING, arr_reverse},
+         drElemArray(), HostKind::Ref, HOST_MUTATING, arr_reverse},
         {"concat",   DataMethodCategory::Array, {dpElemArray(), dpElemArray()},
-         drElemArray(), false, HostKind::Ref, HOST_NEEDS_HEAP | HOST_CAN_FAIL, arr_concat},
+         drElemArray(), HostKind::Ref, HOST_NEEDS_HEAP | HOST_CAN_FAIL, arr_concat},
         {"contains", DataMethodCategory::Array, {dpElemArray(), dpElem()},
-         drFixed(Type::Bool()), false, HostKind::Int, HOST_PURE, arr_contains},
+         drFixed(Type::Bool()), HostKind::Int, HOST_PURE, arr_contains},
         {"indexOf",  DataMethodCategory::Array, {dpElemArray(), dpElem()},
-         drFixed(Type::Int().asNullable()), false, HostKind::Int, HOST_PURE, arr_indexOf},
+         drFixed(Type::Int().asNullable()), HostKind::Int, HOST_PURE, arr_indexOf},
         {"clear",    DataMethodCategory::Array, {dpElemArray()},
-         drFixed(Type::Void()), true, HostKind::Void, HOST_MUTATING, arr_clear},
-        {"toString", DataMethodCategory::Array, {dpElemArray()},
-         drFixed(Type::String()), false, HostKind::Str, HOST_PURE, arr_toString},
+         drFixed(Type::Void()), HostKind::Void, HOST_MUTATING, arr_clear},
+        // UTF-8 çözme: yalnız byte[] alıcıda geçerli — alıcı sabit tipte.
+        {"toString", DataMethodCategory::Array, {dpFixed(Type::array(Type::Byte()))},
+         drFixed(Type::String()), HostKind::Str, HOST_PURE, arr_toString},
     };
     return methods;
 }

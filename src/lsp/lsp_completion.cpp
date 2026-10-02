@@ -62,7 +62,7 @@ Ctx analyze(const std::string& content, const std::vector<Token*>& toks, int off
     int prefixIdx = -1;
     if (k >= 0) {
         Token* t = toks[static_cast<size_t>(k)];
-        bool wordish = t->gettype() == "identifier" || t->gettype() == "keyword";
+        bool wordish = t->category == TokenCategory::Identifier || t->category == TokenCategory::Keyword;
         if (wordish && t->start < off && off <= t->end) {
             ctx.prefix = t->token.substr(0, static_cast<size_t>(off - t->start));
             prefixIdx = k;
@@ -91,7 +91,7 @@ Ctx analyze(const std::string& content, const std::vector<Token*>& toks, int off
                         if (toks[j]->token == ";") break;
                         if (toks[j]->token == "from" && j + 1 < toks.size()) {
                             Token* m = toks[j + 1];
-                            if (m->gettype() == "string") ctx.importPath = m->token;
+                            if (m->category == TokenCategory::String) ctx.importPath = m->token;
                             else ctx.importModule = m->token;
                             break;
                         }
@@ -120,7 +120,8 @@ Ctx analyze(const std::string& content, const std::vector<Token*>& toks, int off
     }
     if (p1 && p1->token == "::") {
         ctx.kind = Ctx::Scope;
-        if (p2 && (p2->gettype() == "identifier" || p2->gettype() == "keyword")) ctx.target = p2->token;
+        if (p2 && (p2->category == TokenCategory::Identifier || p2->category == TokenCategory::Keyword))
+            ctx.target = p2->token;
         return ctx;
     }
 
@@ -132,7 +133,7 @@ Ctx analyze(const std::string& content, const std::vector<Token*>& toks, int off
             bool ok = true;
             for (int j = i + 1; j <= k; ++j) {
                 Token* t = toks[static_cast<size_t>(j)];
-                if (t->token != "," && t->gettype() != "identifier") { ok = false; break; }
+                if (t->token != "," && t->category != TokenCategory::Identifier) { ok = false; break; }
             }
             if (ok) { ctx.kind = Ctx::LockTarget; return ctx; }
             break;
@@ -324,10 +325,10 @@ nlohmann::json LspHandler::handleCompletion(const nlohmann::json& id,
         if (objSym && (objSym->kind == SymbolKind::Struct || objSym->kind == SymbolKind::Enum))
             return JsonRpc::makeResponse(id, items);
         if (objSym) {
-            items = builtinMethodsForType(objSym->type, objSym->name);
+            items = builtinMethodsForType(objSym->type);
         } else {
             Type t = Type::fromName(ctx.target);
-            if (!t.isError()) items = builtinMethodsForType(t, ctx.target);
+            if (!t.isError()) items = builtinMethodsForType(t);
         }
         return JsonRpc::makeResponse(id, items);
     }

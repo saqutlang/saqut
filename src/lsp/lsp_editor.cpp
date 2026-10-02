@@ -178,7 +178,7 @@ std::vector<Unnecessary> findUnnecessary(DocumentState& st) {
             for (size_t ti = 0; ti < st.tokens.size() && !usedAsToken; ++ti) {
                 Token* t = st.tokens[ti];
                 if (t->start >= imp->loc.offset && t->start <= declEnd) continue;
-                if (t->token != local || t->gettype() != "identifier") continue;
+                if (t->token != local || t->category != TokenCategory::Identifier) continue;
                 if (ti > 0 && st.tokens[ti - 1]->token == ".") continue;
                 usedAsToken = true;
             }

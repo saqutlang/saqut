@@ -34,9 +34,9 @@
 //
 // KULLANIM:
 //   DiagnosticEngine diag;
-//   diag.report(makeDiagnostic("E001", loc, "x tanımsız"));
-//   diag.report(DiagLevel::Warning, "W001", loc2, "y kullanılmıyor");
+//   diag.report("E001", loc, "'x' is not defined");       // seviye kayıttan
 //   if (diag.hasErrors()) diag.printAll(std::cerr);
+// Kodlar src/diagnostic/diagnostic.hpp kaydında tanımlıdır.
 // ============================================================================
 
 class DiagnosticEngine {

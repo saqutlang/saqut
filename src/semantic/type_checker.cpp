@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // DİZİN:   src/semantic/type_checker.cpp
-// KATMAN:  Faz 3 — Tip denetimi ve tip çıkarımı
+// KATMAN:  Anlam denetimi — tip denetimi ve tip çıkarımı
 //
 // AMAÇ:
 //   AST'yi gezerek tip denetimi yapar ve her ifadeye resolvedType atar.
@@ -23,6 +23,7 @@
 #include "parser/nodes/literal.hpp"
 #include "parser/nodes/program.hpp"
 #include "parser/nodes/statements.hpp"
+#include "semantic/thread_intrinsics.hpp"
 
 #include <climits>
 #include <cstdint>   // INT32_MIN / INT32_MAX (#219 A1: int32 literal aralık denetimi)
@@ -619,7 +620,7 @@ void TypeChecker::checkStmt(ASTNode* node) {
                          baseType.isVoid(); // void = bilinmeyen, hata zaten raporlandı
         if (!subjectOk && !baseType.isError()) {
             diag_.report(
-                "E003", sw->subject->loc,
+                "E024", sw->subject->loc,
                 "switch subject '" + subjectType.toString() +
                     "' type not supported (expected int/float/bool/string/enum)",
                 "switch only works with int, float, bool, string or enum values — use if-else for struct/array");
@@ -639,7 +640,7 @@ void TypeChecker::checkStmt(ASTNode* node) {
                                   ((LiteralNode*) val)->literalType == LiteralType::BOŞ);
                 if (isNullLit) {
                     if (!subjectType.nullable)
-                        diag_.report("E003", val->loc,
+                        diag_.report("E024", val->loc,
                                      "case null: only valid with nullable (T?) switch subject",
                                      "make the switch subject nullable: `" +
                                          subjectType.toString() + "? variable = ...;`");
@@ -650,7 +651,7 @@ void TypeChecker::checkStmt(ASTNode* node) {
                 // Type homogeneity: case value must be same base type as subject
                 if (!caseType.isError() && !baseType.isError() && !baseType.isVoid() &&
                     !caseType.equalsBase(baseType)) {
-                    diag_.report("E003", val->loc,
+                    diag_.report("E024", val->loc,
                                  "case value '" + caseType.toString() +
                                      "' incompatible with switch subject type (" +
                                      baseType.toString() + ")",
@@ -843,11 +844,11 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             const bool negated = negatedLiteralDepth_ > 0;
             const long long intMax  = negated ? 2147483648LL : INT32_MAX;
 
-            // Aralık dışı literal'i E003 ile reddeder. Tek çıkış noktası —
+            // Aralık dışı literal'i E020 ile reddeder. Tek çıkış noktası —
             // byte/int/longint aynı sözleşmeyi paylaşsın diye.
             auto rejectRange = [&](const char* typeName, const char* range,
                                    const char* hint) {
-                diag_.report("E003", lit->loc,
+                diag_.report("E020", lit->loc,
                              "integer literal " + litText + " is out of " + typeName +
                                  " range (" + range + ")",
                              hint);
@@ -897,7 +898,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         }
         case LiteralType::FLOAT:
             // Ondalık literal bağlama göre tiplenir: decimal bağlamında decimal
-            // (ADR-028), float bağlamında 32-bit float, int bağlamında E003.
+            // (ADR-028), float bağlamında 32-bit float, int bağlamında E020.
             // Bağlamsız literal DOUBLE'dır (#261): belge ve AGENTS sözleşmesi
             // bunu söylüyordu ama varsayılan Float() idi — `double d = 1.0/3.0`
             // sessizce 32-bit hassasiyetle hesaplanıp 0.3333333433 veriyordu.
@@ -907,7 +908,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 result = Type::Float();
             else if (!expected.isError() && numericRank(expected) == 0) {
                 diag_.report(
-                    "E003", lit->loc, "float literal cannot be used in int context (data loss)",
+                    "E020", lit->loc, "float literal cannot be used in int context (data loss)",
                     "use an integer literal (e.g. 3 instead of 3.0) or change the variable type to float: `float variable = ...;`");
                 result = Type::error();
             } else {
@@ -950,6 +951,32 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
     // ── BinaryExpression ───────────────────────────────────────────────────
     case ASTKind::BinaryExpression: {
         auto* bin = (BinaryExpressionNode*) node;
+
+        // #303: her atama operatörünün hedefi yazılabilir bir konum olmalı
+        // (`++`/`--` ile aynı kural, E027). Eskiden `5 = 3;` hatasız derleniyordu.
+        if (bin->Left && (bin->Operator == TokenType::EQUAL ||
+                          bin->Operator == TokenType::PLUS_EQUAL ||
+                          bin->Operator == TokenType::MINUS_EQUAL ||
+                          bin->Operator == TokenType::STAR_EQUAL ||
+                          bin->Operator == TokenType::SLASH_EQUAL ||
+                          bin->Operator == TokenType::PERCENT_EQUAL ||
+                          bin->Operator == TokenType::AMPERSAND_EQUAL ||
+                          bin->Operator == TokenType::PIPE_EQUAL ||
+                          bin->Operator == TokenType::CARET_EQUAL ||
+                          bin->Operator == TokenType::LSHIFT_EQUAL ||
+                          bin->Operator == TokenType::RSHIFT_EQUAL)) {
+            const bool isLValue = bin->Left->kind == ASTKind::Identifier ||
+                                  bin->Left->kind == ASTKind::MemberAccess ||
+                                  bin->Left->kind == ASTKind::IndexExpression;
+            if (!isLValue) {
+                diag_.report("E027", bin->loc,
+                             "assignment requires a writable location (variable, field or "
+                             "array element)",
+                             "assign to a variable, a struct field or an array element");
+                result = Type::error();
+                break;
+            }
+        }
 
         // Atama operatörleri
         if (bin->Operator == TokenType::EQUAL || bin->Operator == TokenType::PLUS_EQUAL ||
@@ -1032,7 +1059,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 else
                     result = Type::error();
                 if (result.isError() && !rightType.isError())
-                    diag_.report("E003", bin->loc, "non-numeric operand",
+                    diag_.report("E021", bin->loc, "non-numeric operand",
                                  "- (unary) only works on int or float values");
             }
             break;
@@ -1085,7 +1112,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         // bağlam alır. Eskiden literal önce bağlamsız denetleniyordu: `l +
         // 3000000000` (l: longint) int32 aralık hatası verip aşağıdaki yeniden
         // tiplemeye hiç ulaşamıyordu. Ondalık literal tamsayı operanddan
-        // bağlam ALMAZ: `i * 1.5` literali int'e zorlayıp E003 veriyordu;
+        // bağlam ALMAZ: `i * 1.5` literali int'e zorlayıp E020 (eski E003) veriyordu;
         // doğrusu int'in genişlemesidir (int ⊕ double → double).
         auto fractionalIntoIntegral = [](ASTNode* lit, const Type& other) {
             return lit && lit->kind == ASTKind::Literal &&
@@ -1196,7 +1223,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 // non-null kanıtında kaldırır. Arimetikteki strict-operand
                 // kuralıyla (aşağıdaki ADR-021 bloğu) aynı mesaj/hint.
                 diag_.report(
-                    "E003", bin->loc,
+                    "E022", bin->loc,
                     "nullable operand: '" + leftType.toString() + "' and '" + rightType.toString() +
                         "' — check for null or narrow",
                     nullableOperandHint(bin->Left, bin->Right));
@@ -1209,7 +1236,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 result = Type::Bool();
             } else {
                 diag_.report(
-                    "E003", bin->loc,
+                    "E021", bin->loc,
                     "comparison operator only works with numeric types: " + leftType.toString() +
                         " — for string use only == and !=",
                     "for string comparison use == or !=; for numeric comparison use int/float");
@@ -1223,7 +1250,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         if (!leftType.isError() && !rightType.isError() &&
             (leftType.nullable || rightType.nullable)) {
             diag_.report(
-                "E003", bin->loc,
+                "E022", bin->loc,
                 "nullable operand: '" + leftType.toString() + "' and '" + rightType.toString() +
                     "' — check for null or narrow",
                 nullableOperandHint(bin->Left, bin->Right));
@@ -1244,13 +1271,35 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         if (bin->Operator == TokenType::STAR_STAR &&
             (leftType.isDecimal() || rightType.isDecimal()) &&
             !leftType.isError() && !rightType.isError()) {
-            diag_.report("E003", bin->loc,
+            diag_.report("E021", bin->loc,
                          "** is not supported on decimal: " + leftType.toString() + " ** " +
                              rightType.toString(),
                          "decimal has fixed scale; the result of exponentiation is not generally "
                          "representable. Use an explicit cast: `value as double ** exponent`");
             result = Type::error();
             break;
+        }
+
+        // Buraya yalnız aritmetik/bitsel operatörler ve bitsel bileşik
+        // atamalar (&= |= ^= <<= >>=) gelmeli; parser başka token'dan
+        // BinaryExpression kurmaz (IsBinaryOperator, #299). Tanınmayan
+        // operatör sessizce aritmetik sayılmaz.
+        {
+            const bool bitwiseCompound =
+                bin->Operator == TokenType::AMPERSAND_EQUAL ||
+                bin->Operator == TokenType::PIPE_EQUAL ||
+                bin->Operator == TokenType::CARET_EQUAL ||
+                bin->Operator == TokenType::LSHIFT_EQUAL ||
+                bin->Operator == TokenType::RSHIFT_EQUAL;
+            if (!isIntArithOp && !bitwiseCompound) {
+                auto it = OPERATOR_MAP_REV.find(bin->Operator);
+                diag_.report("E021", bin->loc,
+                             "operator '" +
+                                 std::string(it != OPERATOR_MAP_REV.end() ? it->second : "?") +
+                                 "' is not a binary operator");
+                result = Type::error();
+                break;
+            }
         }
 
         // Arithmetic / bitwise: +, -, *, /, %, &, |, ^, <<, >>
@@ -1267,7 +1316,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             leftType.isNumeric() && !fractionalIntoIntegral(bin->Right, leftType))
             rightType = checkExpr(bin->Right, leftType);
 
-        // byte aritmetiği (ADR-040 Faz 4 kararı, ürün sahibi 2026-09-13):
+        // byte aritmetiği (ADR-040, ürün sahibi kararı 2026-09-13):
         //
         //   byte ⊕ byte  → byte, 8 bit'e SARAR (& 0xFF)
         //   byte ⊕ int   → int  (byte terfi eder, sonuç int)
@@ -1314,7 +1363,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 break;
             } else if (!leftType.isError() && !rightType.isError()) {
                 diag_.report(
-                    "E003", bin->loc,
+                    "E021", bin->loc,
                     "arithmetic operator on longint mixed with " +
                         (lArith.isLongInt() ? rArith.toString() : lArith.toString()) +
                         ": explicit cast required (longint is isolated from the numeric rank tower)",
@@ -1335,7 +1384,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             // Same type or implicit widening; result is the wider type.
             result = (lRank >= rRank) ? lArith : rArith;
         } else if (!leftType.isError() && !rightType.isError()) {
-            diag_.report("E003", bin->loc,
+            diag_.report("E021", bin->loc,
                          "arithmetic operator on non-numeric type: " + leftType.toString() +
                              " and " + rightType.toString(),
                          "use int or float for arithmetic. Cast: `variable as int`");
@@ -1354,7 +1403,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         if (!calleeType.isFunction()) {
             if (!calleeType.isError())
                 diag_.report(
-                    "E003", call->loc, "not callable: " + calleeType.toString(),
+                    "E025", call->loc, "not callable: " + calleeType.toString(),
                     "only functions can be called. define with: `func name(parameters) : returnType { ... }`");
             result = Type::error();
             // Still walk arguments (cascade error prevention)
@@ -1426,7 +1475,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         auto* pf = (PostfixNode*) node;
         Type opType = checkExpr(pf->operand);
         if (!opType.isNumeric() && !opType.isError()) {
-            diag_.report("E003", pf->loc, "++ / -- on non-numeric type: " + opType.toString(),
+            diag_.report("E021", pf->loc, "++ / -- on non-numeric type: " + opType.toString(),
                          "++ and -- only work on numeric variables");
         } else if (!opType.isError()) {
             // #237/#238: operand YAZILABİLİR bir konum olmalı. Değilse
@@ -1438,7 +1487,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                                    pf->operand->kind == ASTKind::MemberAccess ||
                                    pf->operand->kind == ASTKind::IndexExpression);
             if (!isLValue)
-                diag_.report("E003", pf->loc,
+                diag_.report("E027", pf->loc,
                              "++ / -- requires a writable location (variable, field or "
                              "array element)",
                              "assign to a variable first: `int t = <expression>; t++;`");
@@ -1455,7 +1504,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             }
             // ADR-021: nullable operand artırılamaz — null'a 1 eklenemez.
             else if (opType.nullable)
-                diag_.report("E003", pf->loc,
+                diag_.report("E022", pf->loc,
                              "++ / -- on nullable operand: " + opType.toString(),
                              "check for null first: `if (variable != null) { ... }`");
         }
@@ -1487,7 +1536,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             const bool isPlainVariable = ma->object->kind == ASTKind::Identifier &&
                                          !isGlobalVariable(ma->object);
             diag_.report(
-                "E003", node->loc,
+                "E022", node->loc,
                 "direct access on nullable type '" + objType.toString() +
                     "' — use if to check for null",
                 isPlainVariable
@@ -1544,15 +1593,8 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
             // burası sessizce Type::error() döndürüyordu: tanı üretilmiyor,
             // IR de düğüm için hiçbir talimat üretmiyordu ve sonuç slotu hiç
             // yazılmadan kalıp Int 0 okunuyordu — print(s.length) sessizce 0.
-            std::string lookupName;
-            if (objType.isString())
-                lookupName = "string";
-            else if (objType.isArray())
-                lookupName = "array";
-            const DataMethod* bm =
-                lookupName.empty()
-                    ? nullptr
-                    : dataLookupMethod(lookupName, ma->member, false, objType.isArray());
+            const std::optional<DataMethodCategory> category = dataReceiverCategory(objType);
+            const DataMethod* bm = category ? dataFindMethod(*category, ma->member) : nullptr;
             if (bm) {
                 diag_.report(
                     "E001", node->loc,
@@ -1648,9 +1690,11 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         std::string displayName =
             sc->dotCall ? "." + sc->methodName : sc->leftTypeName + "::" + sc->methodName;
 
-        bool isStruct = false;
+        // Metot ailesi (array / string / struct). Nokta çağrısında alıcı
+        // tipinden dataReceiverCategory() ile, ad alanı ve eski sözdiziminde
+        // sol addan belirlenir.
+        DataMethodCategory category = DataMethodCategory::Array;
         Type elemType = Type::error();
-        std::string lookupName = sc->leftTypeName; // reg.lookup'un sol adı
 
         if (sc->dotCall) {
             // ── 1. UFCS: kategori receiver tipinden ──────────────────────
@@ -1677,22 +1721,13 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 result = Type::error();
                 break;
             }
-            if (isReceiverArray && recvType.elementType) {
-                elemType = *recvType.elementType;
-                lookupName = "array";
-                isStruct = elemType.isStruct(); // struct-array: ar metodları geçerli
-            } else if (recvType.isString()) {
-                elemType = Type::String();
-                lookupName = "string";
-            } else if (recvType.isStruct()) {
-                elemType = recvType;
-                lookupName = recvType.structName;
-                isStruct = true;
-            } else if (recvType.isPool() || recvType.isList() || recvType.isThread()) {
+            if (threadReceiverOf(recvType)) {
                 // ADR-045: Pool/List/Thread intrinsic metotları
                 result = checkThreadIntrinsic(sc, recvType, argTypes);
                 break;
-            } else {
+            }
+            const std::optional<DataMethodCategory> recvCategory = dataReceiverCategory(recvType);
+            if (!recvCategory) {
                 if (!recvType.isError())
                     diag_.report("E001", sc->loc,
                                  "type '" + recvType.toString() + "' has no builtin methods",
@@ -1700,10 +1735,16 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 result = Type::error();
                 break;
             }
+            category = *recvCategory;
+            switch (category) {
+            case DataMethodCategory::Array:     elemType = *recvType.elementType; break;
+            case DataMethodCategory::StringVal: elemType = Type::String(); break;
+            case DataMethodCategory::StructVal: elemType = recvType; break;
+            }
         } else if (sc->leftTypeName == "array") {
             // ── 2. array:: ad alanı — element tipi receiver'dan türetilir ──
             if (!isReceiverArray) {
-                diag_.report("E003", sc->loc,
+                diag_.report("E026", sc->loc,
                              "array::" + sc->methodName + " expects an array as first argument" +
                                  (argTypes.empty() ? "" : ", got '" + recvType.toString() + "'"),
                              "example: array::push(arr, value)");
@@ -1711,12 +1752,11 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 break;
             }
             elemType = recvType.elementType ? *recvType.elementType : Type::Int();
-            isStruct = elemType.isStruct();
-            // lookup'ta "array" sv/st dallarına düşmez, ar: bulunur
+            category = DataMethodCategory::Array;
         } else if (sc->leftTypeName == "struct") {
             // ── 2. struct:: ad alanı ──────────────────────────────────────
             if (!recvType.isStruct()) {
-                diag_.report("E003", sc->loc,
+                diag_.report("E026", sc->loc,
                              "struct::" + sc->methodName + " expects a struct as first argument" +
                                  (argTypes.empty() ? "" : ", got '" + recvType.toString() + "'"),
                              "example: struct::toJson(value)");
@@ -1724,9 +1764,10 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 break;
             }
             elemType = recvType;
-            isStruct = true;
+            category = DataMethodCategory::StructVal;
         } else {
             // ── 3. ESKİ sözdizimi: ElemTip::method / StructAd::method ─────
+            bool isStruct = false;
             elemType = dataResolveElemType(sc->leftTypeName);
             if (elemType.isError()) {
                 if (table_.hasStruct(sc->leftTypeName)) {
@@ -1757,29 +1798,36 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                                  "the element-type prefix will be removed in v0.7.0 (ADR-033)",
                              suggestion);
             }
+            // Dizi alıcı → dizi metotları; `string::` → string metotları;
+            // struct adı → struct metotları. Kalan skaler adlar (int::length(x))
+            // dizi metotlarında aranır: eski sözdiziminin eleman-tipi öneki.
+            if (isReceiverArray)
+                category = DataMethodCategory::Array;
+            else if (sc->leftTypeName == "string")
+                category = DataMethodCategory::StringVal;
+            else if (isStruct)
+                category = DataMethodCategory::StructVal;
+            else
+                category = DataMethodCategory::Array;
         }
 
-        const DataMethod* bm = dataLookupMethod(lookupName, sc->methodName, isStruct, isReceiverArray);
-        if (bm && sc->methodName == "toString" &&
-            (!recvType.isArray() || !recvType.elementType || !recvType.elementType->isByte())) {
-            diag_.report("E003", sc->loc,
-                         "byte[]::toString requires a byte[] receiver",
-                         "use `data.toString()` only for byte arrays");
-            result = Type::error();
-            break;
-        }
+        const DataMethod* bm = dataFindMethod(category, sc->methodName);
         if (!bm) {
-            // Hata mesajında hangi tiplerin bu metodu desteklediğini söyle
             std::string typeDesc = sc->dotCall ? recvType.toString() : sc->leftTypeName;
             diag_.report(
                 "E001", sc->loc,
                 "'" + sc->methodName + "' is not a built-in method for type '" + typeDesc + "'",
-                std::string(
-                    "use one of: length, push, pop, insert, remove, slice, reverse, concat, contains, indexOf, clear") +
-                    (lookupName == "string" ?
-                         " — or string methods: upper, lower, trim, split, substring, replace, repeat, charAt, indexOf, contains, startsWith, endsWith" :
-                         "") +
-                    (isStruct ? " — or struct methods: toJson, dump" : ""));
+                "methods of '" + typeDesc + "': " + dataMethodNames(category, recvType));
+            result = Type::error();
+            break;
+        }
+        // Alıcı kısıtı kayıtta (DataMethod::params[0]); ör. toString yalnız byte[].
+        if (!dataMethodAcceptsReceiver(*bm, recvType)) {
+            diag_.report("E026", sc->loc,
+                         "'" + sc->methodName + "' requires a " + bm->params[0].fixedType.toString() +
+                             " receiver, got '" + recvType.toString() + "'",
+                         "methods of '" + recvType.toString() + "': " +
+                             dataMethodNames(category, recvType));
             result = Type::error();
             break;
         }
@@ -1866,7 +1914,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         bool srcOk = srcType.isPrimitive() || srcType.isString() || srcType.isError();
         if (!srcOk) {
             diag_.report(
-                "E003", cast->loc,
+                "E023", cast->loc,
                 "'" + srcType.toString() +
                     "' cannot be cast with 'as' "
                     "(only int/float/decimal/bool/string)",
@@ -1879,14 +1927,14 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         Type targetBase = Type::fromName(cast->targetTypeName);
         if (targetBase.isError()) {
             diag_.report(
-                "E003", cast->loc, "unknown target type: '" + cast->targetTypeName + "'",
+                "E023", cast->loc, "unknown target type: '" + cast->targetTypeName + "'",
                 "valid target types: int, float, bool, string (or nullable variants: int?, float?, ...)");
             result = Type::error();
             break;
         }
         if (!targetBase.isPrimitive() && !targetBase.isString()) {
             diag_.report(
-                "E003", cast->loc,
+                "E023", cast->loc,
                 "'" + cast->targetTypeName +
                     "' cannot be target of 'as' cast"
                     " (only int/float/bool/string)",
@@ -1913,13 +1961,13 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                       "or `value != \"\"`"
                     : "bool conversion not supported. For bool use explicit "
                       "comparison: `value != 0`";
-            diag_.report("E003", cast->loc, "bool as target type not allowed with 'as'",
+            diag_.report("E023", cast->loc, "bool as target type not allowed with 'as'",
                          boolHint);
             result = Type::error();
             break;
         }
         if (srcIsBool && !tgtIsBool && !tgtIsStr) {
-            diag_.report("E003", cast->loc, "bool can only be cast to string ('as string')",
+            diag_.report("E023", cast->loc, "bool can only be cast to string ('as string')",
                          "use `value as string` — result will be \"true\" or \"false\"");
             result = Type::error();
             break;
@@ -1938,7 +1986,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                                 (srcIsDate && (targetBase.isLongInt() || tgtIsStr)) ||
                                 (tgtIsDate && srcType.isLongInt());
                 if (!ok) {
-                    diag_.report("E003", cast->loc,
+                    diag_.report("E023", cast->loc,
                                  "'" + srcType.toString() + "' cannot be cast to '" +
                                      targetBase.toString() +
                                      "' — date converts only to/from longint (epoch milliseconds) "
@@ -1953,7 +2001,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
 
         // string→bool forbidden
         if (srcIsStr && tgtIsBool) {
-            diag_.report("E003", cast->loc, "bool conversion from string not supported",
+            diag_.report("E023", cast->loc, "bool conversion from string not supported",
                          "for bool use comparison: `value == \"true\"` or `value != \"\"`");
             result = Type::error();
             break;
@@ -1970,13 +2018,13 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
         bool srcIsInt = srcType.isPrimitive() && srcType.prim == PrimitiveKind::Int;
         bool tgtIsInt = targetBase.isPrimitive() && targetBase.prim == PrimitiveKind::Int;
         if (srcIsByte && !(tgtIsInt || tgtIsStr || tgtIsByte)) {
-            diag_.report("E003", cast->loc, "'byte' can only be cast to int or string",
+            diag_.report("E023", cast->loc, "'byte' can only be cast to int or string",
                          "for float/decimal go through int first: `value as int as float`");
             result = Type::error();
             break;
         }
         if (tgtIsByte && !(srcIsInt || srcIsByte)) {
-            diag_.report("E003", cast->loc, "only 'int' can be cast to byte",
+            diag_.report("E023", cast->loc, "only 'int' can be cast to byte",
                          "cast to int first: `value as int as byte`");
             result = Type::error();
             break;
@@ -2009,7 +2057,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
                 }
                 if (parsed && (literalValue < 0 || literalValue > 255)) {
                     diag_.report(
-                        "E003", cast->loc,
+                        "E020", cast->loc,
                         "integer literal " + std::to_string(literalValue) +
                             " is out of byte range (0-255)",
                         "to wrap, mask first: `(" + std::to_string(literalValue) +
@@ -2108,7 +2156,7 @@ Type TypeChecker::checkExpr(ASTNode* node, const Type& expected) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ADR-045 (Faz 3-b) yardımcıları
+// ADR-045 (izole thread modeli) yardımcıları
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool TypeChecker::isSendable(const Type& t) const {
@@ -2219,27 +2267,11 @@ bool TypeChecker::referencesShared(ASTNode* node) {
 
 Type TypeChecker::checkThreadIntrinsic(ScopeCallNode* sc, const Type& recv,
                                        const std::vector<Type>& argTypes) {
-    const std::string& m    = sc->methodName;
-    const size_t       argc = argTypes.empty() ? 0 : argTypes.size() - 1;   // alıcı hariç
-    const std::string  kind = recv.isPool() ? "Pool" : recv.isList() ? "List" : "Thread";
-
-    auto needArgs = [&](size_t n) {
-        if (argc == n) return true;
-        diag_.report("E008", sc->loc,
-                     "'" + m + "' expects " + std::to_string(n) + " argument(s), " +
-                         std::to_string(argc) + " given",
-                     "see the " + kind + " method list in docs/threading-guide.md");
-        return false;
-    };
-    auto argIsLit = [&](size_t i) {
-        return i < sc->arguments.size() && sc->arguments[i] &&
-               sc->arguments[i]->kind == ASTKind::Literal;
-    };
-    auto blockingInLock = [&](const std::string& what) {
-        if (anyLockHeld())
-            diag_.report("W009", sc->loc, what + " inside a lock scope may block while holding the lock",
-                         "release the lock first, or keep locked sections short");
-    };
+    // İmzalar tek tabloda: semantic/thread_intrinsics.hpp (LSP de okur).
+    const std::string&   m        = sc->methodName;
+    const size_t         argc     = argTypes.empty() ? 0 : argTypes.size() - 1;   // alıcı hariç
+    const ThreadReceiver receiver = *threadReceiverOf(recv);
+    const std::string    kind     = threadReceiverName(receiver);
 
     // Pool/List değerleri yalnız shared global adıyla kullanılabilir (v1 kısıtı).
     if (recv.isPool() || recv.isList()) {
@@ -2251,69 +2283,29 @@ Type TypeChecker::checkThreadIntrinsic(ScopeCallNode* sc, const Type& recv,
             return Type::error();
         }
     }
-    const Type elem = recv.elementType ? *recv.elementType : Type::error();
-
-    if (recv.isPool()) {
-        if (m == "push") {
-            sc->threadOp = TI_PoolPush;
-            if (needArgs(1)) checkAssign(elem, argTypes[1], argIsLit(1), sc->loc, "push argument");
-            blockingInLock("push");
-            return Type::Void();
-        }
-        if (m == "pop") {
-            sc->threadOp = TI_PoolPop;
-            needArgs(0);
-            blockingInLock("pop");
-            return elem;
-        }
-        if (m == "setMax") {
-            sc->threadOp = TI_PoolSetMax;
-            if (needArgs(1)) checkAssign(Type::Int(), argTypes[1], argIsLit(1), sc->loc, "setMax argument");
-            return Type::Void();
-        }
-        if (m == "length") {
-            sc->threadOp = TI_PoolLength;
-            needArgs(0);
-            return Type::Int();
-        }
-    } else if (recv.isList()) {
-        if (m == "append") {
-            sc->threadOp = TI_ListAppend;
-            if (needArgs(1)) checkAssign(elem, argTypes[1], argIsLit(1), sc->loc, "append argument");
-            return Type::Void();
-        }
-        if (m == "get") {
-            sc->threadOp = TI_ListGet;
-            if (needArgs(1)) checkAssign(Type::Int(), argTypes[1], argIsLit(1), sc->loc, "get index");
-            return elem;
-        }
-        if (m == "length") {
-            sc->threadOp = TI_ListLength;
-            needArgs(0);
-            return Type::Int();
-        }
-    } else {
-        if (m == "stop") {
-            sc->threadOp = TI_ThreadStop;
-            needArgs(0);
-            return Type::Void();
-        }
-        if (m == "join") {
-            sc->threadOp = TI_ThreadJoin;
-            needArgs(0);
-            blockingInLock("join");
-            return Type::Void();
-        }
-        if (m == "running") {
-            sc->threadOp = TI_ThreadRunning;
-            needArgs(0);
-            return Type::Bool();
-        }
+    const ThreadMethod* method = findThreadMethod(receiver, m);
+    if (!method) {
+        diag_.report("E001", sc->loc, "'" + m + "' is not a method of " + kind,
+                     kind + " methods: " + threadMethodNames(receiver));
+        return Type::error();
     }
-    const std::string methods = recv.isPool()   ? "push, pop, setMax, length"
-                              : recv.isList()   ? "append, get, length"
-                                                : "stop, join, running";
-    diag_.report("E001", sc->loc, "'" + m + "' is not a method of " + kind,
-                 kind + " methods: " + methods);
-    return Type::error();
+    sc->threadOp = method->op;
+
+    const size_t expected = method->arg == ThreadValue::None ? 0 : 1;
+    if (argc != expected) {
+        diag_.report("E008", sc->loc,
+                     "'" + m + "' expects " + std::to_string(expected) + " argument(s), " +
+                         std::to_string(argc) + " given",
+                     "see the " + kind + " method list in docs/threading-guide.md");
+    } else if (expected == 1) {
+        const bool isLit = sc->arguments[1] && sc->arguments[1]->kind == ASTKind::Literal;
+        checkAssign(threadValueType(method->arg, recv), argTypes[1], isLit, sc->loc,
+                    m + " argument");
+    }
+
+    if (method->blocking && anyLockHeld())
+        diag_.report("W009", sc->loc, m + " inside a lock scope may block while holding the lock",
+                     "release the lock first, or keep locked sections short");
+
+    return threadValueType(method->ret, recv);
 }

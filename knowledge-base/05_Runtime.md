@@ -441,12 +441,21 @@ messages. VM runtime errors use the separate language Error/exception path.
 
 ### Catalog and Severity
 
-`diagnosticCatalog()` defines canonical metadata for a subset of E/W codes.
-Unknown codes infer severity by prefix (`E` error, `W` warning, otherwise note).
+Updated #295 (2026-09-27): `src/diagnostic/diagnostic.hpp` holds the complete
+registry — `diagnosticCatalog()` (every compile-time code: level, title,
+explanation) and `runtimeErrorCatalog()` (every runtime `Error.code`).
+`docs/compiler-errors.md` is generated from it (`gen_diagnostic_docs`; CTest
+`diagnostic_docs_fresh` fails on a stale doc). CTest `diagnostic_codes`
+checks that every code literal in `src/` is registered and every registered
+code is produced. Call sites still pass string codes; the test, not the
+compiler, catches a typo.
 
-Active producers use uncatalogued codes such as module/import/capability codes
-and `W005`. Therefore the catalog is not a complete registry. Adding a code only
-at a call site works mechanically but weakens documentation/tool consistency.
+E003 now means only assignment/argument/return type mismatch; the former
+E003 uses were split into E020 (literal range/context), E021 (operator
+types), E022 (nullable without null check), E023 (invalid `as`), E024
+(switch/case), E025 (not callable), E026 (method receiver), E027
+(assignable location). ModuleLoader reports E_MODULE_NOT_FOUND/E_MODULE_PARSE
+at the import's location.
 
 LSP conversion maps errors to severity 1 and every non-error level to severity
 2. Note and Hint are therefore not preserved as distinct LSP severities.
@@ -693,28 +702,33 @@ Do not merge these:
 
 - `print` is seeded directly as a builtin function symbol and lowered to a named
   host call.
-- Value methods are described by `BuiltinMethodRegistry` and lowered through a
+- Value methods are `DataMethod` records in `src/data/` and lowered through a
   numeric runtime ID.
 
 The method registry is not the curated FFI catalog and is not proof of a
 backend intrinsic.
 
-### Registry Model
+### Registry Model (updated #290, 2026-09-26)
 
-`src/builtin/builtin_methods.hpp` records method name, category, parameter
-rules, return rule, mutating flag, and sequential `runtimeId`.
+Each data module (`src/data/{array,string,struct}.cpp`) returns a table of
+`DataMethod` records: name, category, parameter rules, return rule, `retKind`,
+`HOST_*` flags, and the thunk (body) in the same record.
+`dataAllMethods()` (`src/data/data_registry.cpp`) concatenates them; the index
+is the runtime ID and is kept stable (new entries appended, ADR-044). The
+current name list is the tables themselves; it is not repeated here.
 
-Current categories and names are:
+Compile-time lookup has one path shared by TypeChecker and LSP:
+`dataReceiverCategory(Type)` (E[] → Array, string → StringVal, struct →
+StructVal), `dataFindMethod(category, name)`, `dataMethodAcceptsReceiver`
+(a fixed `params[0]` restricts the receiver, e.g. `toString` → `byte[]`), and
+`dataMethodNames` for diagnostic hints.
 
-- Array: `length`, `push`, `pop`, `insert`, `remove`, `slice`, `reverse`,
-  `concat`, `contains`, `indexOf`, `clear`.
-- String value: `length`, `upper`, `lower`, `trim`, `split`, `substring`,
-  `replace`, `repeat`, `charAt`, `indexOf`, `contains`, `startsWith`,
-  `endsWith`.
-- Struct value: `toJson`, `dump`.
+Pool/List/Thread methods are not `DataMethod`s (they lower to dedicated
+opcodes); their signatures live in one table,
+`src/semantic/thread_intrinsics.hpp`, read by TypeChecker and LSP.
 
 Parameter and return rules can refer to fixed types, receiver element type, or
-receiver array type. The registry assigns IDs in insertion order.
+receiver array type.
 
 ### Call Syntax and Resolution
 
@@ -732,14 +746,10 @@ choosing the builtin.
 
 1. TypeChecker looks up the registry entry, validates arguments, resolves the
    return type, and writes `builtinId` on `ScopeCallNode`.
-2. IRGenerator emits `CALLHOST("__builtin_method__", runtimeId)`.
-3. VM copies argument values and dispatches through a hard-coded switch.
-4. LSP also reads the registry for completion/signature information.
-
-Static inspection found VM cases `0..25` corresponding to all current registry
-entries. However, the VM switch is manually ordered rather than generated from
-the registry. Reordering/inserting entries can silently change meaning unless
-the switch and tests change together.
+2. IRGenerator emits `CALLHOST` with `kBuiltinBase + runtimeId`.
+3. VM and JIT call the record's thunk through the shared host table
+   (`rt_host_call`); there is no separate hand-ordered switch.
+4. LSP reads the same registry for completion/signature information.
 
 Builtin runtime failures become catchable `E_BUILTIN` errors in the VM.
 

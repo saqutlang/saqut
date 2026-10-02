@@ -14,7 +14,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-#include "parser/token.hpp"
+#include "parser/parser_token.hpp"
 #include "parser/ast.hpp"
 #include "tools.hpp"
 #include "diagnostic/diagnostic_engine.hpp"
@@ -22,10 +22,9 @@
 class Parser {
 public:
     Parser() = default;
-    // diag: opsiyonel — verilmezse (nullptr) eski davranış korunur: sözdizimi
-    // hataları std::cerr'e yazılır (CLI komutlarının bir kısmı hâlâ diag
-    // vermeden Parser kurar; bkz. cli/commands/ast.hpp, symbols.hpp, exec.hpp).
-    // ModuleLoader gibi konumlu tanı isteyen çağıranlar diag verir (Faz 2).
+    // diag: opsiyonel — verilmezse (nullptr) sözdizimi hataları std::cerr'e
+    // yazılır. Bugün diag vermeden kuran tek çağıran cli/commands/bench.hpp;
+    // yeni çağıranlar konumlu tanı (E9xx) için diag vermelidir.
     explicit Parser(DiagnosticEngine* diag) : diag_(diag) {}
 
     ASTNode* parse(TokenList tokens);
@@ -39,7 +38,7 @@ private:
     // parse() süresince sabit olduğu için bu önbellek her zaman geçerlidir.
     std::vector<ParserToken> tokenCache_;
 
-    DiagnosticEngine* diag_ = nullptr; // Faz 2: konumlu sözdizimi tanıları (E9xx)
+    DiagnosticEngine* diag_ = nullptr; // konumlu sözdizimi tanıları (E9xx)
     SourceLocation lastLoc_;           // en son tüketilen gerçek token'ın konumu
                                         // (EOF'ta "nerede beklendiği"ni raporlamak için)
 
@@ -50,8 +49,8 @@ private:
     ParserToken parseToken(Token* token);
     ParserToken getToken(int offset);
 
-    // --- Faz 2: sözdizimi hata raporlama + panic-mode kurtarma ---
-    // reportError: diag_ varsa konumlu Diagnostic üretir; yoksa eski cerr davranışı.
+    // --- sözdizimi hata raporlama + panic-mode kurtarma ---
+    // reportError: diag_ varsa konumlu Diagnostic üretir; yoksa std::cerr'e yazar.
     void reportError(const SourceLocation& loc, const std::string& code,
                       const std::string& message);
     // synchronizeAndMakeError: konumlu tanı üretir, ';'/'}'/statement-başlangıcı

@@ -74,11 +74,50 @@ int main() {
     assert(opcodeArity(Opcode::ARRAY_NEW) == 3);    // dest, intValue, elemKind
     assert(opcodeArity(Opcode::CAST_STR_TO_INT) == 3); // dest, src, nullable bayrağı
 
-    // 5) Geçersiz opcode değerleri güvenli fallback döndürür
+    // 5) Sonuç türü sütunu (#297) — JIT register türü buradan çıkar; yanlış
+    //    sütun derlemede değil --jit'te yanlış değer olarak görünür. Dönüşüm
+    //    opcode'larının adı hedef türü söyler: ad ile sütun tutarlı olmalı.
+    auto endsWith = [](const std::string& s, const std::string& suffix) {
+        return s.size() >= suffix.size() &&
+               s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    for (int i = 0; i < kOpcodeCount; ++i) {
+        Opcode op = static_cast<Opcode>(i);
+        std::string name = opcodeName(op);
+        std::string target = endsWith(name, "_CHECKED") ? name.substr(0, name.size() - 8) : name;
+        if (target.find("_TO_") == std::string::npos) continue;
+        OpResult r = opcodeResult(op);
+        if (endsWith(target, "_TO_STR"))          assert(r == OpResult::Str);
+        else if (endsWith(target, "_TO_FLOAT32")) assert(r == OpResult::Float32);
+        else if (endsWith(target, "_TO_FLOAT"))   assert(r == OpResult::Float);
+        else if (endsWith(target, "_TO_LONG"))    assert(r == OpResult::Long);
+        else if (endsWith(target, "_TO_DECIMAL")) assert(r == OpResult::Decimal);
+        else if (endsWith(target, "_TO_INT") || endsWith(target, "_TO_BYTE"))
+            assert(r == OpResult::Int);
+        else
+            assert(!"dönüşüm opcode'u tanınmayan hedef türüne sahip — bu testi genişlet");
+    }
+    // Ailenin öneki türü söyler: F32* → float, L* aritmetik → longint, D* → decimal.
+    assert(opcodeResult(Opcode::F32ADD) == OpResult::Float32);
+    assert(opcodeResult(Opcode::LADD) == OpResult::Long);
+    assert(opcodeResult(Opcode::DADD) == OpResult::Decimal);
+    assert(opcodeResult(Opcode::FADD) == OpResult::Float);
+    // Özel kurallı opcode'lar
+    assert(opcodeResult(Opcode::LOAD_NULL) == OpResult::Null);
+    assert(opcodeResult(Opcode::LOAD_SLOT) == OpResult::Copy);
+    assert(opcodeResult(Opcode::CALL) == OpResult::Call);
+    assert(opcodeResult(Opcode::CALLHOST) == OpResult::Host);
+    assert(opcodeResult(Opcode::ARRAY_GET) == OpResult::ValueType);
+    // dest'i okunan (yazılmayan) opcode'lar
+    assert(opcodeResult(Opcode::FIELD_SET) == OpResult::None);
+    assert(opcodeResult(Opcode::ARRAY_SET) == OpResult::None);
+
+    // 6) Geçersiz opcode değerleri güvenli fallback döndürür
     Opcode bogus = static_cast<Opcode>(kOpcodeCount);
     assert(std::string(opcodeName(bogus)) == "UNKNOWN");
     assert(opcodeArity(bogus) == 0);
     assert(opcodeBackends(bogus) == 0);
+    assert(opcodeResult(bogus) == OpResult::None);
     assert(!opcodeJitBaseSupported(bogus));
 
     std::cout << "test_opcode: TUM TESTLER GECTI (" << kOpcodeCount << " opcode)\n";

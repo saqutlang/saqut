@@ -16,14 +16,14 @@
 
 #include "parser/ast_node.hpp"
 
-struct Symbol; // TODO(faz-2): sembol tablosu (Symbol) tanımlandığında bağlanacak
+struct Symbol; // symbol/symbol.hpp — AST katmanı sembol başlığını içermez
 
 class IdentifierNode : public ExpressionNode {
 public:
     Token*       lexerToken  = nullptr;
     ParserToken  parserToken;
 
-    // TODO(faz-2): isim çözümlemede sembol tablosundaki tanıma bağlanır.
+    // SymbolCollector (geçiş 2) adı çözüp tanıma bağlar; sahiplik SymbolTable'da.
     Symbol* resolvedSymbol = nullptr;
 
     // ADR-045: bu ad bir `thread { }` gövdesinin içinde, çevreleyen fonksiyonun

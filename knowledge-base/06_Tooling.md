@@ -61,30 +61,26 @@ parsers without structured diagnostics, does not mirror capability/program-arg
 setup, and can catch a runtime exception without failing its complete command.
 It measures a specialized path and must not define compiler semantics.
 
-### Options with Active Consumers
+### Command and Option Registration (#291, 2026-09-26)
 
-- `--optimized`: `run`, `ir`, `ast`.
-- `--jit`: `run`, `exec`; rejection has no silent VM fallback.
-- `--allow-fs`, `--allow-net`, `--allow-sys`: passed by several compiler
-  commands; runtime enforcement is meaningful in VM execution paths.
-- `--`: program arguments for VM `run`/`exec`.
-- `--gc-threshold`, `--gc-stats`: wired by `run` VM path.
-- `--profile`: wired by `run`.
-- `--capabilities`: special `ir` report.
-- `--runs`, `--compile-only`, `--verbose`: `bench` controls, with `--verbose`
-  also used for JIT success text in `run`.
-- `--json`: used by `ast` and `symbols`; `check` emits JSON regardless.
-- `--compact`: compact JSON for `check`/`symbols`.
-- `-o`/`--output`: actively used by `ast`.
+Each command defines one `CliCommand` (name, usage, description, positional
+min/max, accepted `CliOption` bits, handler) in its `src/cli/commands/*.hpp`;
+`src/cli/command_list.hpp` holds the single command list. All options live in
+one table, `cliOptions()` in `src/cli/args.hpp`. `parseArgs`, `printHelp`, and
+`dispatch` derive from these two tables; no command name or option list is
+repeated elsewhere.
 
-`--format` is parsed and shown in help but no command use was found. Help output
-does not enumerate every active flag and contains stale descriptions. Comments
-in `CliArgs` still describe an old JIT fallback, while active `run`/`exec` do
-not fallback.
+`parseArgs` rejects with usage error 64: unknown options, removed options
+(`--format`, `--allow*`, `--capabilities`, with a reason), options the command
+does not accept, bad numeric values, and wrong positional counts. Value options
+accept `--x=V` and `--x V`. `--optimized` (no-op where `--dont-optimize` is
+valid) and `--stdio` (`lsp`/`dap`) are hidden compatibility no-ops. The legacy
+`file:`/`output:`/`ast:` argument prefixes were removed. `--compact` is still
+accepted by `symbols` but has no effect outside its `--jsonl` rejection.
 
 ### Input, Output, and Exit Codes
 
-`-` sets stdin mode, but `readSource` prints a TODO and returns empty input.
+`-` (stdin) is a usage error; programs are read from a file path only.
 
 Commands write primary data/program output to `stdout` and diagnostics/status
 mostly to `stderr`, but formatting is command-specific. There is no centralized
@@ -309,7 +305,7 @@ audit syntax evolution and public examples, but public docs do not define the
 grammar.
 
 Evidence: `src/cli/args.hpp`, `src/cli/cli.hpp`,
-`src/tokenizer/tokenizer.cpp`, `src/parser/token.hpp`,
+`src/tokenizer/tokenizer.cpp`, `src/tokenizer/token_kind.hpp`,
 `src/lsp/lsp_handler.cpp`, and `editor/vscode/`. Static review: 2026-07-25.
 
 See [10_Syntax.md](02_Language.md#kb-10-syntax), [11_Lexer.md](03_Frontend.md#kb-11-lexer),

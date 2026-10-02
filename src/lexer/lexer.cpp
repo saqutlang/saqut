@@ -67,7 +67,7 @@ bool Lexer::isEnd() {
 }
 
 // --------------------------------------------------------------------------
-// rejectPosition: Yığındaki son konumu at. Başarısız include() denemesi sonrası.
+// rejectPosition: Yığındaki son konumu at. Başarısız tryConsume() denemesi sonrası.
 // --------------------------------------------------------------------------
 void Lexer::rejectPosition() {
     offsetMap.pop_back();
@@ -97,9 +97,10 @@ std::string Lexer::getPositionRange() {
 }
 
 // --------------------------------------------------------------------------
-// include: Belirtilen kelime mevcut konumda başlıyor mu?
+// tryConsume: Belirtilen kelime mevcut konumda başlıyor mu? Başlıyorsa ve
+// consume true ise konum kelimenin sonuna ilerler; aksi halde konum değişmez.
 // --------------------------------------------------------------------------
-bool Lexer::include(std::string_view word, bool accept) {
+bool Lexer::tryConsume(std::string_view word, bool consume) {
     beginPosition();
     for (size_t i = 0; i < word.size(); i++) {
         if (isEnd()) {
@@ -112,7 +113,7 @@ bool Lexer::include(std::string_view word, bool accept) {
         }
         nextChar();
     }
-    if (accept)
+    if (consume)
         acceptPosition();
     else
         rejectPosition();

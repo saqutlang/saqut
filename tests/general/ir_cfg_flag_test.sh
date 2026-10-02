@@ -13,7 +13,7 @@ trap 'rm -f "$out" "$err"' EXIT
 
 # 1) --cfg: üç fonksiyon da CFG olarak basılıyor, exit 0.
 set +e
-"$binary" ir --cfg "file:$f" > "$out" 2>"$err"
+"$binary" ir --cfg "$f" > "$out" 2>"$err"
 status=$?
 set -e
 [ "$status" -eq 0 ] || { echo "FAIL: ir --cfg exit 0 olmali, gercek $status" >&2; cat "$err" >&2; exit 1; }
@@ -35,13 +35,13 @@ grep -q "BB_0 \[0..3\] preds:{} succs:{BB_1,BB_2} term=JIF_FALSE ->BB_2" "$out" 
 
 # 4) Determinizm: iki koşu bayt-bayt aynı.
 set +e
-"$binary" ir --cfg "file:$f" > "$out.2" 2>/dev/null
+"$binary" ir --cfg "$f" > "$out.2" 2>/dev/null
 set -e
 diff "$out" "$out.2" >/dev/null || { echo "FAIL: ir --cfg determinizm bozuldu" >&2; exit 1; }
 
 # 5) Bayraksız çağrı hâlâ flat IR basıyor (regresyon yok).
 set +e
-"$binary" ir "file:$f" > "$out" 2>/dev/null
+"$binary" ir "$f" > "$out" 2>/dev/null
 status=$?
 set -e
 [ "$status" -eq 0 ] || { echo "FAIL: bayraksız ir exit 0 olmali" >&2; exit 1; }
