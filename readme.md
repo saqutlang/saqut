@@ -71,7 +71,7 @@ int main() {
 **Requirements:** C++17, CMake ≥ 3.16, Ninja
 
 ```bash
-git clone https://github.com/abdussamedulutas/saqut
+git clone https://github.com/saqutlang/saqut
 cd saqut
 cmake -B build -G Ninja
 cmake --build build
